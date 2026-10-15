@@ -64,7 +64,7 @@ public struct SettingsSheetView: View {
                 VStack(alignment: .leading, spacing: 11) {
                     // 1. Menu Bar & Interface Options
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("菜单栏与显示")
+                        Text("菜单栏与交互体验")
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
 
@@ -93,36 +93,60 @@ public struct SettingsSheetView: View {
                             Picker(
                                 "",
                                 selection: Binding(
-                                    get: { store.menuBarDisplayMode },
-                                    set: { store.menuBarDisplayMode = $0 }
+                                    get: { store.menuBarTargetId },
+                                    set: { store.menuBarTargetId = $0 }
                                 )
                             ) {
-                                ForEach(MenuBarDisplayMode.allCases) { mode in
-                                    Text(mode.label).tag(mode)
+                                ForEach(store.availableMenuBarOptions) { option in
+                                    Text(option.title).tag(option.id)
                                 }
                             }
                             .labelsHidden()
-                            .frame(width: 168)
+                            .frame(width: 176)
                             .controlSize(.small)
                         }
 
                         Divider().overlay(Color.primary.opacity(0.06))
 
-                        HStack {
-                            Text("隐藏离线/未通电的设备")
-                                .font(.system(size: 12))
-                            Spacer()
-                            Toggle(
-                                "",
-                                isOn: Binding(
-                                    get: { store.hideOfflineDevices },
-                                    set: { store.hideOfflineDevices = $0 }
-                                )
+                        settingsToggleRow(
+                            title: "显示顶部快捷场景栏",
+                            isOn: Binding(
+                                get: { store.showQuickActionsBar },
+                                set: { store.showQuickActionsBar = $0 }
                             )
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                        }
+                        )
+
+                        settingsToggleRow(
+                            title: "双列紧凑磁贴视图",
+                            isOn: Binding(
+                                get: { store.isCompactGridMode },
+                                set: { store.isCompactGridMode = $0 }
+                            )
+                        )
+
+                        settingsToggleRow(
+                            title: "全局快捷键 ⌥M 呼出面板",
+                            isOn: Binding(
+                                get: { store.enableGlobalHotkey },
+                                set: { store.enableGlobalHotkey = $0 }
+                            )
+                        )
+
+                        settingsToggleRow(
+                            title: "主动安全与低电量提醒",
+                            isOn: Binding(
+                                get: { store.enableSafetyAlerts },
+                                set: { store.enableSafetyAlerts = $0 }
+                            )
+                        )
+
+                        settingsToggleRow(
+                            title: "隐藏离线/未通电的设备",
+                            isOn: Binding(
+                                get: { store.hideOfflineDevices },
+                                set: { store.hideOfflineDevices = $0 }
+                            )
+                        )
 
                         HStack {
                             Text("登录 Mac 时自动启动")
@@ -148,7 +172,44 @@ public struct SettingsSheetView: View {
                     .padding(12)
                     .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
 
-                    // 2. Home Assistant NAS Connection
+                    // 2. Hidden Devices Management (if any)
+                    if !store.hiddenDevices.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("已隐藏的设备 (\(store.hiddenDevices.count))")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(store.hiddenDevices) { dev in
+                                HStack(spacing: 8) {
+                                    Image(systemName: dev.sfSymbolName)
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 18)
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(dev.name)
+                                            .font(.system(size: 11.5, weight: .medium))
+                                        Text(dev.roomName)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Button("恢复显示") {
+                                        withAnimation(AppleMotion.snappySpring) {
+                                            store.unhideDevice(dev.id)
+                                        }
+                                    }
+                                    .buttonStyle(PillActionButtonStyle())
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+                    }
+
+                    // 3. Home Assistant NAS Connection
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
                             Text("Home Assistant 连接 (局域网 / NAS)")
@@ -236,6 +297,18 @@ public struct SettingsSheetView: View {
         .onAppear {
             urlDraft = store.serverURLString
             tokenDraft = KeychainHelper.loadToken()
+        }
+    }
+
+    private func settingsToggleRow(title: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 12))
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
         }
     }
 

@@ -5,14 +5,24 @@ public struct DeviceCardView: View {
     public let device: SmartDevice
     public let store: HomeStore
     public let showRoomBadge: Bool
+    public let isCompactTile: Bool
+    public let quickIndex: Int?
 
     @State private var isHovered: Bool = false
     @State private var speakerInputText: String = ""
 
-    public init(device: SmartDevice, store: HomeStore, showRoomBadge: Bool = false) {
+    public init(
+        device: SmartDevice,
+        store: HomeStore,
+        showRoomBadge: Bool = false,
+        isCompactTile: Bool = false,
+        quickIndex: Int? = nil
+    ) {
         self.device = device
         self.store = store
         self.showRoomBadge = showRoomBadge
+        self.isCompactTile = isCompactTile
+        self.quickIndex = quickIndex
     }
 
     private var isExpanded: Bool {
@@ -23,13 +33,25 @@ public struct DeviceCardView: View {
         store.favoriteDeviceIds.contains(device.id)
     }
 
+    private var isKeyboardFocused: Bool {
+        store.focusedDeviceId == device.id
+    }
+
+    private var shouldShowQuickBadge: Bool {
+        quickIndex != nil && (store.isOptionKeyPressed || store.focusedDeviceId != nil)
+    }
+
     private var accent: Color {
         DevicePalette.accentColor(for: device)
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            headerRow
+            if isCompactTile {
+                compactHeaderRow
+            } else {
+                headerRow
+            }
 
             if isExpanded && device.hasDetailDrawer {
                 Divider()
@@ -43,13 +65,114 @@ public struct DeviceCardView: View {
             }
         }
         .glassTile(isActive: device.isActiveOn, accent: accent, cornerRadius: 13)
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .strokeBorder(isKeyboardFocused ? accent.opacity(0.85) : Color.clear, lineWidth: 1.6)
+        )
         .opacity(device.isOnline ? 1.0 : 0.56)
         .onHover { hovering in
             isHovered = hovering
         }
+        .contextMenu {
+            Button {
+                store.toggleFavorite(device.id)
+            } label: {
+                Label(isFavorite ? "取消常用星标" : "设为常用星标", systemImage: isFavorite ? "star.slash" : "star.fill")
+            }
+
+            if isFavorite {
+                Button {
+                    store.moveFavorite(deviceId: device.id, direction: -1)
+                } label: {
+                    Label("常用排序上移", systemImage: "arrow.up")
+                }
+
+                Button {
+                    store.moveFavorite(deviceId: device.id, direction: 1)
+                } label: {
+                    Label("常用排序下移", systemImage: "arrow.down")
+                }
+            }
+
+            if device.hasDetailDrawer {
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        store.toggleExpanded(device.id)
+                    }
+                } label: {
+                    Label(isExpanded ? "收起详细控制" : "展开详细控制", systemImage: "slider.horizontal.3")
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
+                withAnimation(AppleMotion.snappySpring) {
+                    store.hideDevice(device.id)
+                }
+            } label: {
+                Label("隐藏此设备", systemImage: "eye.slash")
+            }
+        }
     }
 
-    // MARK: - Top Row (1-Click Toggle + Expand Trigger)
+    // MARK: - Compact 2-Column Header (Left Icon Toggles, Right Area Expands)
+
+    private var compactHeaderRow: some View {
+        HStack(spacing: 8) {
+            Button {
+                withAnimation(AppleMotion.snappySpring) {
+                    store.togglePrimary(device)
+                }
+            } label: {
+                iconBadge
+            }
+            .buttonStyle(PressableCardButtonStyle())
+            .help("点击直接切换开关")
+
+            Button {
+                withAnimation(AppleMotion.snappySpring) {
+                    if device.hasDetailDrawer {
+                        store.toggleExpanded(device.id)
+                    } else {
+                        store.togglePrimary(device)
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(device.name)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        Text(device.statusSubtitle)
+                            .font(.system(size: 10.5, weight: .regular))
+                            .monospacedDigit()
+                            .foregroundStyle(device.isActiveOn ? accent : .secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 2)
+
+                    if let quickIndex, shouldShowQuickBadge {
+                        quickIndexPill(quickIndex)
+                    } else if device.hasDetailDrawer {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(device.hasDetailDrawer ? "点击展开详细控制" : device.name)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Standard Single-Column Row (1-Click Toggle + Expand Trigger)
 
     private var headerRow: some View {
         HStack(spacing: 8) {
@@ -94,8 +217,12 @@ public struct DeviceCardView: View {
             }
             .buttonStyle(PressableCardButtonStyle())
 
-            // Favorite Star + Drawer Chevron
+            // Quick Index Pill + Favorite Star + Drawer Chevron
             HStack(spacing: 4) {
+                if let quickIndex, shouldShowQuickBadge {
+                    quickIndexPill(quickIndex)
+                }
+
                 if isHovered || isExpanded || isFavorite {
                     Button {
                         withAnimation(AppleMotion.snappySpring) {
@@ -136,6 +263,19 @@ public struct DeviceCardView: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
+    }
+
+    private func quickIndexPill(_ index: Int) -> some View {
+        Text("\(index)")
+            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4.5)
+            .padding(.vertical, 1.5)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
     }
 
     private var iconBadge: some View {

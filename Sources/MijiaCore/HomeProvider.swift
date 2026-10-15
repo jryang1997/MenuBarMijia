@@ -374,6 +374,10 @@ public actor HAWebSocketProvider: HomeProvider {
                 "entity_id": eid,
                 "message": message
             ])
+
+        case .activateScene(let eid):
+            let domain = eid.hasPrefix("script.") ? "script" : "scene"
+            return (domain, "turn_on", ["entity_id": eid])
         }
     }
 
@@ -474,5 +478,10 @@ public actor MockHomeProvider: HomeProvider {
 
     public func refreshNow() async {
         continuation?.yield(.snapshotUpdated(snapshot))
+    }
+
+    public func updateSnapshot(_ next: SynthesizedHome) {
+        self.snapshot = next
+        continuation?.yield(.snapshotUpdated(next))
     }
 }

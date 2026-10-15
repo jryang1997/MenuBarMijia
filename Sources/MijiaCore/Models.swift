@@ -536,6 +536,46 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
     }
 }
 
+// MARK: - Scene & QuickAction Domain Types
+
+public struct HomeScene: Identifiable, Equatable, Hashable, Sendable {
+    public let id: String
+    public var name: String
+    public var entityId: String
+    public var iconName: String
+
+    public init(id: String, name: String, entityId: String, iconName: String = "sparkles") {
+        self.id = id
+        self.name = name
+        self.entityId = entityId
+        self.iconName = iconName
+    }
+}
+
+public enum QuickAction: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case lightsOff = "lightsOff"
+    case softNightLight = "softNightLight"
+    case climateSleepOff = "climateSleepOff"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .lightsOff: return "全屋关灯"
+        case .softNightLight: return "柔和夜灯"
+        case .climateSleepOff: return "关温控风扇"
+        }
+    }
+
+    public var sfSymbolName: String {
+        switch self {
+        case .lightsOff: return "lightbulb.slash.fill"
+        case .softNightLight: return "moon.stars.fill"
+        case .climateSleepOff: return "wind.snow"
+        }
+    }
+}
+
 // MARK: - Commands Dispatched Over the Seam
 
 public enum DeviceCommand: Equatable, Sendable {
@@ -563,10 +603,45 @@ public enum DeviceCommand: Equatable, Sendable {
     case mediaSelectSource(entityId: String, source: String)
     case pressButton(entityId: String)
     case sendNotifyMessage(entityId: String, message: String)
+    case activateScene(entityId: String)
 }
 
 public enum VacuumAction: String, Equatable, Sendable {
     case start = "start"
     case pause = "pause"
     case returnToBase = "return_to_base"
+}
+
+// MARK: - Menu Bar Metrics & Safety Alerts
+
+public struct MenuBarMetricOption: Identifiable, Equatable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+
+    public init(id: String, title: String) {
+        self.id = id
+        self.title = title
+    }
+}
+
+public struct SafetyAlert: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let deviceId: String
+    public var title: String
+    public var body: String
+    public var turnOffCommand: DeviceCommand?
+
+    public init(
+        id: String,
+        deviceId: String,
+        title: String,
+        body: String,
+        turnOffCommand: DeviceCommand? = nil
+    ) {
+        self.id = id
+        self.deviceId = deviceId
+        self.title = title
+        self.body = body
+        self.turnOffCommand = turnOffCommand
+    }
 }

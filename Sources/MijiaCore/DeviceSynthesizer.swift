@@ -164,15 +164,18 @@ public struct SynthesizedHome: Equatable, Sendable {
     public var rooms: [RoomArea]
     public var devices: [SmartDevice]
     public var environmentReadings: [EnvironmentReading]
+    public var scenes: [HomeScene]
 
     public init(
         rooms: [RoomArea] = [],
         devices: [SmartDevice] = [],
-        environmentReadings: [EnvironmentReading] = []
+        environmentReadings: [EnvironmentReading] = [],
+        scenes: [HomeScene] = []
     ) {
         self.rooms = rooms
         self.devices = devices
         self.environmentReadings = environmentReadings
+        self.scenes = scenes
     }
 }
 
@@ -281,6 +284,38 @@ public enum DeviceSynthesizer {
             )
         }
 
+        // Synthesize HA scenes and scripts
+        var synthesizedScenes: [HomeScene] = []
+        var seenSceneEntityIds: Set<String> = []
+        let appendScene = { (eid: String, rawTitle: String) in
+            let cleanTitle = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            synthesizedScenes.append(
+                HomeScene(
+                    id: eid,
+                    name: cleanTitle,
+                    entityId: eid,
+                    iconName: sceneSymbol(for: cleanTitle)
+                )
+            )
+        }
+        for entity in entities {
+            let eid = entity.entity_id
+            guard eid.hasPrefix("scene.") || eid.hasPrefix("script.") else { continue }
+            seenSceneEntityIds.insert(eid)
+            guard entity.disabled_by == nil && entity.hidden_by == nil else { continue }
+            if let st = states[eid], !st.isAvailable { continue }
+            let friendly = states[eid]?.attributes["friendly_name"]?.stringValue
+                ?? entity.name
+                ?? entity.original_name
+                ?? eid
+            appendScene(eid, friendly)
+        }
+        for (eid, st) in states where (eid.hasPrefix("scene.") || eid.hasPrefix("script.")) && !seenSceneEntityIds.contains(eid) && st.isAvailable {
+            let friendly = st.attributes["friendly_name"]?.stringValue ?? eid
+            appendScene(eid, friendly)
+        }
+        synthesizedScenes.sort { $0.name < $1.name }
+
         // Build deduplicated room list from active smartDevices
         var roomDict: [String: RoomArea] = [:]
         for d in smartDevices {
@@ -318,8 +353,18 @@ public enum DeviceSynthesizer {
         return SynthesizedHome(
             rooms: sortedRooms,
             devices: sortedDevices,
-            environmentReadings: sortedReadings
+            environmentReadings: sortedReadings,
+            scenes: synthesizedScenes
         )
+    }
+
+    private static func sceneSymbol(for name: String) -> String {
+        if name.contains("观影") || name.contains("影院") || name.contains("电视") { return "tv.fill" }
+        if name.contains("睡眠") || name.contains("晚安") || name.contains("夜") { return "moon.stars.fill" }
+        if name.contains("离家") || name.contains("外出") { return "figure.walk.departure" }
+        if name.contains("回家") || name.contains("欢迎") { return "house.fill" }
+        if name.contains("阅读") || name.contains("工作") { return "book.fill" }
+        return "sparkles"
     }
 
     // MARK: - Device Builders

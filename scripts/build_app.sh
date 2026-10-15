@@ -10,6 +10,13 @@ swift build -c release --product MenuBarMijiaApp
 BIN_PATH="$(swift build -c release --show-bin-path)/MenuBarMijiaApp"
 APP_DIR="$ROOT/米家控制中心.app"
 
+WAS_RUNNING=0
+if pgrep -x MenuBarMijiaApp >/dev/null 2>&1; then
+    WAS_RUNNING=1
+    killall MenuBarMijiaApp 2>/dev/null || true
+    sleep 0.5
+fi
+
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
@@ -61,3 +68,8 @@ PLIST
 
 codesign --force --deep --sign - "$APP_DIR"
 echo "✅ 已打包完成：$APP_DIR"
+
+if [ "$WAS_RUNNING" = "1" ]; then
+    open "$APP_DIR"
+    echo "🔄 已自动重启米家控制中心.app"
+fi

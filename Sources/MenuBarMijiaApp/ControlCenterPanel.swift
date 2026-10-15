@@ -32,28 +32,38 @@ public struct ControlCenterPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             topHeroHeader
                 .padding(.horizontal, 14)
-                .padding(.top, 13)
-                .padding(.bottom, 10)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            if store.showQuickActionsBar {
+                quickActionsAndScenesBar
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
 
             roomFilterBar
                 .padding(.horizontal, 14)
-                .padding(.bottom, 9)
+                .padding(.bottom, 8)
 
             Divider()
                 .overlay(Color.primary.opacity(0.07))
 
             ScrollView(.vertical, showsIndicators: false) {
+                let quickIndexMap = Dictionary(
+                    uniqueKeysWithValues: store.orderedVisibleDevices.prefix(9).enumerated().map { ($1.id, $0 + 1) }
+                )
+
                 VStack(alignment: .leading, spacing: 11) {
                     if store.filteredDevices.isEmpty {
                         emptyStateView
                     } else if store.selectedRoomId == nil {
                         if !store.favoriteDevices.isEmpty {
                             sectionHeader("常用控制", count: store.favoriteDevices.count)
-                            VStack(spacing: 7) {
-                                ForEach(store.favoriteDevices) { dev in
-                                    DeviceCardView(device: dev, store: store, showRoomBadge: true)
-                                }
-                            }
+                            deviceCollectionView(
+                                devices: store.favoriteDevices,
+                                showRoomBadge: true,
+                                quickIndexMap: quickIndexMap
+                            )
                         }
 
                         if !store.nonFavoriteDevices.isEmpty {
@@ -61,18 +71,18 @@ public struct ControlCenterPanel: View {
                                 store.favoriteDevices.isEmpty ? "全屋设备" : "更多设备",
                                 count: store.nonFavoriteDevices.count
                             )
-                            VStack(spacing: 7) {
-                                ForEach(store.nonFavoriteDevices) { dev in
-                                    DeviceCardView(device: dev, store: store, showRoomBadge: true)
-                                }
-                            }
+                            deviceCollectionView(
+                                devices: store.nonFavoriteDevices,
+                                showRoomBadge: true,
+                                quickIndexMap: quickIndexMap
+                            )
                         }
                     } else {
-                        VStack(spacing: 7) {
-                            ForEach(store.filteredDevices) { dev in
-                                DeviceCardView(device: dev, store: store, showRoomBadge: false)
-                            }
-                        }
+                        deviceCollectionView(
+                            devices: store.filteredDevices,
+                            showRoomBadge: false,
+                            quickIndexMap: quickIndexMap
+                        )
                     }
                 }
                 .padding(.horizontal, 13)
@@ -90,10 +100,99 @@ public struct ControlCenterPanel: View {
         }
     }
 
+    // MARK: - Adaptive Single-Column / 2-Column CompactTile Collection
+
+    private enum DeviceRowItem: Identifiable {
+        case single(SmartDevice)
+        case pair(SmartDevice, SmartDevice?)
+
+        var id: String {
+            switch self {
+            case .single(let d): return "single_\(d.id)"
+            case .pair(let a, let b): return "pair_\(a.id)_\(b?.id ?? "none")"
+            }
+        }
+    }
+
+    private func buildRows(from devices: [SmartDevice]) -> [DeviceRowItem] {
+        guard store.isCompactGridMode else {
+            return devices.map { .single($0) }
+        }
+        var rows: [DeviceRowItem] = []
+        var buffer: SmartDevice?
+
+        for dev in devices {
+            if store.expandedDeviceId == dev.id {
+                if let pending = buffer {
+                    rows.append(.pair(pending, nil))
+                    buffer = nil
+                }
+                rows.append(.single(dev))
+            } else if let pending = buffer {
+                rows.append(.pair(pending, dev))
+                buffer = nil
+            } else {
+                buffer = dev
+            }
+        }
+        if let pending = buffer {
+            rows.append(.pair(pending, nil))
+        }
+        return rows
+    }
+
+    @ViewBuilder
+    private func deviceCollectionView(
+        devices: [SmartDevice],
+        showRoomBadge: Bool,
+        quickIndexMap: [String: Int]
+    ) -> some View {
+        let rows = buildRows(from: devices)
+        VStack(spacing: 7) {
+            ForEach(rows) { row in
+                switch row {
+                case .single(let dev):
+                    DeviceCardView(
+                        device: dev,
+                        store: store,
+                        showRoomBadge: showRoomBadge,
+                        isCompactTile: false,
+                        quickIndex: quickIndexMap[dev.id]
+                    )
+                case .pair(let left, let right):
+                    HStack(spacing: 7) {
+                        DeviceCardView(
+                            device: left,
+                            store: store,
+                            showRoomBadge: showRoomBadge,
+                            isCompactTile: true,
+                            quickIndex: quickIndexMap[left.id]
+                        )
+                        .frame(maxWidth: .infinity)
+
+                        if let right {
+                            DeviceCardView(
+                                device: right,
+                                store: store,
+                                showRoomBadge: showRoomBadge,
+                                isCompactTile: true,
+                                quickIndex: quickIndexMap[right.id]
+                            )
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            Color.clear
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - 1. Hero Header & Live Environment Chips
 
     private var topHeroHeader: some View {
-        VStack(alignment: .leading, spacing: 9) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -144,14 +243,40 @@ public struct ControlCenterPanel: View {
             }
 
             if !store.environmentReadings.isEmpty {
-                HStack(spacing: 7) {
-                    ForEach(store.environmentReadings) { env in
-                        environmentChip(env)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(store.environmentReadings) { env in
+                            environmentChip(env)
+                        }
+                        if store.totalPowerWatts >= 1 {
+                            powerChip(watts: store.totalPowerWatts)
+                        }
                     }
-                    Spacer(minLength: 0)
                 }
             }
         }
+    }
+
+    private func powerChip(watts: Double) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "bolt.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.green)
+
+            Text(String(format: "%.0fW", watts))
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4.5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.primary.opacity(0.055))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.7)
+                )
+        )
     }
 
     private func environmentChip(_ env: EnvironmentReading) -> some View {
@@ -196,10 +321,58 @@ public struct ControlCenterPanel: View {
         return "全屋设备待机 · \(store.onlineDeviceCount) 台实时在线"
     }
 
-    // MARK: - 2. Room Filter Strip
+    // MARK: - 1B. Quick Actions & HA Scenes Strip
+
+    private var quickActionsAndScenesBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(QuickAction.allCases) { action in
+                    Button {
+                        withAnimation(AppleMotion.snappySpring) {
+                            store.executeQuickAction(action)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: action.sfSymbolName)
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundStyle(.orange)
+                            Text(action.title)
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(PillActionButtonStyle())
+                }
+
+                if !store.scenes.isEmpty {
+                    Divider()
+                        .frame(height: 14)
+                        .padding(.horizontal, 2)
+
+                    ForEach(store.scenes) { scene in
+                        Button {
+                            withAnimation(AppleMotion.snappySpring) {
+                                store.triggerScene(scene)
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: scene.iconName)
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                Text(scene.name)
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                        }
+                        .buttonStyle(PillActionButtonStyle())
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 2. Room Filter Strip & Grid Toggle
 
     private var roomFilterBar: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 5) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
                     roomPill(title: "全部", roomId: nil)
@@ -209,6 +382,23 @@ public struct ControlCenterPanel: View {
                     }
                 }
             }
+
+            Button {
+                withAnimation(AppleMotion.snappySpring) {
+                    store.isCompactGridMode.toggle()
+                }
+            } label: {
+                Image(systemName: store.isCompactGridMode ? "rectangle.grid.2x2.fill" : "rectangle.grid.1x2.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(store.isCompactGridMode ? Color.accentColor : Color.secondary)
+                    .frame(width: 26, height: 24)
+                    .background(
+                        Capsule(style: .continuous)
+                            .fill(store.isCompactGridMode ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(store.isCompactGridMode ? "当前：双列紧凑磁贴（点击切换单列）" : "点击切换双列紧凑磁贴视图")
 
             Button {
                 withAnimation(AppleMotion.snappySpring) {

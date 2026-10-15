@@ -8,7 +8,8 @@ struct MenuBarMijiaApp: App {
     @State private var store = HomeStore.shared
 
     init() {
-        _ = HomeStore.shared
+        let sharedStore = HomeStore.shared
+        HotkeyAndNotificationManager.shared.start(with: sharedStore)
     }
 
     var body: some Scene {

@@ -41,31 +41,71 @@ public final class HomeStore {
     public private(set) var rooms: [RoomArea] = []
     public private(set) var devices: [SmartDevice] = []
     public private(set) var environmentReadings: [EnvironmentReading] = []
+    public private(set) var scenes: [HomeScene] = []
 
     public var selectedRoomId: String? = nil // nil = 全部 / 常用
     public var expandedDeviceId: String? = nil
+    public var focusedDeviceId: String? = nil
+    public var isOptionKeyPressed: Bool = false
     public var isShowingSettings: Bool = false
 
+    private let userDefaults: UserDefaults
+
     public var hideOfflineDevices: Bool {
-        didSet { UserDefaults.standard.set(hideOfflineDevices, forKey: "hide_offline_devices") }
+        didSet { userDefaults.set(hideOfflineDevices, forKey: "hide_offline_devices") }
+    }
+
+    public var showQuickActionsBar: Bool {
+        didSet { userDefaults.set(showQuickActionsBar, forKey: "show_quick_actions_bar") }
+    }
+
+    public var enableGlobalHotkey: Bool {
+        didSet {
+            userDefaults.set(enableGlobalHotkey, forKey: "enable_global_hotkey")
+            onGlobalHotkeyPreferenceChanged?(enableGlobalHotkey)
+        }
+    }
+
+    public var isCompactGridMode: Bool {
+        didSet { userDefaults.set(isCompactGridMode, forKey: "compact_grid_mode") }
     }
 
     public var favoriteDeviceIds: Set<String> {
         didSet {
-            UserDefaults.standard.set(Array(favoriteDeviceIds), forKey: "favorite_device_ids")
+            userDefaults.set(Array(favoriteDeviceIds), forKey: "favorite_device_ids")
+        }
+    }
+
+    public var favoriteOrder: [String] {
+        didSet {
+            userDefaults.set(favoriteOrder, forKey: "favorite_order")
+        }
+    }
+
+    public var hiddenDeviceIds: Set<String> {
+        didSet {
+            userDefaults.set(Array(hiddenDeviceIds), forKey: "hidden_device_ids")
         }
     }
 
     public var menuBarDisplayMode: MenuBarDisplayMode {
-        didSet { UserDefaults.standard.set(menuBarDisplayMode.rawValue, forKey: "menubar_display_mode") }
+        didSet { userDefaults.set(menuBarDisplayMode.rawValue, forKey: "menubar_display_mode") }
+    }
+
+    public var menuBarTargetId: String {
+        didSet { userDefaults.set(menuBarTargetId, forKey: "menubar_target_id") }
+    }
+
+    public var enableSafetyAlerts: Bool {
+        didSet { userDefaults.set(enableSafetyAlerts, forKey: "enable_safety_alerts") }
     }
 
     public var homeName: String {
-        didSet { UserDefaults.standard.set(homeName, forKey: "home_name") }
+        didSet { userDefaults.set(homeName, forKey: "home_name") }
     }
 
     public var serverURLString: String {
-        didSet { UserDefaults.standard.set(serverURLString, forKey: "ha_server_url") }
+        didSet { userDefaults.set(serverURLString, forKey: "ha_server_url") }
     }
 
     public var serverHostSummary: String {
@@ -79,6 +119,8 @@ public final class HomeStore {
 
     public private(set) var toastNotice: ToastNotice?
     public private(set) var undoBanner: UndoBanner?
+    public var onSafetyAlert: ((SafetyAlert) -> Void)?
+    public var onGlobalHotkeyPreferenceChanged: ((Bool) -> Void)?
 
     private var provider: any HomeProvider
     private var eventTask: Task<Void, Never>?
@@ -87,23 +129,45 @@ public final class HomeStore {
     private var toastTimerTask: Task<Void, Never>?
     private var optimisticLockUntil: [String: ContinuousClock.Instant] = [:]
 
-    public init(provider: (any HomeProvider)? = nil) {
-        let savedURL = UserDefaults.standard.string(forKey: "ha_server_url") ?? KeychainHelper.defaultNASURL
-        self.serverURLString = savedURL
-        self.homeName = UserDefaults.standard.string(forKey: "home_name") ?? KeychainHelper.defaultHomeName
-        self.hideOfflineDevices = UserDefaults.standard.bool(forKey: "hide_offline_devices")
+    private var lowBatteryAlertedAt: [String: Date] = [:]
+    private var activeSinceByDeviceId: [String: Date] = [:]
+    private var longRunAlertedForSession: Set<String> = []
+    private var previousOnlineDeviceIds: Set<String> = []
 
-        if let modeRaw = UserDefaults.standard.string(forKey: "menubar_display_mode"),
+    public init(provider: (any HomeProvider)? = nil, defaultsSuiteName: String? = nil) {
+        let ud = defaultsSuiteName.flatMap { UserDefaults(suiteName: $0) } ?? .standard
+        self.userDefaults = ud
+        let boolOrDefaultTrue = { (key: String) -> Bool in
+            ud.object(forKey: key) == nil ? true : ud.bool(forKey: key)
+        }
+
+        let savedURL = ud.string(forKey: "ha_server_url") ?? KeychainHelper.defaultNASURL
+        self.serverURLString = savedURL
+        self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.defaultHomeName
+        self.hideOfflineDevices = ud.bool(forKey: "hide_offline_devices")
+        self.showQuickActionsBar = boolOrDefaultTrue("show_quick_actions_bar")
+        self.enableGlobalHotkey = boolOrDefaultTrue("enable_global_hotkey")
+        self.enableSafetyAlerts = boolOrDefaultTrue("enable_safety_alerts")
+        self.isCompactGridMode = ud.bool(forKey: "compact_grid_mode")
+        self.menuBarTargetId = ud.string(forKey: "menubar_target_id") ?? "auto:primary"
+
+        if let modeRaw = ud.string(forKey: "menubar_display_mode"),
            let mode = MenuBarDisplayMode(rawValue: modeRaw) {
             self.menuBarDisplayMode = mode
         } else {
             self.menuBarDisplayMode = .primaryTemp
         }
 
-        if let savedFavs = UserDefaults.standard.stringArray(forKey: "favorite_device_ids") {
+        if let savedFavs = ud.stringArray(forKey: "favorite_device_ids") {
             self.favoriteDeviceIds = Set(savedFavs)
         } else {
             self.favoriteDeviceIds = []
+        }
+        self.favoriteOrder = ud.stringArray(forKey: "favorite_order") ?? []
+        if let savedHidden = ud.stringArray(forKey: "hidden_device_ids") {
+            self.hiddenDeviceIds = Set(savedHidden)
+        } else {
+            self.hiddenDeviceIds = []
         }
 
         let token = KeychainHelper.loadToken()
@@ -130,6 +194,7 @@ public final class HomeStore {
         case .snapshotUpdated(let snapshot):
             self.rooms = snapshot.rooms
             self.environmentReadings = snapshot.environmentReadings
+            self.scenes = snapshot.scenes
 
             let now = ContinuousClock.now
             var merged: [SmartDevice] = []
@@ -145,12 +210,18 @@ public final class HomeStore {
             }
             self.devices = merged
             seedDefaultFavoritesIfNeeded()
+
+            if enableSafetyAlerts, let handler = onSafetyAlert {
+                for alert in evaluateSafetyAlerts(now: Date()) {
+                    handler(alert)
+                }
+            }
         }
     }
 
     private func seedDefaultFavoritesIfNeeded() {
         guard favoriteDeviceIds.isEmpty,
-              UserDefaults.standard.object(forKey: "favorite_device_ids") == nil,
+              userDefaults.object(forKey: "favorite_device_ids") == nil,
               !devices.isEmpty else {
             return
         }
@@ -161,6 +232,7 @@ public final class HomeStore {
             .map(\.id)
         if !initial.isEmpty {
             self.favoriteDeviceIds = Set(initial)
+            self.favoriteOrder = initial
         }
     }
 
@@ -174,8 +246,36 @@ public final class HomeStore {
         devices.filter(\.isOnline).count
     }
 
+    public var totalPowerWatts: Double {
+        devices.reduce(0.0) { acc, dev in
+            guard dev.isOnline, case .plug(let s) = dev.kind, s.isOn else { return acc }
+            return acc + (s.powerWatts ?? 0)
+        }
+    }
+
+    public var availableMenuBarOptions: [MenuBarMetricOption] {
+        var opts: [MenuBarMetricOption] = [
+            MenuBarMetricOption(id: "auto:primary", title: "自动（主卧温度优先）")
+        ]
+        for env in environmentReadings {
+            opts.append(MenuBarMetricOption(id: "temp:\(env.id)", title: "\(env.label) · 温度"))
+            if env.humidity != nil {
+                opts.append(MenuBarMetricOption(id: "temp_hum:\(env.id)", title: "\(env.label) · 温湿度"))
+            }
+        }
+        opts.append(MenuBarMetricOption(id: "power:total", title: "全屋实时总功率 (W)"))
+        opts.append(MenuBarMetricOption(id: "active:count", title: "开启设备数量"))
+        opts.append(MenuBarMetricOption(id: "icon:only", title: "仅显示图标"))
+        return opts
+    }
+
+    public var hiddenDevices: [SmartDevice] {
+        devices.filter { hiddenDeviceIds.contains($0.id) }
+    }
+
     public var filteredDevices: [SmartDevice] {
         devices.filter { dev in
+            if hiddenDeviceIds.contains(dev.id) { return false }
             if hideOfflineDevices && !dev.isOnline { return false }
             if let roomId = selectedRoomId {
                 return dev.roomId == roomId
@@ -185,11 +285,26 @@ public final class HomeStore {
     }
 
     public var favoriteDevices: [SmartDevice] {
-        filteredDevices.filter { favoriteDeviceIds.contains($0.id) }
+        let favs = filteredDevices.filter { favoriteDeviceIds.contains($0.id) }
+        guard !favoriteOrder.isEmpty else { return favs }
+        let orderIndex = Dictionary(uniqueKeysWithValues: favoriteOrder.enumerated().map { ($1, $0) })
+        return favs.sorted { a, b in
+            let ia = orderIndex[a.id] ?? Int.max
+            let ib = orderIndex[b.id] ?? Int.max
+            if ia != ib { return ia < ib }
+            return false
+        }
     }
 
     public var nonFavoriteDevices: [SmartDevice] {
         filteredDevices.filter { !favoriteDeviceIds.contains($0.id) }
+    }
+
+    public var orderedVisibleDevices: [SmartDevice] {
+        if selectedRoomId == nil {
+            return favoriteDevices + nonFavoriteDevices
+        }
+        return filteredDevices
     }
 
     public var menuBarSymbolName: String {
@@ -197,6 +312,31 @@ public final class HomeStore {
     }
 
     public var menuBarText: String? {
+        let sensorReading = { (prefix: String) -> EnvironmentReading? in
+            guard self.menuBarTargetId.hasPrefix(prefix) else { return nil }
+            let sensorId = String(self.menuBarTargetId.dropFirst(prefix.count))
+            return self.environmentReadings.first(where: { $0.id == sensorId }) ?? self.environmentReadings.first
+        }
+
+        if let env = sensorReading("temp:"), let t = env.temperature {
+            return String(format: "%.1f°", t)
+        }
+        if let env = sensorReading("temp_hum:"), let t = env.temperature {
+            if let h = env.humidity {
+                return String(format: "%.1f° %.0f%%", t, h)
+            }
+            return String(format: "%.1f°", t)
+        }
+        if menuBarTargetId == "power:total" {
+            return String(format: "%.0fW", totalPowerWatts)
+        }
+        if menuBarTargetId == "active:count" {
+            return activeDeviceCount > 0 ? "\(activeDeviceCount)开" : nil
+        }
+        if menuBarTargetId == "icon:only" {
+            return nil
+        }
+
         switch menuBarDisplayMode {
         case .iconOnly:
             return nil
@@ -217,14 +357,206 @@ public final class HomeStore {
         }
     }
 
+    // MARK: - SafetyAlert Evaluation Engine
+
+    @discardableResult
+    public func evaluateSafetyAlerts(now: Date = Date()) -> [SafetyAlert] {
+        guard enableSafetyAlerts else { return [] }
+        var emitted: [SafetyAlert] = []
+
+        for dev in devices {
+            // 1. Starred device offline transition check
+            if favoriteDeviceIds.contains(dev.id) {
+                if previousOnlineDeviceIds.contains(dev.id) && !dev.isOnline {
+                    emitted.append(
+                        SafetyAlert(
+                            id: "offline:\(dev.id):\(Int(now.timeIntervalSince1970))",
+                            deviceId: dev.id,
+                            title: "\(dev.name) 已离线",
+                            body: "\(dev.roomName)的「\(dev.name)」刚刚断开连接或断电。"
+                        )
+                    )
+                }
+            }
+
+            // 2. Low battery check (<15% for sensors/locks, 24h cooldown)
+            if dev.isOnline, case .sensor(let s) = dev.kind, let bat = s.battery, bat > 0 && bat < 15 {
+                let lastAlert = lowBatteryAlertedAt[dev.id]
+                if lastAlert == nil || now.timeIntervalSince(lastAlert!) >= 86_400 {
+                    lowBatteryAlertedAt[dev.id] = now
+                    emitted.append(
+                        SafetyAlert(
+                            id: "battery:\(dev.id)",
+                            deviceId: dev.id,
+                            title: "\(dev.name) 电量低 (\(bat)%)",
+                            body: "请及时为\(dev.roomName)的「\(dev.name)」更换电池或充电。"
+                        )
+                    )
+                }
+            }
+
+            // 3. Long-running plug (>=45m) or climate (>=4h) check
+            if dev.isActiveOn {
+                let startedAt = activeSinceByDeviceId[dev.id] ?? {
+                    activeSinceByDeviceId[dev.id] = now
+                    return now
+                }()
+                let elapsed = now.timeIntervalSince(startedAt)
+
+                switch dev.kind {
+                case .plug(let s) where elapsed >= 45 * 60 && !longRunAlertedForSession.contains(dev.id):
+                    longRunAlertedForSession.insert(dev.id)
+                    emitted.append(
+                        SafetyAlert(
+                            id: "longrun:\(dev.id)",
+                            deviceId: dev.id,
+                            title: "\(dev.name) 已开启超过 45 分钟",
+                            body: "当前功率 \(Int((s.powerWatts ?? 0).rounded()))W，如需关闭可直接点击通知按钮。",
+                            turnOffCommand: .setSwitch(entityId: s.switchEntityId, isOn: false)
+                        )
+                    )
+                case .climate(let s) where elapsed >= 4 * 3600 && !longRunAlertedForSession.contains(dev.id):
+                    longRunAlertedForSession.insert(dev.id)
+                    emitted.append(
+                        SafetyAlert(
+                            id: "longrun:\(dev.id)",
+                            deviceId: dev.id,
+                            title: "\(dev.name) 已连续运行 4 小时",
+                            body: "当前设定 \(Int(s.targetTemperature.rounded()))°C，请确认是否仍需开启。",
+                            turnOffCommand: .setClimatePower(entityId: s.entityId, isOn: false, fallbackMode: s.hvacMode)
+                        )
+                    )
+                default:
+                    break
+                }
+            } else {
+                activeSinceByDeviceId.removeValue(forKey: dev.id)
+                longRunAlertedForSession.remove(dev.id)
+            }
+        }
+
+        previousOnlineDeviceIds = Set(devices.filter(\.isOnline).map(\.id))
+        return emitted
+    }
+
+    public func executeSafetyAlertAction(_ alert: SafetyAlert) {
+        guard let cmd = alert.turnOffCommand else { return }
+        Task {
+            try? await provider.execute(cmd)
+            await provider.refreshNow()
+        }
+    }
+
+    // MARK: - Keyboard Navigation & Quick Number Shortcuts
+
+    public func selectQuickIndex(_ oneBasedIndex: Int) {
+        let list = orderedVisibleDevices
+        let idx = oneBasedIndex - 1
+        guard idx >= 0 && idx < list.count else { return }
+        togglePrimary(list[idx])
+    }
+
+    public func moveFocus(delta: Int) {
+        let list = orderedVisibleDevices
+        guard !list.isEmpty else {
+            focusedDeviceId = nil
+            return
+        }
+        guard let currentId = focusedDeviceId,
+              let curIdx = list.firstIndex(where: { $0.id == currentId }) else {
+            focusedDeviceId = delta >= 0 ? list.first?.id : list.last?.id
+            return
+        }
+        let nextIdx = (curIdx + delta + list.count) % list.count
+        focusedDeviceId = list[nextIdx].id
+    }
+
+    public func toggleFocusedDevice() {
+        let list = orderedVisibleDevices
+        guard !list.isEmpty else { return }
+        if let fid = focusedDeviceId, let dev = list.first(where: { $0.id == fid }) {
+            togglePrimary(dev)
+        } else if let first = list.first {
+            focusedDeviceId = first.id
+            togglePrimary(first)
+        }
+    }
+
+    public func adjustFocusedDevice(delta: Int) {
+        guard let fid = focusedDeviceId,
+              let dev = devices.first(where: { $0.id == fid }) else { return }
+
+        if expandedDeviceId != dev.id {
+            if delta > 0 && dev.hasDetailDrawer {
+                expandedDeviceId = dev.id
+            }
+            return
+        }
+
+        switch dev.kind {
+        case .light(let s):
+            let current = s.brightnessPercent ?? (s.isOn ? 80 : 0)
+            let next = max(1, min(100, current + delta * 10))
+            setLightBrightness(dev.id, percent: next)
+        case .climate:
+            stepClimateTemperature(dev.id, delta: Double(delta) * 1.0)
+        case .speaker(let s):
+            setSpeakerVolume(dev.id, percent: max(0, min(100, s.volumePercent + delta * 10)))
+        case .tv(let s):
+            setSpeakerVolume(dev.id, percent: max(0, min(100, s.volumePercent + delta * 10)))
+        default:
+            if delta < 0 {
+                expandedDeviceId = nil
+            }
+        }
+    }
+
+    public func cycleRoom(delta: Int = 1) {
+        let options: [String?] = [nil] + rooms.map { Optional($0.id) }
+        guard options.count > 1 else { return }
+        let curIdx = options.firstIndex(where: { $0 == selectedRoomId }) ?? 0
+        let nextIdx = (curIdx + delta + options.count) % options.count
+        selectedRoomId = options[nextIdx]
+    }
+
     // MARK: - User Actions & Optimistic State Mutations
 
     public func toggleFavorite(_ deviceId: String) {
         if favoriteDeviceIds.contains(deviceId) {
             favoriteDeviceIds.remove(deviceId)
+            favoriteOrder.removeAll { $0 == deviceId }
         } else {
             favoriteDeviceIds.insert(deviceId)
+            if !favoriteOrder.contains(deviceId) {
+                favoriteOrder.append(deviceId)
+            }
         }
+    }
+
+    public func moveFavorite(deviceId: String, direction: Int) {
+        var currentIds = favoriteDevices.map(\.id)
+        for id in favoriteOrder where favoriteDeviceIds.contains(id) && !currentIds.contains(id) {
+            currentIds.append(id)
+        }
+        guard let idx = currentIds.firstIndex(of: deviceId) else { return }
+        let targetIdx = idx + direction
+        guard targetIdx >= 0 && targetIdx < currentIds.count else { return }
+        currentIds.swapAt(idx, targetIdx)
+        favoriteOrder = currentIds
+    }
+
+    public func hideDevice(_ deviceId: String) {
+        hiddenDeviceIds.insert(deviceId)
+        if expandedDeviceId == deviceId {
+            expandedDeviceId = nil
+        }
+        if focusedDeviceId == deviceId {
+            focusedDeviceId = nil
+        }
+    }
+
+    public func unhideDevice(_ deviceId: String) {
+        hiddenDeviceIds.remove(deviceId)
     }
 
     public func toggleExpanded(_ deviceId: String) {
@@ -558,6 +890,114 @@ public final class HomeStore {
         }
     }
 
+    // MARK: - Scenes & Built-In QuickActions with 5-Second Undo
+
+    public func triggerScene(_ scene: HomeScene) {
+        Task {
+            do {
+                try await provider.execute(.activateScene(entityId: scene.entityId))
+                showToast("已触发场景：\(scene.name)")
+            } catch {
+                showToast("场景「\(scene.name)」执行失败", isError: true)
+            }
+        }
+    }
+
+    public func executeQuickAction(_ action: QuickAction) {
+        let previousSnapshot = devices
+        var commands: [DeviceCommand] = []
+        var restoreCommands: [DeviceCommand] = []
+
+        switch action {
+        case .lightsOff:
+            for idx in devices.indices where devices[idx].isOnline {
+                guard case .light(var s) = devices[idx].kind, s.isOn else { continue }
+                lockOptimistic(devices[idx].id, duration: .seconds(3.0))
+                commands.append(.setLightPower(entityId: s.entityId, isOn: false))
+                restoreCommands.append(.setLightPower(entityId: s.entityId, isOn: true))
+                s.isOn = false
+                devices[idx].kind = .light(s)
+            }
+
+        case .softNightLight:
+            var targetIndices = devices.indices.filter { idx in
+                guard devices[idx].isOnline, case .light(let s) = devices[idx].kind else { return false }
+                return s.isOn
+            }
+            if targetIndices.isEmpty {
+                let isOnlineLight = { (dev: SmartDevice) -> Bool in
+                    if dev.isOnline, case .light = dev.kind { return true }
+                    return false
+                }
+                let fallbackIdx = devices.indices.first(where: { isOnlineLight(devices[$0]) && favoriteDeviceIds.contains(devices[$0].id) })
+                    ?? devices.indices.first(where: { isOnlineLight(devices[$0]) && devices[$0].roomName == "主卧" })
+                    ?? devices.indices.first(where: { isOnlineLight(devices[$0]) })
+                if let fallbackIdx {
+                    targetIndices = [fallbackIdx]
+                }
+            }
+            for idx in targetIndices {
+                guard case .light(var s) = devices[idx].kind else { continue }
+                lockOptimistic(devices[idx].id, duration: .seconds(3.0))
+                let prevOn = s.isOn
+                let prevBri = s.brightnessPercent ?? 80
+                let prevKelvin = s.colorTempKelvin ?? 4000
+                commands.append(.setLightBrightness(entityId: s.entityId, percent: 15))
+                commands.append(.setLightColorTemp(entityId: s.entityId, kelvin: max(s.minKelvin, 2700)))
+                if prevOn {
+                    restoreCommands.append(.setLightBrightness(entityId: s.entityId, percent: prevBri))
+                    restoreCommands.append(.setLightColorTemp(entityId: s.entityId, kelvin: prevKelvin))
+                } else {
+                    restoreCommands.append(.setLightPower(entityId: s.entityId, isOn: false))
+                }
+                s.isOn = true
+                s.brightnessPercent = 15
+                s.colorTempKelvin = max(s.minKelvin, 2700)
+                s.currentEffect = nil
+                devices[idx].kind = .light(s)
+            }
+
+        case .climateSleepOff:
+            for idx in devices.indices where devices[idx].isOnline {
+                switch devices[idx].kind {
+                case .climate(var s) where s.isOn && s.hvacMode != "off":
+                    let prevMode = s.hvacMode
+                    lockOptimistic(devices[idx].id, duration: .seconds(3.0))
+                    commands.append(.setClimatePower(entityId: s.entityId, isOn: false, fallbackMode: prevMode))
+                    restoreCommands.append(.setClimatePower(entityId: s.entityId, isOn: true, fallbackMode: prevMode))
+                    s.isOn = false
+                    s.hvacMode = "off"
+                    devices[idx].kind = .climate(s)
+                case .fan(var s) where s.isOn:
+                    lockOptimistic(devices[idx].id, duration: .seconds(3.0))
+                    commands.append(.setFanPower(entityId: s.entityId, isOn: false))
+                    restoreCommands.append(.setFanPower(entityId: s.entityId, isOn: true))
+                    s.isOn = false
+                    devices[idx].kind = .fan(s)
+                default:
+                    break
+                }
+            }
+        }
+
+        guard !commands.isEmpty else {
+            showToast("当前无需执行「\(action.title)」")
+            return
+        }
+
+        scheduleUndoBanner(
+            title: "已执行「\(action.title)」",
+            restoreCommands: restoreCommands,
+            previousDevices: previousSnapshot
+        )
+
+        Task {
+            for cmd in commands {
+                try? await provider.execute(cmd)
+            }
+        }
+    }
+
     // MARK: - Turn All Off with 5-Second Undo
 
     public func turnAllOff() {
@@ -614,10 +1054,28 @@ public final class HomeStore {
             }
         }
 
-        let banner = UndoBanner(
+        scheduleUndoBanner(
             title: "已关闭 \(offCommands.count) 台设备",
             restoreCommands: restoreCommands,
             previousDevices: previousSnapshot
+        )
+
+        Task {
+            for cmd in offCommands {
+                try? await provider.execute(cmd)
+            }
+        }
+    }
+
+    private func scheduleUndoBanner(
+        title: String,
+        restoreCommands: [DeviceCommand],
+        previousDevices: [SmartDevice]
+    ) {
+        let banner = UndoBanner(
+            title: title,
+            restoreCommands: restoreCommands,
+            previousDevices: previousDevices
         )
         self.undoBanner = banner
         undoTimerTask?.cancel()
@@ -628,21 +1086,16 @@ public final class HomeStore {
                 self?.undoBanner = nil
             }
         }
-
-        Task {
-            for cmd in offCommands {
-                try? await provider.execute(cmd)
-            }
-        }
     }
 
     public func undoTurnAllOff() {
         guard let banner = undoBanner else { return }
         undoTimerTask?.cancel()
         self.undoBanner = nil
+        let currentMap = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
         self.devices = banner.previousDevices
 
-        for dev in banner.previousDevices where dev.isActiveOn {
+        for dev in banner.previousDevices where currentMap[dev.id] != dev {
             lockOptimistic(dev.id, duration: .seconds(3.0))
         }
 
