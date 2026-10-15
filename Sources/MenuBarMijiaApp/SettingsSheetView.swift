@@ -1,0 +1,257 @@
+import SwiftUI
+import AppKit
+import ServiceManagement
+import MijiaCore
+
+public struct SettingsSheetView: View {
+    public let store: HomeStore
+
+    @State private var urlDraft: String = ""
+    @State private var tokenDraft: String = ""
+    @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
+
+    public init(store: HomeStore) {
+        self.store = store
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Pinned Header
+            HStack {
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        store.isShowingSettings = false
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("返回面板")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                }
+                .buttonStyle(PillActionButtonStyle())
+
+                Spacer()
+
+                Text("偏好设置")
+                    .font(.system(size: 13, weight: .semibold))
+
+                Spacer()
+
+                Button {
+                    if let url = URL(string: store.serverURLString) {
+                        NSWorkspace.shared.open(url)
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("HA 网页")
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(PillActionButtonStyle())
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            Divider()
+                .overlay(Color.primary.opacity(0.07))
+
+            // Scrollable Settings Body
+            ScrollView(.vertical, showsIndicators: true) {
+                VStack(alignment: .leading, spacing: 11) {
+                    // 1. Menu Bar & Interface Options
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("菜单栏与显示")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Text("面板标题")
+                                .font(.system(size: 12))
+                            Spacer()
+                            TextField(
+                                "米家控制中心",
+                                text: Binding(
+                                    get: { store.homeName },
+                                    set: { store.homeName = $0 }
+                                )
+                            )
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
+                            .frame(width: 140)
+                        }
+
+                        Divider().overlay(Color.primary.opacity(0.06))
+
+                        HStack {
+                            Text("菜单栏旁显示")
+                                .font(.system(size: 12))
+                            Spacer()
+                            Picker(
+                                "",
+                                selection: Binding(
+                                    get: { store.menuBarDisplayMode },
+                                    set: { store.menuBarDisplayMode = $0 }
+                                )
+                            ) {
+                                ForEach(MenuBarDisplayMode.allCases) { mode in
+                                    Text(mode.label).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 168)
+                            .controlSize(.small)
+                        }
+
+                        Divider().overlay(Color.primary.opacity(0.06))
+
+                        HStack {
+                            Text("隐藏离线/未通电的设备")
+                                .font(.system(size: 12))
+                            Spacer()
+                            Toggle(
+                                "",
+                                isOn: Binding(
+                                    get: { store.hideOfflineDevices },
+                                    set: { store.hideOfflineDevices = $0 }
+                                )
+                            )
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                        }
+
+                        HStack {
+                            Text("登录 Mac 时自动启动")
+                                .font(.system(size: 12))
+                            Spacer()
+                            Toggle("", isOn: $launchAtLogin)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                                .onChange(of: launchAtLogin) { _, newValue in
+                                    do {
+                                        if newValue {
+                                            try SMAppService.mainApp.register()
+                                        } else {
+                                            try SMAppService.mainApp.unregister()
+                                        }
+                                    } catch {
+                                        store.showToast("开机自启需要在应用程序目录运行", isError: true)
+                                    }
+                                }
+                        }
+                    }
+                    .padding(12)
+                    .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+
+                    // 2. Home Assistant NAS Connection
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack {
+                            Text("Home Assistant 连接 (局域网 / NAS)")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(connectionBadgeText)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(connectionBadgeColor)
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("服务器地址")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                            TextField("http://homeassistant.local:8123", text: $urlDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .controlSize(.small)
+                                .font(.system(size: 11.5, design: .monospaced))
+                        }
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("长期访问令牌 (安全存入钥匙串)")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                            SecureField("粘贴 HA 长期访问令牌", text: $tokenDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .controlSize(.small)
+                                .font(.system(size: 11.5, design: .monospaced))
+                        }
+
+                        HStack {
+                            Button("恢复默认地址") {
+                                urlDraft = KeychainHelper.defaultNASURL
+                            }
+                            .buttonStyle(PillActionButtonStyle())
+
+                            Spacer()
+
+                            Button("保存并重新连接") {
+                                store.updateConnection(serverURL: urlDraft, token: tokenDraft)
+                                withAnimation(AppleMotion.snappySpring) {
+                                    store.isShowingSettings = false
+                                }
+                            }
+                            .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
+                        }
+                        .padding(.top, 2)
+                    }
+                    .padding(12)
+                    .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+                }
+                .padding(.horizontal, 13)
+                .padding(.vertical, 11)
+            }
+            .frame(maxHeight: .infinity)
+
+            Divider()
+                .overlay(Color.primary.opacity(0.07))
+
+            // Pinned Bottom Quit Row
+            HStack {
+                Text("\(store.homeName) · 在线 \(store.onlineDeviceCount)/\(store.devices.count) 台")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                Spacer()
+
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "power")
+                        Text("退出米家控制中心")
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.red.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+        }
+        .onAppear {
+            urlDraft = store.serverURLString
+            tokenDraft = KeychainHelper.loadToken()
+        }
+    }
+
+    private var connectionBadgeText: String {
+        switch store.connectionStatus {
+        case .connected: return "● 已连接"
+        case .connecting: return "● 连接中…"
+        case .disconnected: return "● 未连接"
+        }
+    }
+
+    private var connectionBadgeColor: Color {
+        switch store.connectionStatus {
+        case .connected: return .green
+        case .connecting: return .orange
+        case .disconnected: return .red
+        }
+    }
+}

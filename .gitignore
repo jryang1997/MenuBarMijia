@@ -1,0 +1,24 @@
+# Swift Package Manager & Xcode
+.build/
+.swiftpm/
+Packages/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+
+# Built App Bundles & Archives
+*.app/
+*.dmg
+*.zip
+!nas/components/*.zip
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Local Environment / Secrets
+.env
+.env.*
