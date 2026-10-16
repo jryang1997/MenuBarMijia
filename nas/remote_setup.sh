@@ -6,6 +6,7 @@ set -u
 WORK=/tmp/ha_setup
 NAME=homeassistant
 FORCE_NEW="${FORCE_NEW:-0}"
+OFFICIAL_ONLY="${OFFICIAL_ONLY:-0}"
 
 say()  { printf '\n\033[1;34m▶ %s\033[0m\n' "$*"; }
 ok()   { printf '\033[1;32m✔ %s\033[0m\n' "$*"; }
@@ -42,7 +43,7 @@ if [ -n "$OLD" ]; then
   done
   if [ "$FORCE_NEW" != "1" ]; then
     warn "发现旧的 HA 容器，为避免误操作，本次没有做任何改动。"
-    warn "请把上面的信息发给 AI 助手，决定是沿用旧配置升级，还是全新安装。"
+    warn "请带上以上输出到 GitHub Issues 反馈，或自行决定沿用旧配置升级，还是用 FORCE_NEW=1 全新安装。"
     exit 2
   fi
   warn "FORCE_NEW=1：旧容器保持原样（只停止并取消自动启动，不删除），继续全新安装。"
@@ -68,25 +69,30 @@ for comp in xiaomi_home midea_ac_lan; do
   ok "$comp 版本 $(grep -o '"version": *"[^"]*"' "$BASE/config/custom_components/$comp/manifest.json" | cut -d'"' -f4)"
 done
 
-# ---------- 4. 拉取镜像（官方源失败时自动换国内镜像） ----------
+# ---------- 4. 拉取镜像（默认依次尝试国内第三方镜像，最后回落官方源；OFFICIAL_ONLY=1 只用官方源） ----------
 say "下载 Home Assistant 镜像（约 1.5GB，视网络需要几分钟到十几分钟）"
 TARGET=homeassistant/home-assistant:stable
 PULLED=""
-for src in \
-  ghcr.m.daocloud.io/home-assistant/home-assistant:stable \
-  ghcr.nju.edu.cn/home-assistant/home-assistant:stable \
-  docker.m.daocloud.io/homeassistant/home-assistant:stable \
-  ghcr.1ms.run/home-assistant/home-assistant:stable \
-  dockerproxy.net/homeassistant/home-assistant:stable \
-  docker.1ms.run/homeassistant/home-assistant:stable \
-  ghcr.io/home-assistant/home-assistant:stable \
-  homeassistant/home-assistant:stable
+OFFICIAL_SRCS="ghcr.io/home-assistant/home-assistant:stable homeassistant/home-assistant:stable"
+if [ "$OFFICIAL_ONLY" = "1" ]; then
+  SRCS="$OFFICIAL_SRCS"
+  ok "OFFICIAL_ONLY=1：只使用 ghcr.io 与 Docker Hub 官方源"
+else
+  SRCS="ghcr.m.daocloud.io/home-assistant/home-assistant:stable
+    ghcr.nju.edu.cn/home-assistant/home-assistant:stable
+    docker.m.daocloud.io/homeassistant/home-assistant:stable
+    ghcr.1ms.run/home-assistant/home-assistant:stable
+    dockerproxy.net/homeassistant/home-assistant:stable
+    docker.1ms.run/homeassistant/home-assistant:stable
+    $OFFICIAL_SRCS"
+fi
+for src in $SRCS
 do
   echo "  尝试 $src"
   if "$DOCKER" pull "$src"; then PULLED=$src; break; fi
   warn "这个源失败，换下一个"
 done
-[ -n "$PULLED" ] || die "所有镜像源都失败了，请把输出发给 AI 助手。"
+[ -n "$PULLED" ] || die "所有镜像源都失败了，请带上以上输出到 GitHub Issues 反馈。"
 [ "$PULLED" != "$TARGET" ] && "$DOCKER" tag "$PULLED" "$TARGET"
 ok "镜像就绪：$("$DOCKER" inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$TARGET")"
 

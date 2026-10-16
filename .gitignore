@@ -11,7 +11,6 @@ xcuserdata/
 *.app/
 *.dmg
 *.zip
-!nas/components/*.zip
 
 # macOS System Files
 .DS_Store
@@ -22,3 +21,6 @@ xcuserdata/
 # Local Environment / Secrets
 .env
 .env.*
+
+# 用户自己下载的第三方集成（不随仓库分发）
+nas/components/*.zip

@@ -1,18 +1,21 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" width="128" alt="米家控制中心">
+  <img src="docs/assets/logo.svg" width="128" alt="MenuBarMijia">
 </p>
 
-<h1 align="center">米家控制中心</h1>
+<h1 align="center">MenuBarMijia</h1>
 
 <p align="center">
-  住在 macOS 菜单栏里的米家遥控器。<br>
+  菜单栏里的米家遥控器（非官方）<br>
   <b>不碰手机，不断心流。</b>
 </p>
+
+> [!NOTE]
+> 本项目是个人开源作品，与小米、米家、美的无关，也未获得其授权或认可。「小米」「米家」「美的」等是各自权利人的商标，本文仅用于说明兼容对象。
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
-  <img src="https://img.shields.io/badge/依赖-零-30D158" alt="零依赖">
+  <img src="https://img.shields.io/badge/三方Swift依赖-零-30D158" alt="零第三方 Swift 依赖">
   <img src="https://img.shields.io/badge/License-MIT-0A84FF" alt="MIT">
 </p>
 
@@ -24,7 +27,7 @@
 
 摸出手机、解锁、打开米家、等它加载、找到书房、点开吸顶灯。六步走完，刚才在想什么已经忘了。
 
-米家控制中心把这件事缩成一步：**点一下菜单栏，或者按 `⌥M`**。全屋设备都在这里，开关、调光、一键全关，手不用离开键盘。
+米家控制中心（本项目 App 的名字，非小米官方产品）把这件事缩成一步：**点一下菜单栏，或者按 `⌥M`**。全屋设备都在这里，开关、调光、一键全关，手不用离开键盘。
 
 它是一个原生 SwiftUI 应用，通过局域网里的 [Home Assistant](https://www.home-assistant.io) 连接小米官方 [`xiaomi_home`](https://github.com/Xiaomi/ha_xiaomi_home) 和美的 [`midea_ac_lan`](https://github.com/wuwentao/midea_ac_lan) 集成。米家和美的设备，放在同一个面板里。
 
@@ -112,11 +115,13 @@
 - **常用置顶**：星标设备放进「常用控制」，可以自己调整顺序
 - **隐藏设备**：右键「隐藏此设备」，不想看到的从面板里拿掉，设置里随时恢复
 - **登录自启**：可设置登录 Mac 时自动启动
-- **令牌安全**：访问令牌存放在 macOS 钥匙串里，App 只与你局域网内的 Home Assistant 通信
+- **令牌安全**：访问令牌存放在 macOS 钥匙串里，App 只与你填写的 Home Assistant 地址通信
 
 ## 开始使用
 
 **环境**：macOS 26 及以上，Xcode 26 / Swift 6。
+
+**前提**：App 本身不直连米家云或设备，必须配合 [Home Assistant](https://www.home-assistant.io) 使用，并在 HA 里装好 [`xiaomi_home`](https://github.com/XiaoMi/ha_xiaomi_home) 集成；美的设备另需 [`midea_ac_lan`](https://github.com/wuwentao/midea_ac_lan)（可选）。
 
 ### 1. 准备 Home Assistant
 
@@ -129,6 +134,9 @@ bash nas/deploy_ha.sh
 ```
 
 按提示填入 NAS 的局域网 IP 和管理员账号。脚本会拉取镜像、以 host 网络模式启动 Home Assistant，并预装 `xiaomi_home` 与 `midea_ac_lan`。
+
+- **集成从哪来**：仓库不附带这两个集成。脚本会在 Mac 上从它们官方 GitHub 的最新 Release 下载源码并打包上传。GitHub 直连不通时，可指定代理前缀，如 `GH_PROXY=https://ghproxy.net/ bash nas/deploy_ha.sh`；也可以自己下载后，把集成目录（`custom_components/<域名>/` 里的内容）压成 `nas/components/xiaomi_home.zip`、`nas/components/midea_ac_lan.zip`，脚本会优先使用。
+- **镜像源**：为方便国内网络，脚本默认依次尝试 DaoCloud、南京大学、1ms、dockerproxy 等**第三方镜像源**，最后才回落到 ghcr.io 和 Docker Hub 官方源。只想用官方源：`OFFICIAL_ONLY=1 bash nas/deploy_ha.sh`。
 
 ### 2. 编译应用
 
@@ -146,7 +154,7 @@ open "米家控制中心.app"           # 也可以先拖进「应用程序」�
 
 ## 参与开发
 
-纯 Swift Package，没有任何第三方依赖，开启 Swift 6 严格并发检查。核心逻辑放在独立的 `MijiaCore` 库里，可以脱离界面单独测试。
+纯 Swift Package，没有任何第三方 Swift 依赖，开启 Swift 6 严格并发检查。核心逻辑放在独立的 `MijiaCore` 库里，可以脱离界面单独测试。
 
 ```bash
 bash scripts/check.sh           # 密钥扫描 + 编码规范检查 + swift test
@@ -179,6 +187,18 @@ docs/                                   ADR、V2 规格与 README 配图
 ```
 
 </details>
+
+## 第三方组件
+
+本仓库不包含、也不再分发以下集成，部署脚本只是从官方地址下载到你自己的设备上，使用时请遵守各自的许可：
+
+| 组件 | 来源 | 许可 |
+| --- | --- | --- |
+| Xiaomi Home Integration（`xiaomi_home`） | [XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home) | 小米自有许可，仅限非商业地配合 Home Assistant 使用，见 [LICENSE.md](https://github.com/XiaoMi/ha_xiaomi_home/blob/main/LICENSE.md) |
+| Midea AC LAN（`midea_ac_lan`） | [wuwentao/midea_ac_lan](https://github.com/wuwentao/midea_ac_lan) | MIT，见 [LICENSE](https://github.com/wuwentao/midea_ac_lan/blob/master/LICENSE) |
+| Home Assistant | [home-assistant/core](https://github.com/home-assistant/core) | Apache-2.0 |
+
+本仓库的 MIT 许可只覆盖本项目自己的代码。
 
 ## License
 
