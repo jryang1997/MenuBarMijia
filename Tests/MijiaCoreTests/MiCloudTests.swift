@@ -530,6 +530,57 @@ struct MiCloudProviderTests {
         defer { t2.cancel() }
         #expect(await log2.wait { await $0.statuses.contains(.disconnected("米家登录已过期，请重新扫码")) })
     }
+
+    @MainActor
+    @Test("HomeStore persists homeBackend, formats serverHostSummary for both modes, and handles login/logout")
+    func backendSwitchingAndSummary() {
+        let priorSession = MiSessionStore.load()
+        defer {
+            if let priorSession {
+                MiSessionStore.save(priorSession)
+            } else {
+                MiSessionStore.clear()
+            }
+        }
+        MiSessionStore.clear()
+
+        let suite = "com.yangzhiyuan.MenuBarMijia.backend-test.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+        let store = HomeStore(provider: MockHomeProvider(), defaultsSuiteName: suite)
+        store.serverURLString = "http://192.168.50.35:8123"
+        #expect(store.homeBackend == .homeAssistant)
+        #expect(store.serverHostSummary == "192.168.50.35")
+
+        store.switchBackend(.xiaomiCloud)
+        #expect(store.homeBackend == .xiaomiCloud)
+        #expect(store.serverHostSummary == "米家云端 (未登录)")
+
+        let reloaded = HomeStore(provider: MockHomeProvider(), defaultsSuiteName: suite)
+        #expect(reloaded.homeBackend == .xiaomiCloud)
+
+        let session = MiSession(
+            userId: "1234567890",
+            cUserId: "cu",
+            ssecurity: Vectors.ssecurity,
+            serviceToken: "tok",
+            passToken: "pt"
+        )
+        store.completeMiLogin(session)
+        #expect(store.homeBackend == .xiaomiCloud)
+        #expect(store.miSessionMaskedUserId == "12****90")
+        #expect(store.serverHostSummary == "米家云端 (12****90)")
+        #expect(store.toastNotice?.message == "已登录米家账号 (12****90)")
+
+        store.logoutMiAccount()
+        #expect(store.miSessionMaskedUserId == nil)
+        #expect(store.serverHostSummary == "米家云端 (未登录)")
+        #expect(store.toastNotice?.message == "已退出米家账号")
+
+        store.switchBackend(.homeAssistant)
+        #expect(store.homeBackend == .homeAssistant)
+        #expect(store.serverHostSummary == "192.168.50.35")
+    }
 }
 
 struct MiCloudClientTests {

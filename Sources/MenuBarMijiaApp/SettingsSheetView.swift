@@ -209,10 +209,10 @@ public struct SettingsSheetView: View {
                         .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
                     }
 
-                    // 3. Home Assistant NAS Connection
+                    // 3. Connection Configuration (Home Assistant / Xiaomi Cloud)
                     VStack(alignment: .leading, spacing: 9) {
                         HStack {
-                            Text("Home Assistant 连接 (局域网 / NAS)")
+                            Text("连接配置")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
                             Spacer()
@@ -221,43 +221,66 @@ public struct SettingsSheetView: View {
                                 .foregroundStyle(connectionBadgeColor)
                         }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("服务器地址")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                            TextField("http://homeassistant.local:8123", text: $urlDraft)
-                                .textFieldStyle(.roundedBorder)
-                                .controlSize(.small)
-                                .font(.system(size: 11.5, design: .monospaced))
-                        }
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("长期访问令牌 (安全存入钥匙串)")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                            SecureField("粘贴 HA 长期访问令牌", text: $tokenDraft)
-                                .textFieldStyle(.roundedBorder)
-                                .controlSize(.small)
-                                .font(.system(size: 11.5, design: .monospaced))
-                        }
-
-                        HStack {
-                            Button("恢复默认地址") {
-                                urlDraft = KeychainHelper.defaultNASURL
-                            }
-                            .buttonStyle(PillActionButtonStyle())
-
-                            Spacer()
-
-                            Button("保存并重新连接") {
-                                store.updateConnection(serverURL: urlDraft, token: tokenDraft)
-                                withAnimation(AppleMotion.snappySpring) {
-                                    store.isShowingSettings = false
+                        Picker(
+                            "",
+                            selection: Binding(
+                                get: { store.homeBackend },
+                                set: { newBackend in
+                                    withAnimation(AppleMotion.snappySpring) {
+                                        store.switchBackend(newBackend)
+                                    }
                                 }
+                            )
+                        ) {
+                            ForEach(HomeBackend.allCases) { backend in
+                                Text(backend.title).tag(backend)
                             }
-                            .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
                         }
-                        .padding(.top, 2)
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .controlSize(.small)
+
+                        if store.homeBackend == .homeAssistant {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("服务器地址")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                TextField("http://homeassistant.local:8123", text: $urlDraft)
+                                    .textFieldStyle(.roundedBorder)
+                                    .controlSize(.small)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("长期访问令牌 (安全存入钥匙串)")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                SecureField("粘贴 HA 长期访问令牌", text: $tokenDraft)
+                                    .textFieldStyle(.roundedBorder)
+                                    .controlSize(.small)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                            }
+
+                            HStack {
+                                Button("恢复默认地址") {
+                                    urlDraft = KeychainHelper.defaultNASURL
+                                }
+                                .buttonStyle(PillActionButtonStyle())
+
+                                Spacer()
+
+                                Button("保存并重新连接") {
+                                    store.updateConnection(serverURL: urlDraft, token: tokenDraft)
+                                    withAnimation(AppleMotion.snappySpring) {
+                                        store.isShowingSettings = false
+                                    }
+                                }
+                                .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
+                            }
+                            .padding(.top, 2)
+                        } else {
+                            MiAccountSection(store: store)
+                        }
                     }
                     .padding(12)
                     .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)

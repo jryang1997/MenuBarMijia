@@ -1,6 +1,20 @@
 import Foundation
 import os
 
+public enum HomeBackend: String, CaseIterable, Identifiable, Sendable {
+    case homeAssistant = "homeAssistant"
+    case xiaomiCloud = "xiaomiCloud"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .homeAssistant: return "Home Assistant"
+        case .xiaomiCloud: return "米家云端直连"
+        }
+    }
+}
+
 public enum ConnectionStatus: Equatable, Sendable {
     case connecting
     case connected
@@ -72,6 +86,15 @@ public actor HAWebSocketProvider: HomeProvider {
         self.baseURLString = Self.normalizeBaseURL(baseURLString)
         self.token = token
         restartLoop()
+    }
+
+    public func shutdown() {
+        loopTask?.cancel()
+        loopTask = nil
+        activeWebSocket?.cancel(with: .goingAway, reason: nil)
+        activeWebSocket = nil
+        continuation?.finish()
+        continuation = nil
     }
 
     public nonisolated func events() -> AsyncStream<HomeProviderEvent> {

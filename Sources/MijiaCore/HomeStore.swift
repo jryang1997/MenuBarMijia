@@ -108,7 +108,16 @@ public final class HomeStore {
         didSet { userDefaults.set(serverURLString, forKey: "ha_server_url") }
     }
 
+    public private(set) var homeBackend: HomeBackend {
+        didSet { userDefaults.set(homeBackend.rawValue, forKey: "home_backend") }
+    }
+
+    public private(set) var miSessionMaskedUserId: String?
+
     public var serverHostSummary: String {
+        if homeBackend == .xiaomiCloud {
+            return miSessionMaskedUserId.map { "米家云端 (\($0))" } ?? "米家云端 (未登录)"
+        }
         if let url = URL(string: serverURLString), let host = url.host() {
             return host
         }
@@ -143,6 +152,9 @@ public final class HomeStore {
 
         let savedURL = ud.string(forKey: "ha_server_url") ?? KeychainHelper.defaultNASURL
         self.serverURLString = savedURL
+        let initialBackend = ud.string(forKey: "home_backend").flatMap(HomeBackend.init(rawValue:)) ?? .homeAssistant
+        self.homeBackend = initialBackend
+        self.miSessionMaskedUserId = MiSessionStore.load()?.maskedUserId
         self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.defaultHomeName
         self.hideOfflineDevices = ud.bool(forKey: "hide_offline_devices")
         self.showQuickActionsBar = boolOrDefaultTrue("show_quick_actions_bar")
@@ -170,8 +182,14 @@ public final class HomeStore {
             self.hiddenDeviceIds = []
         }
 
-        let token = KeychainHelper.loadToken()
-        self.provider = provider ?? HAWebSocketProvider(baseURLString: savedURL, token: token)
+        if let provider {
+            self.provider = provider
+        } else if initialBackend == .xiaomiCloud {
+            self.provider = MiCloudProvider()
+        } else {
+            let token = KeychainHelper.loadToken()
+            self.provider = HAWebSocketProvider(baseURLString: savedURL, token: token)
+        }
         startListening()
     }
 
@@ -1109,10 +1127,63 @@ public final class HomeStore {
 
     // MARK: - Connection & Settings Management
 
+    public func switchBackend(_ backend: HomeBackend) {
+        let matches: Bool = switch backend {
+        case .homeAssistant: provider is HAWebSocketProvider
+        case .xiaomiCloud: provider is MiCloudProvider
+        }
+        guard homeBackend != backend || !matches else { return }
+
+        self.homeBackend = backend
+        eventTask?.cancel()
+        shutdownCurrentProvider()
+
+        switch backend {
+        case .homeAssistant:
+            self.provider = HAWebSocketProvider(baseURLString: serverURLString, token: KeychainHelper.loadToken())
+        case .xiaomiCloud:
+            self.provider = MiCloudProvider()
+        }
+        startListening()
+    }
+
+    public func completeMiLogin(_ session: MiSession) {
+        MiSessionStore.save(session)
+        self.miSessionMaskedUserId = session.maskedUserId
+        self.homeBackend = .xiaomiCloud
+        eventTask?.cancel()
+        shutdownCurrentProvider()
+        self.provider = MiCloudProvider()
+        startListening()
+        showToast("已登录米家账号 (\(session.maskedUserId))")
+    }
+
+    public func logoutMiAccount() {
+        MiSessionStore.clear()
+        self.miSessionMaskedUserId = nil
+        if homeBackend == .xiaomiCloud {
+            eventTask?.cancel()
+            shutdownCurrentProvider()
+            self.provider = MiCloudProvider()
+            startListening()
+        }
+        showToast("已退出米家账号")
+    }
+
+    private func shutdownCurrentProvider() {
+        if let old = provider as? MiCloudProvider {
+            Task { await old.shutdown() }
+        } else if let old = provider as? HAWebSocketProvider {
+            Task { await old.shutdown() }
+        }
+    }
+
     public func updateConnection(serverURL: String, token: String) {
         self.serverURLString = serverURL
         KeychainHelper.saveToken(token)
-        if let haProvider = provider as? HAWebSocketProvider {
+        if homeBackend != .homeAssistant || !(provider is HAWebSocketProvider) {
+            switchBackend(.homeAssistant)
+        } else if let haProvider = provider as? HAWebSocketProvider {
             Task {
                 await haProvider.updateCredentials(baseURLString: serverURL, token: token)
             }
