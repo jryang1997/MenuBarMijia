@@ -316,6 +316,15 @@ public enum DeviceSynthesizer {
         }
         synthesizedScenes.sort { $0.name < $1.name }
 
+        return assembleHome(devices: smartDevices, readings: envReadings, scenes: synthesizedScenes)
+    }
+
+    /// Shared tail of every backend's synthesis: derive the room list and apply the panel sort order.
+    static func assembleHome(
+        devices smartDevices: [SmartDevice],
+        readings envReadings: [EnvironmentReading],
+        scenes synthesizedScenes: [HomeScene]
+    ) -> SynthesizedHome {
         // Build deduplicated room list from active smartDevices
         var roomDict: [String: RoomArea] = [:]
         for d in smartDevices {
@@ -732,7 +741,7 @@ public enum DeviceSynthesizer {
         return trimmed
     }
 
-    private static func normalizedRoomId(for roomName: String, fallback: String) -> String {
+    static func normalizedRoomId(for roomName: String, fallback: String) -> String {
         switch roomName {
         case "客厅": return "ke_ting"
         case "书房": return "shu_fang"
