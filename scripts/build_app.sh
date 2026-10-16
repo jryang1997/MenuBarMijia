@@ -55,6 +55,10 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <true/>
     <key>NSLocalNetworkUsageDescription</key>
     <string>用于局域网实时连接群晖 NAS 上的 Home Assistant 控制智能家居设备。</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>用于通过语音指令直接控制米家智能家居设备。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>用于将您的中文语音指令实时识别为智能家居控制动作。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsArbitraryLoads</key>

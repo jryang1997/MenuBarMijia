@@ -1261,6 +1261,8 @@ public final class HomeStore {
     public var isShowingAssistantBar: Bool = false
     /// Bumped to ask an already-visible command bar to take keyboard focus.
     public private(set) var assistantFocusRequest: Int = 0
+    /// Bumped to ask the command bar to start or toggle live speech recognition.
+    public private(set) var assistantVoiceRequest: Int = 0
     public private(set) var assistantState: AssistantState = .idle
     private var assistantResetTask: Task<Void, Never>?
     /// Test seam replacing the network resolver built from `assistantConfig`.
@@ -1271,9 +1273,13 @@ public final class HomeStore {
         set { newValue.save(to: userDefaults) }
     }
 
-    public func presentAssistantBar() {
+    public func presentAssistantBar(startVoice: Bool = false) {
         isShowingAssistantBar = true
-        assistantFocusRequest &+= 1
+        if startVoice {
+            assistantVoiceRequest &+= 1
+        } else {
+            assistantFocusRequest &+= 1
+        }
     }
 
     public func dismissAssistantBar() {
@@ -1447,6 +1453,26 @@ public final class HomeStore {
             s.currentEffect = nil
             updated.kind = .light(s)
             return AssistantEffect(updated: updated, command: .setLightColorTemp(entityId: s.entityId, kelvin: kelvin), restore: [restore])
+
+        case (.lightEffect(let effect), .light(var s)):
+            let restore: DeviceCommand
+            if !s.isOn {
+                restore = .setLightPower(entityId: s.entityId, isOn: false)
+            } else if let prevEffect = s.currentEffect {
+                restore = .setLightEffect(entityId: s.entityId, effect: prevEffect)
+            } else if let prevKelvin = s.colorTempKelvin {
+                restore = .setLightColorTemp(entityId: s.entityId, kelvin: prevKelvin)
+            } else {
+                restore = .setLightPower(entityId: s.entityId, isOn: true)
+            }
+            s.isOn = true
+            s.currentEffect = effect
+            updated.kind = .light(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .setLightEffect(entityId: s.entityId, effect: effect),
+                restore: [restore]
+            )
 
         case (.power(let on), .climate(var s)):
             let wasOn = s.isOn && s.hvacMode != "off"

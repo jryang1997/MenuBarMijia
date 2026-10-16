@@ -178,6 +178,12 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
             return true
         }
 
+        if event.charactersIgnoringModifiers?.lowercased() == "v",
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            store.presentAssistantBar(startVoice: true)
+            return true
+        }
+
         switch code {
         case kVK_UpArrow:
             store.moveFocus(delta: -1)

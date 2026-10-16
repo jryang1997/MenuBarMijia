@@ -22,6 +22,12 @@ public enum LocalIntentParser {
         "白光": 6500, "冷光": 6500
     ]
 
+    private static let lightEffectWords: [String: String] = [
+        "月光模式": "Night", "月光灯": "Night", "月光": "Night",
+        "夜灯模式": "Night", "夜灯": "Night",
+        "日光模式": "Day", "日光灯": "Day", "日光": "Day"
+    ]
+
     private static let hvacModeWords: [String: String] = [
         "制冷": "cool", "制热": "heat", "除湿": "dry", "送风": "fan_only", "自动": "auto"
     ]
@@ -48,7 +54,8 @@ public enum LocalIntentParser {
     private static let fillers: Set<String> = [
         "请", "帮我", "帮忙", "麻烦", "给我", "把", "将", "给", "一下", "一点", "一些",
         "吧", "了", "的", "呢", "啊", "呀", "都", "里", "模式",
-        "调到", "调成", "调为", "调至", "设为", "设成", "设置为", "设置成", "设置", "调节", "调", "到", "为"
+        "调到", "调成", "调为", "调至", "设为", "设成", "设置为", "设置成", "设置", "调节", "调", "到", "为",
+        "切换为", "切换到", "切到", "切为", "切成", "切换", "切", "改成", "改为"
     ]
 
     private static let sceneVerbs: Set<String> = ["执行", "启动", "打开", "开启", "激活", "切换到", "切换", "进入", "运行"]
@@ -121,6 +128,9 @@ public enum LocalIntentParser {
         let categories = Set(longestFirst(Set(categoryWords.keys)).filter { consume($0, from: &rest) }.compactMap { categoryWords[$0] })
 
         // 3. Operation words
+        for word in longestFirst(Set(lightEffectWords.keys)) where consume(word, from: &rest) {
+            ops.append(.lightEffect(lightEffectWords[word]!))
+        }
         for word in longestFirst(Set(brightnessWords.keys)) where consume(word, from: &rest) {
             ops.append(.brightness(brightnessWords[word]!))
         }
@@ -227,7 +237,7 @@ public enum LocalIntentParser {
     private static func impliedCategories(for ops: [IntentOperation]) -> Set<IntentDeviceCategory>? {
         for op in ops {
             switch op {
-            case .brightness, .colorTemperature: return [.light]
+            case .brightness, .colorTemperature, .lightEffect: return [.light]
             case .hvacMode, .targetTemperature: return [.climate, .heater]
             case .power, .activateScene: continue
             }
@@ -245,8 +255,8 @@ public enum LocalIntentParser {
             byRank[rank] = op
         }
         if byRank[0] == .power(false), byRank.count > 1 { return nil }
-        // Brightness, color temperature, and HVAC mode already switch the device on.
-        if byRank[0] == .power(true), byRank.keys.contains(where: { $0 == 1 || $0 == 3 || $0 == 4 }) {
+        // HVAC mode, light effect, brightness, and color temperature already switch the device on.
+        if byRank[0] == .power(true), byRank.keys.contains(where: { $0 == 1 || $0 == 3 || $0 == 4 || $0 == 5 }) {
             byRank[0] = nil
         }
         return byRank.keys.sorted().compactMap { byRank[$0] }
@@ -257,9 +267,10 @@ public enum LocalIntentParser {
         case .power: return 0
         case .hvacMode: return 1
         case .targetTemperature: return 2
-        case .brightness: return 3
-        case .colorTemperature: return 4
-        case .activateScene: return 5
+        case .lightEffect: return 3
+        case .brightness: return 4
+        case .colorTemperature: return 5
+        case .activateScene: return 6
         }
     }
 

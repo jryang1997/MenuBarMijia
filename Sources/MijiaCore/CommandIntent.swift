@@ -6,6 +6,7 @@ public enum IntentOperation: Equatable, Sendable {
     case power(Bool)
     case brightness(Int)          // 1...100
     case colorTemperature(Int)    // kelvin
+    case lightEffect(String)      // Day / Night (or device-supported effect)
     case hvacMode(String)         // cool/heat/dry/fan_only/auto/off
     case targetTemperature(Double)
     case activateScene            // target is a HomeScene id
@@ -84,6 +85,19 @@ public enum IntentValidator {
         "heat_cool": "auto"
     ]
 
+    private static let lightEffectAliases: [String: String] = [
+        "moonlight": "Night",
+        "night": "Night",
+        "月光": "Night",
+        "月光模式": "Night",
+        "夜灯": "Night",
+        "夜灯模式": "Night",
+        "daylight": "Day",
+        "day": "Day",
+        "日光": "Day",
+        "日光模式": "Day"
+    ]
+
     /// Returns the operation adjusted to the device's limits, or nil when the device cannot perform it.
     public static func normalize(_ operation: IntentOperation, for device: SmartDevice) -> IntentOperation? {
         switch (operation, device.kind) {
@@ -96,6 +110,16 @@ public enum IntentValidator {
         case (.colorTemperature(let kelvin), .light(let s)):
             guard kelvin > 0 else { return nil }
             return .colorTemperature(min(s.maxKelvin, max(s.minKelvin, kelvin)))
+
+        case (.lightEffect(let raw), .light(let s)):
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let canonical = lightEffectAliases[trimmed.lowercased()] ?? lightEffectAliases[trimmed] ?? trimmed
+            guard let matched = s.availableEffects.first(where: {
+                $0.caseInsensitiveCompare(canonical) == .orderedSame
+            }) else {
+                return nil
+            }
+            return .lightEffect(matched)
 
         case (.hvacMode(let raw), .climate(let s)):
             let lowered = raw.lowercased()
@@ -170,6 +194,7 @@ public enum IntentReply {
             case .power(false): return "关闭\(joined)"
             case .brightness(let b): return "\(joined)亮度调至 \(b)%"
             case .colorTemperature(let k): return "\(joined)色温调至 \(k)K"
+            case .lightEffect(let e): return "\(joined)切换为\(SmartDevice.localizeEffect(e))模式"
             case .hvacMode(let m): return "\(joined)切换为\(SmartDevice.localizeHVACMode(m))"
             case .targetTemperature(let t): return "\(joined)设为 \(formatTemperature(t))°C"
             case .activateScene: return "执行场景「\(joined)」"
@@ -190,28 +215,34 @@ public enum IntentReply {
 public struct IntentCatalog: Sendable {
     public let lines: [String]
     public let sceneLines: [String]
+    public let criteriaByAlias: [String: String]
     private let realIdByAlias: [String: String]
 
     public init(devices: [SmartDevice], scenes: [HomeScene]) {
         var lines: [String] = []
         var map: [String: String] = [:]
+        var criteria: [String: String] = [:]
         var index = 0
         for device in devices {
             let category = IntentDeviceCategory(device)
             guard category.isAssistantControllable else { continue }
             index += 1
             let alias = "d\(index)"
+            let summary = Self.stateSummary(device)
             map[alias] = device.id
-            lines.append([alias, device.name, device.roomName, category.rawValue, Self.stateSummary(device)].joined(separator: "|"))
+            criteria[alias] = "\(device.name) (\(device.roomName), \(category.rawValue), \(summary))"
+            lines.append([alias, device.name, device.roomName, category.rawValue, summary].joined(separator: "|"))
         }
         var sceneLines: [String] = []
         for (offset, scene) in scenes.enumerated() {
             let alias = "s\(offset + 1)"
             map[alias] = scene.id
+            criteria[alias] = "场景：\(scene.name)"
             sceneLines.append("\(alias)|\(scene.name)")
         }
         self.lines = lines
         self.sceneLines = sceneLines
+        self.criteriaByAlias = criteria
         self.realIdByAlias = map
     }
 
@@ -231,8 +262,11 @@ public struct IntentCatalog: Sendable {
         guard device.isOnline else { return "离线" }
         switch device.kind {
         case .light(let s):
-            guard s.isOn else { return "关" }
-            return s.brightnessPercent.map { "开 亮度\($0)%" } ?? "开"
+            let effectList = s.availableEffects.isEmpty ? "" : " 可用模式:\(s.availableEffects.joined(separator: "/"))"
+            guard s.isOn else { return "关" + effectList }
+            let bri = s.brightnessPercent.map { " 亮度\($0)%" } ?? ""
+            let eff = s.currentEffect.map { " 当前:\($0)" } ?? ""
+            return "开\(bri)\(eff)\(effectList)"
         case .climate(let s):
             let modes = s.availableModes.joined(separator: "/")
             let range = "\(IntentReply.formatTemperature(s.minTemp))-\(IntentReply.formatTemperature(s.maxTemp))°C"

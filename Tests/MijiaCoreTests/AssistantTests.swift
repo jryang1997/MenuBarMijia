@@ -8,7 +8,11 @@ struct AssistantTests {
     static let studyCeiling = SmartDevice(
         id: "dev_study_ceiling", name: "书房吸顶灯", roomId: "shu_fang", roomName: "书房",
         model: "yeelink.light.ceiling20", isOnline: true,
-        kind: .light(LightSpec(entityId: "light.study_ceiling", isOn: false))
+        kind: .light(LightSpec(
+            entityId: "light.study_ceiling",
+            isOn: false,
+            availableEffects: ["Day", "Night"]
+        ))
     )
     static let studyDesk = SmartDevice(
         id: "dev_study_desk", name: "书房台灯", roomId: "shu_fang", roomName: "书房",
@@ -58,6 +62,25 @@ struct AssistantTests {
             DeviceIntent(targetId: "dev_study_desk", operation: .power(true))
         ])
         #expect(plan.reply == "已打开书房吸顶灯、书房台灯")
+    }
+
+    @Test("书房灯月光模式 switches the study ceiling light to Night effect instead of dimming")
+    func studyMoonlightEffect() throws {
+        let plan = try #require(Self.parse("书房灯月光模式"))
+        #expect(plan.source == .local)
+        #expect(plan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Night"))
+        ])
+        #expect(plan.reply == "已书房吸顶灯切换为月光模式")
+
+        let dayPlan = try #require(Self.parse("把书房吸顶灯切换为日光模式"))
+        #expect(dayPlan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Day"))
+        ])
+        #expect(dayPlan.reply == "已书房吸顶灯切换为日光模式")
+
+        // A desk lamp without availableEffects cannot accept Night mode when explicitly named.
+        #expect(Self.parse("书房台灯月光模式") == nil)
     }
 
     @Test("关掉所有的灯 turns off every light")
@@ -126,7 +149,7 @@ struct AssistantTests {
         好的：
         ```json
         {"actions":[
-          {"device":"d1","op":"power","value":true},
+          {"device":"d1","op":"effect","value":"Night"},
           {"device":"d99","op":"power","value":true},
           {"device":"d3","op":"brightness","value":50},
           {"device":"d3","op":"temperature","value":40},
@@ -155,10 +178,42 @@ struct AssistantTests {
         #expect(plan.source == .model)
         #expect(plan.reply == "好的，已为你处理 {书房}")
         #expect(plan.intents == [
-            DeviceIntent(targetId: "dev_study_ceiling", operation: .power(true)),
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Night")),
             DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(30)),
             DeviceIntent(targetId: "scene_sleep", operation: .activateScene)
         ])
+    }
+
+    @Test("Model resolver uses Magpie /v1/systemone when configured with jev-latest")
+    func modelResolverSystemOneJev() async throws {
+        let systemOnePayload: [String: Any] = [
+            "answers": [
+                "target": ["choice": "d1", "confidence": 0.99],
+                "op": ["choice": "effect_night", "confidence": 0.97]
+            ]
+        ]
+        let responseData = try JSONSerialization.data(withJSONObject: systemOnePayload)
+
+        let resolver = ModelIntentResolver(
+            config: AssistantConfig(baseURL: "http://localhost:3425/v1", model: "typesafe/jev-latest"),
+            transport: { request in
+                #expect(request.url?.absoluteString == "http://localhost:3425/v1/systemone")
+                let body = try #require(request.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+                #expect(body["model"] as? String == "typesafe/jev-latest")
+                let questions = try #require(body["questions"] as? [String: Any])
+                #expect(questions["target"] != nil)
+                #expect(questions["op"] != nil)
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (responseData, response)
+            }
+        )
+
+        let plan = try await resolver.resolve("书房来点柔和月光", devices: Self.devices, scenes: Self.scenes)
+        #expect(plan.source == .model)
+        #expect(plan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Night"))
+        ])
+        #expect(plan.reply == "已书房吸顶灯切换为月光模式")
     }
 
     @Test("Model resolver surfaces HTTP errors and empty content")
@@ -185,7 +240,9 @@ struct AssistantTests {
     private func makeStore() async throws -> (HomeStore, MockHomeProvider) {
         let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: Self.devices, scenes: Self.scenes))
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.assistant.\(UUID().uuidString)")
-        try await Task.sleep(for: .milliseconds(50))
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         return (store, mock)
     }
 
@@ -205,9 +262,19 @@ struct AssistantTests {
         let studyActive = store.devices.filter { $0.roomName == "书房" }.map(\.isActiveOn)
         #expect(studyActive == [true, true])
 
+        _ = await store.runAssistantCommand("书房灯月光模式")
+        let afterMoonlight = await mock.executedCommands
+        #expect(afterMoonlight.last == .setLightEffect(entityId: "light.study_ceiling", effect: "Night"))
+        if case .light(let ceilingSpec)? = store.devices.first(where: { $0.id == "dev_study_ceiling" })?.kind {
+            #expect(ceilingSpec.isOn == true)
+            #expect(ceilingSpec.currentEffect == "Night")
+        } else {
+            Issue.record("Expected study ceiling light spec")
+        }
+
         _ = await store.runAssistantCommand("把客厅空调调到26度制冷")
         let afterClimate = await mock.executedCommands
-        #expect(Array(afterClimate.dropFirst(2)) == [
+        #expect(Array(afterClimate.dropFirst(3)) == [
             .setClimateMode(entityId: "climate.living_ac", hvacMode: "cool"),
             .setClimateTemperature(entityId: "climate.living_ac", temperature: 26)
         ])

@@ -228,6 +228,20 @@ public struct ControlCenterPanel: View {
 
                 Button {
                     withAnimation(AppleMotion.snappySpring) {
+                        store.presentAssistantBar(startVoice: true)
+                    }
+                } label: {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.primary.opacity(0.78))
+                        .frame(width: 26, height: 24)
+                        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .help("语音指令：点击直接说话控制设备（快捷键 V）")
+
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
                         if store.isShowingAssistantBar {
                             store.dismissAssistantBar()
                         } else {
