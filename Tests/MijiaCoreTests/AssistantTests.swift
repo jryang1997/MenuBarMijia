@@ -1,0 +1,260 @@
+import Foundation
+import Testing
+@testable import MijiaCore
+
+struct AssistantTests {
+    // MARK: - Fixture
+
+    static let studyCeiling = SmartDevice(
+        id: "dev_study_ceiling", name: "书房吸顶灯", roomId: "shu_fang", roomName: "书房",
+        model: "yeelink.light.ceiling20", isOnline: true,
+        kind: .light(LightSpec(entityId: "light.study_ceiling", isOn: false))
+    )
+    static let studyDesk = SmartDevice(
+        id: "dev_study_desk", name: "书房台灯", roomId: "shu_fang", roomName: "书房",
+        model: "yeelink.light.lamp4", isOnline: true,
+        kind: .light(LightSpec(entityId: "light.study_desk", isOn: false))
+    )
+    static let livingAC = SmartDevice(
+        id: "dev_living_ac", name: "客厅空调", roomId: "ke_ting", roomName: "客厅",
+        model: "xiaomi.aircondition.mt0", isOnline: true,
+        kind: .climate(ClimateSpec(
+            entityId: "climate.living_ac", isOn: false, hvacMode: "off",
+            availableModes: ["off", "cool", "heat", "dry", "fan_only", "auto"],
+            targetTemperature: 24
+        ))
+    )
+    static let bedsideLamp = SmartDevice(
+        id: "dev_bedside", name: "主卧床头灯", roomId: "zhu_wo", roomName: "主卧",
+        model: "yeelink.light.bslamp2", isOnline: true,
+        kind: .light(LightSpec(entityId: "light.bedside", isOn: true, brightnessPercent: 80))
+    )
+    static let guestHeater = SmartDevice(
+        id: "dev_guest_heater", name: "次卧电暖器", roomId: "ci_wo", roomName: "次卧",
+        model: "zhimi.heater.za2", isOnline: true,
+        kind: .climate(ClimateSpec(
+            entityId: "climate.guest_heater", isOn: false, hvacMode: "off",
+            availableModes: ["off", "heat"], targetTemperature: 20
+        ))
+    )
+    static let devices = [studyCeiling, studyDesk, livingAC, bedsideLamp, guestHeater]
+    static let scenes = [
+        HomeScene(id: "scene_home", name: "回家模式", entityId: "scene.home"),
+        HomeScene(id: "scene_sleep", name: "睡眠模式", entityId: "scene.sleep")
+    ]
+
+    static func parse(_ text: String) -> IntentPlan? {
+        LocalIntentParser.parse(text, devices: devices, scenes: scenes)
+    }
+
+    // MARK: - LocalIntentParser
+
+    @Test("打开书房灯 turns on both study lights")
+    func studyLightsOn() throws {
+        let plan = try #require(Self.parse("打开书房灯"))
+        #expect(plan.source == .local)
+        #expect(plan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .power(true)),
+            DeviceIntent(targetId: "dev_study_desk", operation: .power(true))
+        ])
+        #expect(plan.reply == "已打开书房吸顶灯、书房台灯")
+    }
+
+    @Test("关掉所有的灯 turns off every light")
+    func allLightsOff() throws {
+        let plan = try #require(Self.parse("关掉所有的灯"))
+        #expect(plan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .power(false)),
+            DeviceIntent(targetId: "dev_study_desk", operation: .power(false)),
+            DeviceIntent(targetId: "dev_bedside", operation: .power(false))
+        ])
+    }
+
+    @Test("Climate temperature and mode commands")
+    func climateCommands() throws {
+        #expect(Self.parse("客厅空调调到26度")?.intents == [
+            DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(26))
+        ])
+        #expect(Self.parse("客厅空调制冷")?.intents == [
+            DeviceIntent(targetId: "dev_living_ac", operation: .hvacMode("cool"))
+        ])
+        #expect(Self.parse("把客厅空调调到26度制冷")?.intents == [
+            DeviceIntent(targetId: "dev_living_ac", operation: .hvacMode("cool")),
+            DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(26))
+        ])
+    }
+
+    @Test("Brightness, kind words, scenes")
+    func miscCommands() {
+        #expect(Self.parse("主卧灯调暗一点")?.intents == [
+            DeviceIntent(targetId: "dev_bedside", operation: .brightness(20))
+        ])
+        #expect(Self.parse("书房台灯亮度50%")?.intents == [
+            DeviceIntent(targetId: "dev_study_desk", operation: .brightness(50))
+        ])
+        // 空调 excludes heaters, so the home has exactly one and it's unambiguous.
+        #expect(Self.parse("打开空调")?.intents == [
+            DeviceIntent(targetId: "dev_living_ac", operation: .power(true))
+        ])
+        #expect(Self.parse("关闭电暖器")?.intents == [
+            DeviceIntent(targetId: "dev_guest_heater", operation: .power(false))
+        ])
+        // 卧室 tolerantly maps to 主卧
+        #expect(Self.parse("关掉卧室的灯")?.intents == [
+            DeviceIntent(targetId: "dev_bedside", operation: .power(false))
+        ])
+        #expect(Self.parse("执行回家模式")?.intents == [
+            DeviceIntent(targetId: "scene_home", operation: .activateScene)
+        ])
+    }
+
+    @Test("Unsure utterances fall through to the model")
+    func unsureReturnsNil() {
+        #expect(Self.parse("我要睡觉了") == nil)
+        #expect(Self.parse("打开") == nil)
+        #expect(Self.parse("打开灯") == nil)                 // 3 lights, no room: ambiguous
+        #expect(Self.parse("打开书房灯关掉客厅空调") == nil)   // contradictory power verbs
+        #expect(Self.parse("客厅空调调亮") == nil)            // brightness invalid for climate
+        #expect(Self.parse("打开厨房灯") == nil)              // no such room
+    }
+
+    // MARK: - ModelIntentResolver
+
+    @Test("Model resolver strips fences, maps aliases, drops unknown and invalid intents")
+    func modelResolverBoundary() async throws {
+        let content = """
+        好的：
+        ```json
+        {"actions":[
+          {"device":"d1","op":"power","value":true},
+          {"device":"d99","op":"power","value":true},
+          {"device":"d3","op":"brightness","value":50},
+          {"device":"d3","op":"temperature","value":40},
+          {"device":"s2","op":"scene","value":null}
+        ],"reply":"好的，已为你处理 {书房}"}
+        ```
+        """
+        let envelope: [String: Any] = ["choices": [["message": ["role": "assistant", "content": content]]]]
+        let responseData = try JSONSerialization.data(withJSONObject: envelope)
+
+        let resolver = ModelIntentResolver(
+            config: AssistantConfig(baseURL: "http://localhost:3425/v1/", model: "test-model"),
+            transport: { request in
+                #expect(request.url?.absoluteString == "http://localhost:3425/v1/chat/completions")
+                #expect(request.httpMethod == "POST")
+                let body = try #require(request.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+                #expect(body["model"] as? String == "test-model")
+                #expect(body["max_tokens"] as? Int == 800)
+                #expect(body["temperature"] as? Int == 0)
+                let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+                return (responseData, response)
+            }
+        )
+
+        let plan = try await resolver.resolve("随便", devices: Self.devices, scenes: Self.scenes)
+        #expect(plan.source == .model)
+        #expect(plan.reply == "好的，已为你处理 {书房}")
+        #expect(plan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .power(true)),
+            DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(30)),
+            DeviceIntent(targetId: "scene_sleep", operation: .activateScene)
+        ])
+    }
+
+    @Test("Model resolver surfaces HTTP errors and empty content")
+    func modelResolverErrors() async {
+        let failing = ModelIntentResolver(config: AssistantConfig(), transport: { request in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: 502, httpVersion: nil, headerFields: nil)!)
+        })
+        await #expect(throws: AssistantError.httpStatus(502)) {
+            try await failing.resolve("x", devices: Self.devices, scenes: Self.scenes)
+        }
+
+        let empty = ModelIntentResolver(config: AssistantConfig(), transport: { request in
+            let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": ""]]]])
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+        await #expect(throws: AssistantError.emptyResponse) {
+            try await empty.resolve("x", devices: Self.devices, scenes: Self.scenes)
+        }
+    }
+
+    // MARK: - HomeStore integration
+
+    @MainActor
+    private func makeStore() async throws -> (HomeStore, MockHomeProvider) {
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: Self.devices, scenes: Self.scenes))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.assistant.\(UUID().uuidString)")
+        try await Task.sleep(for: .milliseconds(50))
+        return (store, mock)
+    }
+
+    @Test("runAssistantCommand dispatches local plans with optimistic state and undo")
+    @MainActor
+    func storeRunsLocalPlan() async throws {
+        let (store, mock) = try await makeStore()
+
+        let plan = try #require(await store.runAssistantCommand("打开书房灯"))
+        #expect(plan.source == .local)
+        let executed = await mock.executedCommands
+        #expect(executed.count == 2)
+        #expect(executed.contains(.setLightPower(entityId: "light.study_ceiling", isOn: true)))
+        #expect(executed.contains(.setLightPower(entityId: "light.study_desk", isOn: true)))
+        #expect(store.assistantState == .done("已打开书房吸顶灯、书房台灯"))
+        #expect(store.undoBanner?.restoreCommands.count == 2)
+        let studyActive = store.devices.filter { $0.roomName == "书房" }.map(\.isActiveOn)
+        #expect(studyActive == [true, true])
+
+        _ = await store.runAssistantCommand("把客厅空调调到26度制冷")
+        let afterClimate = await mock.executedCommands
+        #expect(Array(afterClimate.dropFirst(2)) == [
+            .setClimateMode(entityId: "climate.living_ac", hvacMode: "cool"),
+            .setClimateTemperature(entityId: "climate.living_ac", temperature: 26)
+        ])
+    }
+
+    @Test("runAssistantCommand falls back to the model when the local parser can't resolve")
+    @MainActor
+    func storeFallsBackToModel() async throws {
+        let (store, mock) = try await makeStore()
+        let content = #"{"actions":[{"device":"s2","op":"scene","value":null},{"device":"d4","op":"power","value":false}],"reply":"晚安"}"#
+        store.assistantResolverOverride = ModelIntentResolver(config: AssistantConfig(), transport: { request in
+            let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]]])
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+
+        let plan = try #require(await store.runAssistantCommand("我要睡觉了"))
+        #expect(plan.source == .model)
+        let executed = await mock.executedCommands
+        #expect(executed.count == 2)
+        #expect(executed.contains(.activateScene(entityId: "scene.sleep")))
+        #expect(executed.contains(.setLightPower(entityId: "light.bedside", isOn: false)))
+        #expect(store.assistantState == .done("晚安"))
+    }
+
+    @Test("runAssistantCommand rolls back and reports failure when the provider rejects")
+    @MainActor
+    func storeRollsBackOnFailure() async throws {
+        let (store, mock) = try await makeStore()
+        await mock.setShouldFail(true)
+        _ = await store.runAssistantCommand("关掉主卧床头灯")
+        #expect(store.assistantState == .failed("主卧床头灯 未响应"))
+        #expect(store.devices.first(where: { $0.id == "dev_bedside" })?.isActiveOn == true)
+    }
+
+    // MARK: - Live (opt-in)
+
+    @Test("ModelIntentResolver resolves against the live router when ASSISTANT_RUN_LIVE_TEST=1")
+    func liveModelResolver() async throws {
+        guard ProcessInfo.processInfo.environment["ASSISTANT_RUN_LIVE_TEST"] == "1" else { return }
+        let resolver = ModelIntentResolver(config: AssistantConfig())
+        let clock = ContinuousClock()
+        let start = clock.now
+        let plan = try await resolver.resolve("打开书房灯", devices: Self.devices, scenes: Self.scenes)
+        let elapsed = clock.now - start
+        print("ASSISTANT_LIVE latency=\(elapsed) intents=\(plan.intents) reply=\(plan.reply)")
+        #expect(!plan.intents.isEmpty)
+        let allPowerOn = plan.intents.allSatisfy { $0.operation == .power(true) }
+        #expect(allPowerOn)
+    }
+}

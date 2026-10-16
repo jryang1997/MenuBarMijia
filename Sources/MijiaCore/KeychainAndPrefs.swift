@@ -20,7 +20,7 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum KeychainHelper {
-    private static let service = "com.yangzhiyuan.MenuBarMijia"
+    static let service = "com.yangzhiyuan.MenuBarMijia"
     private static let account = "ha_access_token"
 
     public static let defaultHomeName = "米家控制中心"
