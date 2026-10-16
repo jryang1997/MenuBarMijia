@@ -28,11 +28,18 @@ public struct IntentPlan: Equatable, Sendable {
     public var intents: [DeviceIntent]
     public var reply: String
     public var source: Source
+    public var suggestions: [AssistantSuggestion]
 
-    public init(intents: [DeviceIntent], reply: String, source: Source) {
+    public init(
+        intents: [DeviceIntent],
+        reply: String,
+        source: Source,
+        suggestions: [AssistantSuggestion] = []
+    ) {
         self.intents = intents
         self.reply = reply
         self.source = source
+        self.suggestions = suggestions
     }
 }
 

@@ -263,6 +263,83 @@ struct AssistantTests {
             DeviceIntent(targetId: "dev_living_ac", operation: .hvacMode("cool")),
             DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(24))
         ])
+
+        // Verify multi-device parallel Jev decisions + secondary probability suggestion extraction
+        let parallelPayload: [String: Any] = [
+            "answers": [
+                "target": ["choice": "none", "confidence": 0.5],
+                "op": ["choice": "power_on", "confidence": 0.5],
+                "temp": ["choice": "none", "confidence": 0.99],
+                "dev_d1": [
+                    "choice": "effect_day",
+                    "probabilities": ["effect_day": 0.62, "none": 0.29],
+                    "confidence": 0.52
+                ],
+                "dev_d2": [
+                    "choice": "none",
+                    "probabilities": ["none": 0.56, "power_on": 0.36],
+                    "confidence": 0.41
+                ],
+                "dev_d3": [
+                    "choice": "cool_25",
+                    "probabilities": ["cool_25": 0.99, "none": 0.01],
+                    "confidence": 0.99
+                ]
+            ]
+        ]
+        let parallelData = try JSONSerialization.data(withJSONObject: parallelPayload)
+        let parallelResolver = ModelIntentResolver(
+            config: AssistantConfig(baseURL: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest", apiKey: "test-token"),
+            transport: { request in
+                (parallelData, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        )
+        let parallelPlan = try await parallelResolver.resolve(
+            "准备在书房写代码，有点热",
+            devices: Self.devices,
+            scenes: Self.scenes,
+            context: AssistantContext(timeSummary: "夜晚 22:30", environmentSummary: "书房 28.4°C", habitSummary: "夜晚常开日光模式")
+        )
+        #expect(parallelPlan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Day")),
+            DeviceIntent(targetId: "dev_living_ac", operation: .hvacMode("cool")),
+            DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(25))
+        ])
+        #expect(parallelPlan.suggestions == [
+            AssistantSuggestion(
+                id: "jev:dev_study_desk:power_on",
+                title: "打开书房台灯",
+                confidencePercent: 36,
+                intents: [DeviceIntent(targetId: "dev_study_desk", operation: .power(true))]
+            )
+        ])
+    }
+
+    @Test("UserHabitMemory learns time-bucket habits, personal phrases, and filters already-active states")
+    func userHabitMemoryLearning() {
+        var memory = UserHabitMemory()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        let eveningDate = calendar.date(from: DateComponents(year: 2026, month: 10, day: 16, hour: 21, minute: 30))!
+
+        memory.record(
+            utterance: "老规矩写代码",
+            intents: [
+                DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Night")),
+                DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(25))
+            ],
+            devices: Self.devices,
+            scenes: Self.scenes,
+            now: eveningDate
+        )
+
+        let summary = memory.promptSummary(for: eveningDate, devices: Self.devices, scenes: Self.scenes)
+        #expect(summary.contains("夜晚常做："))
+        #expect(summary.contains("书房吸顶灯·月光模式"))
+        #expect(summary.contains("「老规矩写代码」"))
+
+        let suggestions = memory.topSuggestions(for: eveningDate, devices: Self.devices, scenes: Self.scenes)
+        #expect(suggestions.map(\.title) == ["书房吸顶灯·月光模式", "客厅空调·25°C"])
     }
 
     @Test("Model resolver surfaces HTTP errors and empty content")

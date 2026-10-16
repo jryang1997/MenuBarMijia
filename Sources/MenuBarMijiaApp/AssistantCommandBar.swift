@@ -340,9 +340,12 @@ struct AssistantCommandBar: View {
                 .padding(.horizontal, 4)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            suggestionsRow
         }
         .help("长按顶部菜单栏温度图标可按住说话；或点击麦克风说话，打字回车执行")
         .animation(AppleMotion.snappySpring, value: store.assistantState)
+        .animation(AppleMotion.snappySpring, value: store.assistantSuggestions)
         .animation(AppleMotion.snappySpring, value: speech.isListening)
         .onAppear {
             if store.assistantVoiceRequest != lastHandledVoiceRequest {
@@ -363,14 +366,75 @@ struct AssistantCommandBar: View {
         }
     }
 
+    private var suggestionsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Button {
+                    Task { await store.requestProactiveJevSuggestions() }
+                } label: {
+                    HStack(spacing: 3.5) {
+                        if store.isProactiveRecommending {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .scaleEffect(0.65)
+                        } else {
+                            Image(systemName: "wand.and.stars")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text("Jev 猜你想做")
+                            .font(.system(size: 10.5, weight: .semibold))
+                    }
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3.5)
+                    .background(Color.accentColor.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(store.isProactiveRecommending)
+                .help("让 Jev 结合当前室温、时间段与你的个人习惯，实时推演最可能执行的设备操作")
+
+                ForEach(store.assistantSuggestions) { suggestion in
+                    Button {
+                        Task { await store.applyAssistantSuggestion(suggestion) }
+                    } label: {
+                        HStack(spacing: 3.5) {
+                            Image(systemName: suggestion.confidencePercent != nil ? "sparkle" : "clock.arrow.circlepath")
+                                .font(.system(size: 9.5, weight: .semibold))
+                                .foregroundStyle(suggestion.confidencePercent != nil ? Color.orange : Color.secondary)
+                            Text(suggestion.title)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(.primary.opacity(0.88))
+                            if let pct = suggestion.confidencePercent {
+                                Text("\(pct)%")
+                                    .font(.system(size: 9.5, weight: .bold, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color.orange)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(.primary.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(
+                        suggestion.confidencePercent != nil
+                            ? "Jev 概率分布推演建议（点击立即执行）"
+                            : "你在当前时间段的常用习惯（点击立即执行）"
+                    )
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+    }
+
     private var placeholderText: String {
         if speech.isHoldToTalk {
-            return "按住菜单栏说话，松开立即执行（如：书房灯月光模式）"
+            return "按住菜单栏说话，松开立即执行（如：准备写代码、书房灯月光模式）"
         }
         if speech.isListening {
-            return "正在聆听…说完自动执行（如：书房灯月光模式）"
+            return "正在聆听…说完自动执行（如：准备写代码、书房灯月光模式）"
         }
-        return "例如：书房灯月光模式（支持按住菜单栏说话或打字）"
+        return "支持模糊情境与习惯（如：准备写代码、有点闷热、书房灯月光模式）"
     }
 
     private var micButton: some View {
@@ -434,9 +498,10 @@ struct AssistantSettingsSection: View {
     @State private var apiKeyDraft: String = ""
 
     var body: some View {
+        let habitCount = store.userHabitMemory.entries.count + store.userHabitMemory.phrases.count
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("AI 指令 (Jev System One)")
+                Text("AI 指令与个性化记忆 (Jev System One)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -450,7 +515,7 @@ struct AssistantSettingsSection: View {
                     .textFieldStyle(.roundedBorder)
             }
 
-            labeledField("模型 (默认 ~typesafe/jev-latest，也支持 glm-5.1 / qwen)") {
+            labeledField("模型 (默认 ~typesafe/jev-latest，支持全屋多头并行概率决策)") {
                 TextField(AssistantConfig.defaultModel, text: $modelDraft)
                     .textFieldStyle(.roundedBorder)
             }
@@ -458,6 +523,20 @@ struct AssistantSettingsSection: View {
             labeledField("API Key (留空将自动读取 CodexBar 的 OpenRouter Key)") {
                 SecureField("留空自动读取 CodexBar，或手动输入存入钥匙串", text: $apiKeyDraft)
                     .textFieldStyle(.roundedBorder)
+            }
+
+            HStack {
+                Text("已学习个人习惯与口头禅：\(habitCount) 条（自动注入 Jev 情境状态）")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if habitCount > 0 {
+                    Button("清空记忆") {
+                        store.userHabitMemory = UserHabitMemory()
+                        store.showToast("已清空个人习惯记忆")
+                    }
+                    .buttonStyle(PillActionButtonStyle())
+                }
             }
 
             HStack {

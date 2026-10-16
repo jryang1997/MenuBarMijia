@@ -633,6 +633,15 @@ public final class HomeStore {
         devices[idx] = updated
         lockOptimistic(device.id, duration: .seconds(2.2))
 
+        var memory = userHabitMemory
+        memory.record(
+            utterance: nil,
+            intents: [DeviceIntent(targetId: device.id, operation: .power(updated.isActiveOn))],
+            devices: devices,
+            scenes: scenes
+        )
+        userHabitMemory = memory
+
         Task {
             do {
                 try await provider.execute(cmd)
@@ -691,6 +700,15 @@ public final class HomeStore {
         s.currentEffect = effect
         devices[idx].kind = .light(s)
         lockOptimistic(deviceId, duration: .seconds(2.2))
+
+        var memory = userHabitMemory
+        memory.record(
+            utterance: nil,
+            intents: [DeviceIntent(targetId: deviceId, operation: .lightEffect(effect))],
+            devices: devices,
+            scenes: scenes
+        )
+        userHabitMemory = memory
 
         dispatchImmediate(
             deviceId: deviceId,
@@ -1256,7 +1274,7 @@ public final class HomeStore {
         }
     }
 
-    // MARK: - Assistant Commands
+    // MARK: - Assistant Commands & Personalized Jev Context
 
     public var isShowingAssistantBar: Bool = false
     /// Bumped to ask an already-visible command bar to take keyboard focus.
@@ -1264,6 +1282,8 @@ public final class HomeStore {
     /// Bumped to ask the command bar to start or toggle live speech recognition.
     public private(set) var assistantVoiceRequest: Int = 0
     public private(set) var assistantState: AssistantState = .idle
+    public private(set) var assistantSuggestions: [AssistantSuggestion] = []
+    public private(set) var isProactiveRecommending: Bool = false
     private var assistantResetTask: Task<Void, Never>?
     /// Test seam replacing the network resolver built from `assistantConfig`.
     var assistantResolverOverride: ModelIntentResolver?
@@ -1273,8 +1293,16 @@ public final class HomeStore {
         set { newValue.save(to: userDefaults) }
     }
 
+    public var userHabitMemory: UserHabitMemory {
+        get { UserHabitMemory.load(from: userDefaults) }
+        set { newValue.save(to: userDefaults) }
+    }
+
     public func presentAssistantBar(startVoice: Bool = false) {
         isShowingAssistantBar = true
+        if assistantSuggestions.isEmpty {
+            assistantSuggestions = userHabitMemory.topSuggestions(devices: devices, scenes: scenes, limit: 3)
+        }
         if startVoice {
             assistantVoiceRequest &+= 1
         } else {
@@ -1289,6 +1317,69 @@ public final class HomeStore {
         }
     }
 
+    public func buildAssistantContext(now: Date = Date()) -> AssistantContext {
+        let bucket = UserHabitMemory.TimeBucket.from(date: now)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        let timeSummary = "\(bucket.rawValue) \(formatter.string(from: now))"
+
+        let envParts = environmentReadings.map { reading -> String in
+            var text = "\(reading.roomName)"
+            if let t = reading.temperature { text += " \(String(format: "%.1f°C", t))" }
+            if let h = reading.humidity { text += " \(Int(h.rounded()))%" }
+            return text
+        }
+        let environmentSummary = envParts.joined(separator: "，")
+
+        let activeParts = devices.filter { $0.isOnline && $0.isActiveOn }.map { dev in
+            "\(dev.name)(\(IntentCatalog.stateSummary(dev)))"
+        }
+        let activeSummary = activeParts.isEmpty ? "全屋设备均关闭" : activeParts.joined(separator: "、")
+        let habitSummary = userHabitMemory.promptSummary(for: now, devices: devices, scenes: scenes)
+
+        return AssistantContext(
+            timeSummary: timeSummary,
+            environmentSummary: environmentSummary,
+            activeDevicesSummary: activeSummary,
+            habitSummary: habitSummary
+        )
+    }
+
+    /// Uses Jev System One to infer personalized proactive suggestions from current room temp/humidity,
+    /// time of day, active devices, and the user's learned habit memory.
+    public func requestProactiveJevSuggestions() async {
+        guard !isProactiveRecommending else { return }
+        isProactiveRecommending = true
+        defer { isProactiveRecommending = false }
+
+        let resolver = assistantResolverOverride ?? ModelIntentResolver(config: assistantConfig)
+        let context = buildAssistantContext()
+        do {
+            let inferred = try await resolver.recommendProactiveSuggestions(
+                devices: devices,
+                scenes: scenes,
+                context: context
+            )
+            if !inferred.isEmpty {
+                assistantSuggestions = inferred
+                setAssistantState(.done("Jev 已结合室温与习惯生成建议"))
+            } else {
+                let fallback = userHabitMemory.topSuggestions(devices: devices, scenes: scenes, limit: 3)
+                assistantSuggestions = fallback
+                setAssistantState(.done("当前居家状态已处于理想区间"))
+            }
+        } catch {
+            setAssistantState(.failed(error.localizedDescription))
+        }
+    }
+
+    public func applyAssistantSuggestion(_ suggestion: AssistantSuggestion) async {
+        assistantSuggestions.removeAll { $0.id == suggestion.id }
+        let reply = IntentReply.describe(suggestion.intents, devices: devices, scenes: scenes)
+        let plan = IntentPlan(intents: suggestion.intents, reply: reply, source: .model)
+        _ = await executeIntentPlan(plan, recordedUtterance: nil)
+    }
+
     /// Resolves a natural-language command (local parser first, model fallback) and applies it.
     @discardableResult
     public func runAssistantCommand(_ text: String) async -> IntentPlan? {
@@ -1301,18 +1392,26 @@ public final class HomeStore {
             plan = local
         } else {
             let resolver = assistantResolverOverride ?? ModelIntentResolver(config: assistantConfig)
+            let context = buildAssistantContext()
             do {
-                plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes)
+                plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes, context: context)
             } catch {
                 setAssistantState(.failed(error.localizedDescription))
                 return nil
             }
         }
         guard !plan.intents.isEmpty else {
+            if !plan.suggestions.isEmpty {
+                assistantSuggestions = plan.suggestions
+            }
             setAssistantState(.failed(plan.reply.isEmpty ? "没有找到可执行的设备操作" : plan.reply))
             return plan
         }
 
+        return await executeIntentPlan(plan, recordedUtterance: utterance)
+    }
+
+    private func executeIntentPlan(_ plan: IntentPlan, recordedUtterance: String?) async -> IntentPlan {
         let previousSnapshot = devices
         var groupOrder: [String] = []
         var intentsByTarget: [String: [DeviceIntent]] = [:]
@@ -1370,6 +1469,15 @@ public final class HomeStore {
             let reason = offlineNames.isEmpty ? "没有可执行的设备操作" : "\(offlineNames.joined(separator: "、")) 当前离线"
             setAssistantState(.failed(reason))
         } else {
+            var memory = userHabitMemory
+            memory.record(utterance: recordedUtterance, intents: plan.intents, devices: devices, scenes: scenes)
+            userHabitMemory = memory
+
+            if !plan.suggestions.isEmpty {
+                assistantSuggestions = plan.suggestions
+            } else {
+                assistantSuggestions = memory.topSuggestions(devices: devices, scenes: scenes, limit: 3)
+            }
             setAssistantState(.done(plan.reply))
         }
         return plan
