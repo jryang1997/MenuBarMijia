@@ -36,6 +36,13 @@ public struct ControlCenterPanel: View {
                 .padding(.top, 12)
                 .padding(.bottom, 8)
 
+            if store.isShowingAssistantBar {
+                AssistantCommandBar(store: store)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+                    .transition(AppleMotion.drawerTransition)
+            }
+
             if store.showQuickActionsBar {
                 quickActionsAndScenesBar
                     .padding(.horizontal, 14)
@@ -99,6 +106,7 @@ public struct ControlCenterPanel: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 9)
         }
+        .animation(AppleMotion.snappySpring, value: store.isShowingAssistantBar)
     }
 
     // MARK: - Adaptive Single-Column / 2-Column CompactTile Collection
@@ -217,6 +225,34 @@ public struct ControlCenterPanel: View {
                 }
 
                 Spacer()
+
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        if store.isShowingAssistantBar {
+                            store.dismissAssistantBar()
+                        } else {
+                            store.presentAssistantBar()
+                        }
+                    }
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(store.isShowingAssistantBar ? Color.white : Color.primary.opacity(0.78))
+                        .frame(width: 26, height: 24)
+                        .background {
+                            if store.isShowingAssistantBar {
+                                Capsule(style: .continuous).fill(Color.accentColor)
+                            }
+                        }
+                        .glassEffect(
+                            store.isShowingAssistantBar
+                                ? .regular.tint(.accentColor.opacity(0.45)).interactive()
+                                : .regular.interactive(),
+                            in: Capsule(style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .help("AI 指令：用一句话控制设备（快捷键 /）")
 
                 if store.activeDeviceCount > 0 {
                     Button {

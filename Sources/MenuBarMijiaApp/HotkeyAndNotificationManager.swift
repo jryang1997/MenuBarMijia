@@ -147,6 +147,9 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         if let responder = NSApp.keyWindow?.firstResponder,
            responder is NSTextView || responder is NSTextField {
             if code == kVK_Escape {
+                if store.isShowingAssistantBar && !store.isShowingSettings {
+                    store.dismissAssistantBar()
+                }
                 NSApp.keyWindow?.makeFirstResponder(nil)
                 return true
             }
@@ -167,6 +170,12 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                 return true
             }
             return false
+        }
+
+        if event.charactersIgnoringModifiers == "/",
+           event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            store.presentAssistantBar()
+            return true
         }
 
         switch code {
@@ -190,7 +199,9 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
             store.cycleRoom(delta: delta)
             return true
         case kVK_Escape:
-            if store.expandedDeviceId != nil {
+            if store.isShowingAssistantBar {
+                store.dismissAssistantBar()
+            } else if store.expandedDeviceId != nil {
                 store.expandedDeviceId = nil
             } else if store.focusedDeviceId != nil {
                 store.focusedDeviceId = nil

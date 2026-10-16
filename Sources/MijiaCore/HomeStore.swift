@@ -1188,6 +1188,8 @@ public final class HomeStore {
     // MARK: - Assistant Commands
 
     public var isShowingAssistantBar: Bool = false
+    /// Bumped to ask an already-visible command bar to take keyboard focus.
+    public private(set) var assistantFocusRequest: Int = 0
     public private(set) var assistantState: AssistantState = .idle
     private var assistantResetTask: Task<Void, Never>?
     /// Test seam replacing the network resolver built from `assistantConfig`.
@@ -1196,6 +1198,11 @@ public final class HomeStore {
     public var assistantConfig: AssistantConfig {
         get { AssistantConfig.load(from: userDefaults) }
         set { newValue.save(to: userDefaults) }
+    }
+
+    public func presentAssistantBar() {
+        isShowingAssistantBar = true
+        assistantFocusRequest &+= 1
     }
 
     public func dismissAssistantBar() {
