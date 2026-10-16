@@ -13,6 +13,8 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
     private var eventHandlerRef: EventHandlerRef?
     private var localKeyMonitor: Any?
     private var localFlagsMonitor: Any?
+    private var localMouseDownMonitor: Any?
+    private var statusBarHoldTask: Task<Void, Never>?
     private var safetyTimerTask: Task<Void, Never>?
     private var pendingAlertsById: [String: SafetyAlert] = [:]
 
@@ -90,20 +92,30 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
 
     public func toggleMenuBarExtraWindow() {
         // Find the status bar button or existing MenuBarExtra panel window
-        if let panelWindow = NSApp.windows.first(where: { win in
-            win.isVisible && win.level == .popUpMenu || String(describing: type(of: win)).contains("MenuBarExtraWindow")
-        }), panelWindow.isVisible {
+        if let panelWindow = findMenuBarExtraPanelWindow(), panelWindow.isVisible {
             panelWindow.orderOut(nil)
             return
         }
 
-        // Click the NSStatusBarButton in the status bar window to open MenuBarExtra(.window)
+        ensureMenuBarExtraWindowVisible()
+    }
+
+    public func ensureMenuBarExtraWindowVisible() {
+        if let panelWindow = findMenuBarExtraPanelWindow(), panelWindow.isVisible {
+            return
+        }
         for window in NSApp.windows {
             if let button = findStatusBarButton(in: window.contentView) {
                 NSApp.activate(ignoringOtherApps: true)
                 button.performClick(nil)
                 return
             }
+        }
+    }
+
+    private func findMenuBarExtraPanelWindow() -> NSWindow? {
+        NSApp.windows.first { win in
+            (win.isVisible && win.level == .popUpMenu) || String(describing: type(of: win)).contains("MenuBarExtraWindow")
         }
     }
 
@@ -120,7 +132,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         return nil
     }
 
-    // MARK: - 2. Local Keyboard Navigation inside ControlCenterPanel
+    // MARK: - 2. Local Keyboard & Menu Bar Hold-to-Talk Monitors
 
     private func setupLocalKeyboardMonitors() {
         if localFlagsMonitor == nil {
@@ -138,6 +150,41 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                 }
                 return event
             }
+        }
+
+        if localMouseDownMonitor == nil {
+            localMouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self else { return event }
+                if let window = event.window, self.findStatusBarButton(in: window.contentView) != nil {
+                    self.beginStatusBarHoldDetection()
+                }
+                return event
+            }
+        }
+    }
+
+    private func beginStatusBarHoldDetection() {
+        statusBarHoldTask?.cancel()
+        statusBarHoldTask = Task { @MainActor [weak self] in
+            // 220ms separates a normal click (60-140ms) from an intentional press-and-hold on the menu bar icon.
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(38))
+                guard !Task.isCancelled else { return }
+                if (NSEvent.pressedMouseButtons & 0x3) == 0 {
+                    return
+                }
+            }
+            guard !Task.isCancelled, let self, let store = self.store else { return }
+
+            self.ensureMenuBarExtraWindowVisible()
+            store.presentAssistantBar(startVoice: false)
+            SpeechInputController.shared.startHoldToTalk(store: store)
+
+            while !Task.isCancelled && (NSEvent.pressedMouseButtons & 0x3) != 0 {
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            guard !Task.isCancelled else { return }
+            SpeechInputController.shared.finishHoldToTalk(store: store)
         }
     }
 

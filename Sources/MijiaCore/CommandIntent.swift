@@ -216,12 +216,15 @@ public struct IntentCatalog: Sendable {
     public let lines: [String]
     public let sceneLines: [String]
     public let criteriaByAlias: [String: String]
-    private let realIdByAlias: [String: String]
+    private let realIdsByAlias: [String: [String]]
 
     public init(devices: [SmartDevice], scenes: [HomeScene]) {
         var lines: [String] = []
-        var map: [String: String] = [:]
+        var map: [String: [String]] = [:]
         var criteria: [String: String] = [:]
+        var allLightIds: [String] = []
+        var allDeviceIds: [String] = []
+        var roomLights: [String: [String]] = [:]
         var index = 0
         for device in devices {
             let category = IntentDeviceCategory(device)
@@ -229,25 +232,49 @@ public struct IntentCatalog: Sendable {
             index += 1
             let alias = "d\(index)"
             let summary = Self.stateSummary(device)
-            map[alias] = device.id
+            map[alias] = [device.id]
+            allDeviceIds.append(device.id)
+            if category == .light {
+                allLightIds.append(device.id)
+                if !device.roomName.isEmpty {
+                    roomLights[device.roomName, default: []].append(device.id)
+                }
+            }
             criteria[alias] = "\(device.name) (\(device.roomName), \(category.rawValue), \(summary))"
             lines.append([alias, device.name, device.roomName, category.rawValue, summary].joined(separator: "|"))
+        }
+        for (room, ids) in roomLights where ids.count >= 2 {
+            let alias = "room_lights:\(room)"
+            map[alias] = ids
+            criteria[alias] = "\(room)所有灯具 (\(ids.count)盏)"
+        }
+        if allLightIds.count >= 2 {
+            map["all_lights"] = allLightIds
+            criteria["all_lights"] = "全屋所有灯具 (\(allLightIds.count)盏)"
+        }
+        if allDeviceIds.count >= 2 {
+            map["all_devices"] = allDeviceIds
+            criteria["all_devices"] = "全屋所有可控设备 (\(allDeviceIds.count)台)"
         }
         var sceneLines: [String] = []
         for (offset, scene) in scenes.enumerated() {
             let alias = "s\(offset + 1)"
-            map[alias] = scene.id
+            map[alias] = [scene.id]
             criteria[alias] = "场景：\(scene.name)"
             sceneLines.append("\(alias)|\(scene.name)")
         }
         self.lines = lines
         self.sceneLines = sceneLines
         self.criteriaByAlias = criteria
-        self.realIdByAlias = map
+        self.realIdsByAlias = map
     }
 
     public func realId(forAlias alias: String) -> String? {
-        realIdByAlias[alias.trimmingCharacters(in: .whitespacesAndNewlines)]
+        realIdsByAlias[alias.trimmingCharacters(in: .whitespacesAndNewlines)]?.first
+    }
+
+    public func realIds(forTargetChoice choice: String) -> [String] {
+        realIdsByAlias[choice.trimmingCharacters(in: .whitespacesAndNewlines)] ?? []
     }
 
     public var text: String {

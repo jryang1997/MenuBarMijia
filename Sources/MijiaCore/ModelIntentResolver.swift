@@ -57,11 +57,12 @@ public struct ModelIntentResolver: Sendable {
         return try Self.plan(fromModelContent: content, catalog: catalog, devices: devices, scenes: scenes)
     }
 
-    /// Magpie's System One protocol (`/v1/systemone`) backs Jev (`typesafe/jev-latest`),
+    /// System One protocol (`/v1/systemone`) backs TypeSafe Jev (`~typesafe/jev-latest`),
     /// Cloudflare Clef (`@cf/cloudflare/clef-flash`), and Bailian decision (`qwen-decision`).
     public static func isSystemOneModel(_ model: String) -> Bool {
         let lower = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return lower.contains("jev-latest") || lower.contains("clef") || lower.contains("decision")
+        if lower.contains("jev-router") { return false }
+        return lower.contains("jev") || lower.contains("clef") || lower.contains("decision")
     }
 
     // MARK: - Request
@@ -71,7 +72,7 @@ public struct ModelIntentResolver: Sendable {
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = effectiveAPIKey()
         // Local routers accept any bearer value but some reject a missing header.
         request.setValue("Bearer \(key.isEmpty ? "local" : key)", forHTTPHeaderField: "Authorization")
 
@@ -94,8 +95,18 @@ public struct ModelIntentResolver: Sendable {
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = effectiveAPIKey()
         request.setValue("Bearer \(key.isEmpty ? "local" : key)", forHTTPHeaderField: "Authorization")
+
+        let resolvedModel: String
+        let trimmedModel = config.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if url.host()?.contains("openrouter.ai") == true,
+           trimmedModel.lowercased().contains("jev"),
+           !trimmedModel.hasPrefix("~") {
+            resolvedModel = "~typesafe/jev-latest"
+        } else {
+            resolvedModel = trimmedModel
+        }
 
         var targetCriteria = catalog.criteriaByAlias
         targetCriteria["none"] = "无匹配设备或场景"
@@ -115,10 +126,16 @@ public struct ModelIntentResolver: Sendable {
             "hvac_dry": "空调除湿模式",
             "hvac_fan": "空调送风模式",
             "hvac_auto": "空调自动模式",
+            "temp": "仅调节空调温度",
             "scene": "执行智能场景"
         ]
+        let tempCriteria: [String: String] = [
+            "none": "不指定具体温度",
+            "18": "18°C", "19": "19°C", "20": "20°C", "21": "21°C", "22": "22°C",
+            "23": "23°C", "24": "24°C", "25": "25°C", "26": "26°C", "27": "27°C", "28": "28°C"
+        ]
         let body: [String: Any] = [
-            "model": config.model,
+            "model": resolvedModel,
             "state": [
                 "catalog": catalog.text,
                 "command": utterance
@@ -126,18 +143,29 @@ public struct ModelIntentResolver: Sendable {
             "questions": [
                 "target": [
                     "type": "choice",
-                    "instructions": "Select the target device or scene id for command",
+                    "instructions": "Select the target device, room light group, or scene id for command",
                     "criteria": targetCriteria
                 ],
                 "op": [
                     "type": "choice",
                     "instructions": "Select the operation to perform on the target",
                     "criteria": opCriteria
+                ],
+                "temp": [
+                    "type": "choice",
+                    "instructions": "If the command sets an air-conditioner temperature, select the degree in Celsius; otherwise none",
+                    "criteria": tempCriteria
                 ]
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    private func effectiveAPIKey() -> String {
+        let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty { return key }
+        return AssistantConfig.loadCodexBarOpenRouterKey() ?? ""
     }
 
     private func endpointURL(path: String) throws -> URL {
@@ -213,16 +241,28 @@ public struct ModelIntentResolver: Sendable {
         }
         let targetChoice = (answers["target"] as? [String: Any])?["choice"] as? String ?? "none"
         let opChoice = (answers["op"] as? [String: Any])?["choice"] as? String ?? ""
-        guard targetChoice != "none",
-              let targetId = catalog.realId(forAlias: targetChoice),
-              let op = systemOneOperation(for: opChoice) else {
+        let tempChoice = (answers["temp"] as? [String: Any])?["choice"] as? String ?? "none"
+
+        let targetIds = catalog.realIds(forTargetChoice: targetChoice)
+        guard targetChoice != "none", !targetIds.isEmpty else {
             return IntentPlan(intents: [], reply: "未识别到可执行的设备指令", source: .model)
         }
-        let intents = IntentValidator.sanitize(
-            [DeviceIntent(targetId: targetId, operation: op)],
-            devices: devices,
-            scenes: scenes
-        )
+
+        var ops: [IntentOperation] = []
+        if let primaryOp = systemOneOperation(for: opChoice) {
+            ops.append(primaryOp)
+        }
+        if tempChoice != "none", let degree = Double(tempChoice) {
+            ops.append(.targetTemperature(degree))
+        }
+        guard !ops.isEmpty else {
+            return IntentPlan(intents: [], reply: "未识别到可执行的设备指令", source: .model)
+        }
+
+        let raw = targetIds.flatMap { id in
+            ops.map { DeviceIntent(targetId: id, operation: $0) }
+        }
+        let intents = IntentValidator.sanitize(raw, devices: devices, scenes: scenes)
         let reply = IntentReply.describe(intents, devices: devices, scenes: scenes)
         return IntentPlan(intents: intents, reply: reply, source: .model)
     }

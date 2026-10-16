@@ -102,7 +102,9 @@ struct MijiaCoreTests {
         let store = HomeStore(provider: mock)
 
         // Allow initial stream event to arrive
-        try await Task.sleep(for: .milliseconds(60))
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(store.devices.count == 1)
         #expect(store.activeDeviceCount == 0)
 
@@ -205,7 +207,9 @@ struct MijiaCoreTests {
 
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.slice1.\(UUID().uuidString)")
-        try await Task.sleep(for: .milliseconds(50))
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         // Execute QuickAction.lightsOff -> turns off light, keeps coffee plug on
         store.executeQuickAction(.lightsOff)
@@ -263,7 +267,9 @@ struct MijiaCoreTests {
 
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: "test.slice2.\(UUID().uuidString)")
-        try await Task.sleep(for: .milliseconds(50))
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         // 1. Quick index 1 toggles 1st device (dev_1) off
         store.selectQuickIndex(1)
@@ -306,7 +312,9 @@ struct MijiaCoreTests {
         let suiteName = "test.slice3.\(UUID().uuidString)"
         let mock = MockHomeProvider(snapshot: SynthesizedHome(rooms: [RoomArea(id: "r1", name: "客厅")], devices: devs))
         let store = HomeStore(provider: mock, defaultsSuiteName: suiteName)
-        try await Task.sleep(for: .milliseconds(50))
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         #expect(store.favoriteDevices.map(\.id) == ["dev_1", "dev_2", "dev_3"])
 
@@ -365,7 +373,9 @@ struct MijiaCoreTests {
         let suiteName = "test.slice4.\(UUID().uuidString)"
         let mock = MockHomeProvider(snapshot: snapshot)
         let store = HomeStore(provider: mock, defaultsSuiteName: suiteName)
-        try await Task.sleep(for: .milliseconds(50))
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         // 1. Dynamic menu bar target: temp+humidity and total power
         store.menuBarTargetId = "temp_hum:dev_sensor_study"

@@ -4,8 +4,13 @@ import Security
 // MARK: - Assistant (LLM Fallback) Configuration
 
 public struct AssistantConfig: Equatable, Sendable {
-    public static let defaultBaseURL = "http://localhost:3425/v1"
-    public static let defaultModel = "antigravity/gemini-3.5-flash-lite"
+    public static let defaultBaseURL = "https://openrouter.ai/api/v1"
+    public static let defaultModel = "~typesafe/jev-latest"
+    public static let localRouterBaseURL = "http://localhost:3425/v1"
+    private static let legacyDefaultModels: Set<String> = [
+        "antigravity/gemini-3.5-flash-lite",
+        "glm-5.1"
+    ]
 
     static let baseURLKey = "assistant_base_url"
     static let modelKey = "assistant_model"
@@ -26,10 +31,28 @@ public struct AssistantConfig: Equatable, Sendable {
                   !v.isEmpty else { return nil }
             return v
         }
+        let keychainKey = KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount)
+        let codexBarKey = loadCodexBarOpenRouterKey() ?? ""
+        let effectiveKey = keychainKey.isEmpty ? codexBarKey : keychainKey
+
+        let savedBase = nonEmpty(baseURLKey)
+        let savedModel = nonEmpty(modelKey)
+
+        // Upgrade legacy local defaults to OpenRouter Jev when a CodexBar OpenRouter key is present.
+        if !effectiveKey.isEmpty,
+           (savedModel == nil || legacyDefaultModels.contains(savedModel!)),
+           (savedBase == nil || savedBase == localRouterBaseURL) {
+            return AssistantConfig(
+                baseURL: defaultBaseURL,
+                model: defaultModel,
+                apiKey: effectiveKey
+            )
+        }
+
         return AssistantConfig(
-            baseURL: nonEmpty(baseURLKey) ?? defaultBaseURL,
-            model: nonEmpty(modelKey) ?? defaultModel,
-            apiKey: KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount)
+            baseURL: savedBase ?? (effectiveKey.isEmpty ? localRouterBaseURL : defaultBaseURL),
+            model: savedModel ?? (effectiveKey.isEmpty ? "glm-5.1" : defaultModel),
+            apiKey: effectiveKey
         )
     }
 
@@ -37,6 +60,39 @@ public struct AssistantConfig: Equatable, Sendable {
         defaults.set(baseURL.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.baseURLKey)
         defaults.set(model.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.modelKey)
         KeychainHelper.saveSecret(apiKey, account: KeychainHelper.assistantAPIKeyAccount)
+    }
+
+    private static let cachedDefaultCodexBarKey: String? = readCodexBarOpenRouterKey(configURL: nil)
+
+    /// Reads the OpenRouter API key from `OPENROUTER_API_KEY` or CodexBar's `~/.config/codexbar/config.json`.
+    public static func loadCodexBarOpenRouterKey(configURL: URL? = nil) -> String? {
+        if configURL == nil {
+            return cachedDefaultCodexBarKey
+        }
+        return readCodexBarOpenRouterKey(configURL: configURL)
+    }
+
+    private static func readCodexBarOpenRouterKey(configURL: URL?) -> String? {
+        if configURL == nil,
+           let envKey = ProcessInfo.processInfo.environment["OPENROUTER_API_KEY"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !envKey.isEmpty {
+            return envKey
+        }
+        let url = configURL ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/codexbar/config.json")
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let providers = root["providers"] as? [[String: Any]] else {
+            return nil
+        }
+        for provider in providers where (provider["id"] as? String) == "openrouter" {
+            if let key = (provider["apiKey"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !key.isEmpty {
+                return key
+            }
+        }
+        return nil
     }
 }
 

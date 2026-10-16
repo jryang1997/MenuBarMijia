@@ -3,59 +3,177 @@ import AVFoundation
 import Speech
 import MijiaCore
 
+// MARK: - Nonisolated ObjC Callback Bridge (prevents Swift 6 @MainActor thunk traps on TCC/Audio threads)
+
+private nonisolated enum SpeechRuntimeBridge {
+    static func requestMicrophoneAccess() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            return true
+        case .notDetermined:
+            return await withCheckedContinuation { continuation in
+                AVCaptureDevice.requestAccess(for: .audio) { granted in
+                    continuation.resume(returning: granted)
+                }
+            }
+        case .denied, .restricted:
+            return false
+        @unknown default:
+            return false
+        }
+    }
+
+    static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        let current = SFSpeechRecognizer.authorizationStatus()
+        if current != .notDetermined { return current }
+        return await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
+    }
+
+    static func installAudioTap(
+        on inputNode: AVAudioInputNode,
+        format: AVAudioFormat,
+        request: SFSpeechAudioBufferRecognitionRequest
+    ) {
+        inputNode.removeTap(onBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            request.append(buffer)
+        }
+    }
+
+    static func startRecognitionTask(
+        recognizer: SFSpeechRecognizer,
+        request: SFSpeechAudioBufferRecognitionRequest,
+        onEvent: @escaping @Sendable (String?, Bool, Bool) -> Void
+    ) -> SFSpeechRecognitionTask {
+        recognizer.recognitionTask(with: request) { result, error in
+            let transcript = result?.bestTranscription.formattedString
+            let isFinal = result?.isFinal ?? false
+            let hasError = (error != nil)
+            onEvent(transcript, isFinal, hasError)
+        }
+    }
+}
+
 // MARK: - Live Speech Recognizer (macOS Speech + AVAudioEngine)
 
 @Observable
 @MainActor
-final class SpeechInputController {
-    private(set) var isListening: Bool = false
-    private(set) var errorMessage: String?
+public final class SpeechInputController {
+    public static let shared = SpeechInputController()
 
-    var onTranscript: ((String) -> Void)?
-    var onAutoSubmit: (() -> Void)?
+    public var draft: String = ""
+    public private(set) var isListening: Bool = false
+    public private(set) var isHoldToTalk: Bool = false
+    public private(set) var errorMessage: String?
 
     private var audioEngine: AVAudioEngine?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private var silenceTimerTask: Task<Void, Never>?
+    private var holdReleaseTask: Task<Void, Never>?
     private var hasCapturedSpeech: Bool = false
+    private var isStarting: Bool = false
 
-    func toggle() {
+    public init() {}
+
+    public func toggle(store: HomeStore) {
         if isListening {
-            stop(andSubmit: hasCapturedSpeech)
+            stop(andSubmit: hasCapturedSpeech, store: store)
         } else {
-            Task { await start() }
+            Task { await start(holdMode: false, store: store) }
         }
     }
 
-    func start() async {
-        guard !isListening else { return }
+    public func startHoldToTalk(store: HomeStore) {
+        holdReleaseTask?.cancel()
+        holdReleaseTask = nil
+        if isListening {
+            isHoldToTalk = true
+            silenceTimerTask?.cancel()
+            silenceTimerTask = nil
+            return
+        }
+        Task { await start(holdMode: true, store: store) }
+    }
+
+    public func finishHoldToTalk(store: HomeStore) {
+        guard isHoldToTalk || isListening else { return }
+        holdReleaseTask?.cancel()
+        recognitionRequest?.endAudio()
+        holdReleaseTask = Task { @MainActor [weak self] in
+            // Allow 320ms after mouse release for SFSpeechRecognizer to flush the final syllable.
+            try? await Task.sleep(for: .milliseconds(320))
+            guard !Task.isCancelled, let self else { return }
+            if self.isListening {
+                let hasText = self.hasCapturedSpeech || !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                self.stop(andSubmit: hasText, store: store)
+            } else {
+                self.isHoldToTalk = false
+            }
+        }
+    }
+
+    public func start(holdMode: Bool, store: HomeStore) async {
+        guard !isListening, !isStarting else {
+            if holdMode { isHoldToTalk = true }
+            return
+        }
         guard Bundle.main.bundleURL.pathExtension == "app" else {
             errorMessage = "语音识别仅在打包后的 App 中可用"
             return
         }
+        isStarting = true
+        defer { isStarting = false }
+
+        let authStartTime = ContinuousClock.now
         errorMessage = nil
         hasCapturedSpeech = false
+        isHoldToTalk = holdMode
+        if holdMode {
+            draft = ""
+        }
 
-        let micAllowed = await Self.requestMicrophoneAccess()
+        let micAllowed = await SpeechRuntimeBridge.requestMicrophoneAccess()
         guard micAllowed else {
+            isHoldToTalk = false
             errorMessage = "请在「系统设置 → 隐私与安全性 → 麦克风」中允许米家控制中心"
             return
         }
 
-        let speechStatus = await Self.requestSpeechAuthorization()
+        let speechStatus = await SpeechRuntimeBridge.requestSpeechAuthorization()
         guard speechStatus == .authorized else {
+            isHoldToTalk = false
             errorMessage = "请在「系统设置 → 隐私与安全性 → 语音识别」中允许米家控制中心"
             return
         }
 
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "zh-CN")) ?? SFSpeechRecognizer(),
               recognizer.isAvailable else {
+            isHoldToTalk = false
             errorMessage = "当前系统语音识别服务暂不可用"
             return
         }
 
-        stop(andSubmit: false)
+        // If a system permission prompt appeared during Hold-to-Talk and the user already released the mouse,
+        // seamlessly switch to hands-free silence auto-submit so they can speak right away.
+        let authElapsed = ContinuousClock.now - authStartTime
+        if isHoldToTalk && (NSEvent.pressedMouseButtons & 1) == 0 {
+            if authElapsed > .milliseconds(450) {
+                isHoldToTalk = false
+                holdReleaseTask?.cancel()
+                holdReleaseTask = nil
+            } else {
+                isHoldToTalk = false
+                return
+            }
+        }
+
+        stop(andSubmit: false, store: store)
+        isHoldToTalk = holdMode && ((NSEvent.pressedMouseButtons & 1) != 0)
 
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -64,20 +182,19 @@ final class SpeechInputController {
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
+            isHoldToTalk = false
             errorMessage = "未检测到可用麦克风输入设备"
             return
         }
 
-        inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
-        }
+        SpeechRuntimeBridge.installAudioTap(on: inputNode, format: format, request: request)
 
         do {
             engine.prepare()
             try engine.start()
         } catch {
             inputNode.removeTap(onBus: 0)
+            isHoldToTalk = false
             errorMessage = "麦克风启动失败：\(error.localizedDescription)"
             return
         }
@@ -86,34 +203,42 @@ final class SpeechInputController {
         self.recognitionRequest = request
         self.isListening = true
 
-        self.recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            let transcript = result?.bestTranscription.formattedString
-            let isFinal = result?.isFinal ?? false
-            let hasError = (error != nil)
-            Task { @MainActor [weak self] in
-                guard let self, self.isListening else { return }
+        self.recognitionTask = SpeechRuntimeBridge.startRecognitionTask(
+            recognizer: recognizer,
+            request: request
+        ) { [weak self, weak store] transcript, isFinal, hasError in
+            Task { @MainActor [weak self, weak store] in
+                guard let self, let store, self.isListening else { return }
                 if let transcript {
                     let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !trimmed.isEmpty {
                         self.hasCapturedSpeech = true
-                        self.onTranscript?(trimmed)
-                        self.scheduleSilenceAutoSubmit()
+                        self.draft = trimmed
+                        if !self.isHoldToTalk {
+                            self.scheduleSilenceAutoSubmit(store: store)
+                        }
                     }
                 }
                 if isFinal || hasError {
-                    self.stop(andSubmit: self.hasCapturedSpeech)
+                    if !self.isHoldToTalk {
+                        self.stop(andSubmit: self.hasCapturedSpeech, store: store)
+                    }
                 }
             }
         }
     }
 
-    func stop(andSubmit: Bool) {
+    public func stop(andSubmit: Bool, store: HomeStore?) {
         silenceTimerTask?.cancel()
         silenceTimerTask = nil
+        holdReleaseTask?.cancel()
+        holdReleaseTask = nil
 
-        let shouldSubmit = andSubmit && hasCapturedSpeech
+        let textToSubmit = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldSubmit = andSubmit && (hasCapturedSpeech || !textToSubmit.isEmpty)
         hasCapturedSpeech = false
         isListening = false
+        isHoldToTalk = false
 
         recognitionRequest?.endAudio()
         recognitionRequest = nil
@@ -126,41 +251,29 @@ final class SpeechInputController {
         }
         audioEngine = nil
 
-        if shouldSubmit {
-            onAutoSubmit?()
+        if shouldSubmit, let store {
+            submit(store: store)
         }
     }
 
-    private func scheduleSilenceAutoSubmit() {
+    public func submit(store: HomeStore) {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, store.assistantState != .thinking else { return }
+        Task { @MainActor in
+            await store.runAssistantCommand(text)
+            if case .done = store.assistantState {
+                self.draft = ""
+            }
+        }
+    }
+
+    private func scheduleSilenceAutoSubmit(store: HomeStore) {
         silenceTimerTask?.cancel()
         // Wait 1.1s after the last recognized syllable before auto-submitting the command.
-        silenceTimerTask = Task { [weak self] in
+        silenceTimerTask = Task { @MainActor [weak self, weak store] in
             try? await Task.sleep(for: .milliseconds(1100))
-            guard !Task.isCancelled, let self, self.isListening, self.hasCapturedSpeech else { return }
-            self.stop(andSubmit: true)
-        }
-    }
-
-    private static func requestMicrophoneAccess() async -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized:
-            return true
-        case .notDetermined:
-            return await AVCaptureDevice.requestAccess(for: .audio)
-        case .denied, .restricted:
-            return false
-        @unknown default:
-            return false
-        }
-    }
-
-    private static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
-        let current = SFSpeechRecognizer.authorizationStatus()
-        if current != .notDetermined { return current }
-        return await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
+            guard !Task.isCancelled, let self, let store, self.isListening, !self.isHoldToTalk, self.hasCapturedSpeech else { return }
+            self.stop(andSubmit: true, store: store)
         }
     }
 }
@@ -171,8 +284,7 @@ struct AssistantCommandBar: View {
     @Environment(\.colorScheme) private var colorScheme
     let store: HomeStore
 
-    @State private var draft: String = ""
-    @State private var speech = SpeechInputController()
+    @Bindable private var speech = SpeechInputController.shared
     @State private var lastHandledVoiceRequest: Int = 0
     @FocusState private var isFieldFocused: Bool
 
@@ -187,17 +299,17 @@ struct AssistantCommandBar: View {
                     .symbolEffect(.pulse, isActive: store.assistantState == .thinking)
 
                 TextField(
-                    speech.isListening ? "正在聆听…说完自动执行（如：书房灯月光模式）" : "例如：书房灯月光模式（支持语音或打字）",
-                    text: $draft
+                    placeholderText,
+                    text: $speech.draft
                 )
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, weight: .medium))
                 .focused($isFieldFocused)
                 .onSubmit {
                     if speech.isListening {
-                        speech.stop(andSubmit: false)
+                        speech.stop(andSubmit: false, store: store)
                     }
-                    submit()
+                    speech.submit(store: store)
                 }
 
                 micButton
@@ -229,38 +341,41 @@ struct AssistantCommandBar: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .help("点击麦克风直接说话（说完停顿 1 秒自动执行），或打字回车执行；Esc 关闭")
+        .help("长按顶部菜单栏温度图标可按住说话；或点击麦克风说话，打字回车执行")
         .animation(AppleMotion.snappySpring, value: store.assistantState)
         .animation(AppleMotion.snappySpring, value: speech.isListening)
         .onAppear {
-            speech.onTranscript = { text in
-                draft = text
-            }
-            speech.onAutoSubmit = {
-                submit()
-            }
             if store.assistantVoiceRequest != lastHandledVoiceRequest {
                 lastHandledVoiceRequest = store.assistantVoiceRequest
-                Task { await speech.start() }
-            } else {
+                Task { await speech.start(holdMode: false, store: store) }
+            } else if !speech.isListening {
                 isFieldFocused = true
             }
         }
-        .onDisappear {
-            speech.stop(andSubmit: false)
-        }
         .onChange(of: store.assistantFocusRequest) { _, _ in
-            isFieldFocused = true
+            if !speech.isListening {
+                isFieldFocused = true
+            }
         }
         .onChange(of: store.assistantVoiceRequest) { _, newValue in
             lastHandledVoiceRequest = newValue
-            speech.toggle()
+            speech.toggle(store: store)
         }
+    }
+
+    private var placeholderText: String {
+        if speech.isHoldToTalk {
+            return "按住菜单栏说话，松开立即执行（如：书房灯月光模式）"
+        }
+        if speech.isListening {
+            return "正在聆听…说完自动执行（如：书房灯月光模式）"
+        }
+        return "例如：书房灯月光模式（支持按住菜单栏说话或打字）"
     }
 
     private var micButton: some View {
         Button {
-            speech.toggle()
+            speech.toggle(store: store)
         } label: {
             Image(systemName: speech.isListening ? "stop.circle.fill" : "mic.fill")
                 .font(.system(size: 12, weight: .semibold))
@@ -269,7 +384,7 @@ struct AssistantCommandBar: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(speech.isListening ? "停止聆听并执行" : "语音输入（快捷键 V）")
+        .help(speech.isListening ? "停止聆听并执行" : "语音输入（快捷键 V，或长按菜单栏图标）")
     }
 
     @ViewBuilder
@@ -281,7 +396,7 @@ struct AssistantCommandBar: View {
                 .frame(width: 16, height: 16)
         } else {
             Button {
-                speech.stop(andSubmit: false)
+                speech.stop(andSubmit: false, store: store)
                 withAnimation(AppleMotion.snappySpring) {
                     store.dismissAssistantBar()
                 }
@@ -307,17 +422,6 @@ struct AssistantCommandBar: View {
         case .idle, .thinking: return nil
         }
     }
-
-    private func submit() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, store.assistantState != .thinking else { return }
-        Task {
-            await store.runAssistantCommand(text)
-            if case .done = store.assistantState {
-                draft = ""
-            }
-        }
-    }
 }
 
 // MARK: - Settings: AI 指令
@@ -332,32 +436,32 @@ struct AssistantSettingsSection: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("AI 指令")
+                Text("AI 指令 (Jev System One)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("常规指令本地 0ms，复杂指令走 Chat 或 System One")
+                Text(AssistantConfig.loadCodexBarOpenRouterKey() != nil ? "已自动接入 CodexBar OpenRouter" : "常规指令 0ms，复杂指令走 Jev")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
             }
 
-            labeledField("服务地址 (Magpie / OpenAI 兼容 /v1)") {
+            labeledField("服务地址 (默认 OpenRouter /v1，支持 System One 决策协议)") {
                 TextField(AssistantConfig.defaultBaseURL, text: $baseURLDraft)
                     .textFieldStyle(.roundedBorder)
             }
 
-            labeledField("模型 (支持 glm-5.1、qwen3.8-flash 或 System One 决策模型 jev-latest)") {
+            labeledField("模型 (默认 ~typesafe/jev-latest，也支持 glm-5.1 / qwen)") {
                 TextField(AssistantConfig.defaultModel, text: $modelDraft)
                     .textFieldStyle(.roundedBorder)
             }
 
-            labeledField("API Key (本地路由可留空，存入钥匙串)") {
-                SecureField("可留空", text: $apiKeyDraft)
+            labeledField("API Key (留空将自动读取 CodexBar 的 OpenRouter Key)") {
+                SecureField("留空自动读取 CodexBar，或手动输入存入钥匙串", text: $apiKeyDraft)
                     .textFieldStyle(.roundedBorder)
             }
 
             HStack {
-                Button("恢复默认") {
+                Button("恢复 Jev 默认") {
                     baseURLDraft = AssistantConfig.defaultBaseURL
                     modelDraft = AssistantConfig.defaultModel
                 }

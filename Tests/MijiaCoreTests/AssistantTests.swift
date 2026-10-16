@@ -184,25 +184,52 @@ struct AssistantTests {
         ])
     }
 
-    @Test("Model resolver uses Magpie /v1/systemone when configured with jev-latest")
+    @Test("AssistantConfig loads OpenRouter key from CodexBar config file")
+    func codexBarOpenRouterKeyLoading() throws {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codexbar-test-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        let fakeConfig = """
+        {
+          "version": 1,
+          "providers": [
+            { "id": "codex", "enabled": true },
+            { "id": "openrouter", "enabled": true, "apiKey": "test-or-key-placeholder" }
+          ]
+        }
+        """
+        try fakeConfig.write(to: tempURL, atomically: true, encoding: .utf8)
+        let loaded = AssistantConfig.loadCodexBarOpenRouterKey(configURL: tempURL)
+        #expect(loaded == "test-or-key-placeholder")
+    }
+
+    @Test("Model resolver uses /v1/systemone with ~typesafe/jev-latest and decodes multi-question intents")
     func modelResolverSystemOneJev() async throws {
         let systemOnePayload: [String: Any] = [
             "answers": [
-                "target": ["choice": "d1", "confidence": 0.99],
-                "op": ["choice": "effect_night", "confidence": 0.97]
+                "target": ["choice": "room_lights:书房", "confidence": 0.99],
+                "op": ["choice": "effect_night", "confidence": 0.97],
+                "temp": ["choice": "none", "confidence": 0.99]
             ]
         ]
         let responseData = try JSONSerialization.data(withJSONObject: systemOnePayload)
 
         let resolver = ModelIntentResolver(
-            config: AssistantConfig(baseURL: "http://localhost:3425/v1", model: "typesafe/jev-latest"),
+            config: AssistantConfig(
+                baseURL: "https://openrouter.ai/api/v1",
+                model: "typesafe/jev-latest",
+                apiKey: "test-token"
+            ),
             transport: { request in
-                #expect(request.url?.absoluteString == "http://localhost:3425/v1/systemone")
+                #expect(request.url?.absoluteString == "https://openrouter.ai/api/v1/systemone")
                 let body = try #require(request.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
-                #expect(body["model"] as? String == "typesafe/jev-latest")
+                // OpenRouter requires the leading ~ for unlisted System One models
+                #expect(body["model"] as? String == "~typesafe/jev-latest")
                 let questions = try #require(body["questions"] as? [String: Any])
                 #expect(questions["target"] != nil)
                 #expect(questions["op"] != nil)
+                #expect(questions["temp"] != nil)
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
                 return (responseData, response)
             }
@@ -210,22 +237,44 @@ struct AssistantTests {
 
         let plan = try await resolver.resolve("书房来点柔和月光", devices: Self.devices, scenes: Self.scenes)
         #expect(plan.source == .model)
+        // Only studyCeiling supports the Night effect; studyDesk is filtered out cleanly by IntentCatalog
         #expect(plan.intents == [
             DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Night"))
         ])
         #expect(plan.reply == "已书房吸顶灯切换为月光模式")
+
+        // Verify AC mode + temperature combined from System One answers
+        let acPayload: [String: Any] = [
+            "answers": [
+                "target": ["choice": "d3", "confidence": 1.0],
+                "op": ["choice": "hvac_cool", "confidence": 0.99],
+                "temp": ["choice": "24", "confidence": 1.0]
+            ]
+        ]
+        let acData = try JSONSerialization.data(withJSONObject: acPayload)
+        let acResolver = ModelIntentResolver(
+            config: AssistantConfig(baseURL: "https://openrouter.ai/api/v1", model: "~typesafe/jev-latest", apiKey: "test-token"),
+            transport: { request in
+                (acData, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+        )
+        let acPlan = try await acResolver.resolve("太热了，客厅空调开24度", devices: Self.devices, scenes: Self.scenes)
+        #expect(acPlan.intents == [
+            DeviceIntent(targetId: "dev_living_ac", operation: .hvacMode("cool")),
+            DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(24))
+        ])
     }
 
     @Test("Model resolver surfaces HTTP errors and empty content")
     func modelResolverErrors() async {
-        let failing = ModelIntentResolver(config: AssistantConfig(), transport: { request in
+        let failing = ModelIntentResolver(config: AssistantConfig(model: "glm-5.1"), transport: { request in
             (Data(), HTTPURLResponse(url: request.url!, statusCode: 502, httpVersion: nil, headerFields: nil)!)
         })
         await #expect(throws: AssistantError.httpStatus(502)) {
             try await failing.resolve("x", devices: Self.devices, scenes: Self.scenes)
         }
 
-        let empty = ModelIntentResolver(config: AssistantConfig(), transport: { request in
+        let empty = ModelIntentResolver(config: AssistantConfig(model: "glm-5.1"), transport: { request in
             let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": ""]]]])
             return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         })
@@ -285,7 +334,7 @@ struct AssistantTests {
     func storeFallsBackToModel() async throws {
         let (store, mock) = try await makeStore()
         let content = #"{"actions":[{"device":"s2","op":"scene","value":null},{"device":"d4","op":"power","value":false}],"reply":"晚安"}"#
-        store.assistantResolverOverride = ModelIntentResolver(config: AssistantConfig(), transport: { request in
+        store.assistantResolverOverride = ModelIntentResolver(config: AssistantConfig(model: "glm-5.1"), transport: { request in
             let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]]])
             return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         })
@@ -311,17 +360,18 @@ struct AssistantTests {
 
     // MARK: - Live (opt-in)
 
-    @Test("ModelIntentResolver resolves against the live router when ASSISTANT_RUN_LIVE_TEST=1")
+    @Test("ModelIntentResolver resolves against live OpenRouter ~typesafe/jev-latest when ASSISTANT_RUN_LIVE_TEST=1")
     func liveModelResolver() async throws {
         guard ProcessInfo.processInfo.environment["ASSISTANT_RUN_LIVE_TEST"] == "1" else { return }
-        let resolver = ModelIntentResolver(config: AssistantConfig())
+        let key = try #require(AssistantConfig.loadCodexBarOpenRouterKey())
+        let resolver = ModelIntentResolver(config: AssistantConfig(apiKey: key))
         let clock = ContinuousClock()
         let start = clock.now
-        let plan = try await resolver.resolve("打开书房灯", devices: Self.devices, scenes: Self.scenes)
+        let plan = try await resolver.resolve("书房来点柔和月光", devices: Self.devices, scenes: Self.scenes)
         let elapsed = clock.now - start
-        print("ASSISTANT_LIVE latency=\(elapsed) intents=\(plan.intents) reply=\(plan.reply)")
-        #expect(!plan.intents.isEmpty)
-        let allPowerOn = plan.intents.allSatisfy { $0.operation == .power(true) }
-        #expect(allPowerOn)
+        print("ASSISTANT_LIVE_JEV latency=\(elapsed) intents=\(plan.intents) reply=\(plan.reply)")
+        #expect(plan.intents == [
+            DeviceIntent(targetId: "dev_study_ceiling", operation: .lightEffect("Night"))
+        ])
     }
 }
