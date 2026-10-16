@@ -2,6 +2,8 @@ import SwiftUI
 import MijiaCore
 
 public struct DeviceCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     public let device: SmartDevice
     public let store: HomeStore
     public let showRoomBadge: Bool
@@ -45,6 +47,16 @@ public struct DeviceCardView: View {
         DevicePalette.accentColor(for: device)
     }
 
+    private var statusColor: Color {
+        DevicePalette.statusTextColor(for: device, colorScheme: colorScheme)
+    }
+
+    private var favoriteStarColor: Color {
+        colorScheme == .dark
+            ? Color(red: 1.0, green: 0.82, blue: 0.24)
+            : Color(red: 0.90, green: 0.56, blue: 0.02)
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if isCompactTile {
@@ -64,12 +76,12 @@ public struct DeviceCardView: View {
                     .transition(AppleMotion.drawerTransition)
             }
         }
-        .glassTile(isActive: device.isActiveOn, accent: accent, cornerRadius: 13)
+        .glassTile(isActive: device.isActiveOn, accent: accent, cornerRadius: 14)
         .overlay(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(isKeyboardFocused ? accent.opacity(0.85) : Color.clear, lineWidth: 1.6)
         )
-        .opacity(device.isOnline ? 1.0 : 0.56)
+        .opacity(device.isOnline ? 1.0 : 0.58)
         .onHover { hovering in
             isHovered = hovering
         }
@@ -147,9 +159,9 @@ public struct DeviceCardView: View {
                             .lineLimit(1)
 
                         Text(device.statusSubtitle)
-                            .font(.system(size: 10.5, weight: .regular))
+                            .font(.system(size: 10.5, weight: device.isActiveOn ? .semibold : .regular))
                             .monospacedDigit()
-                            .foregroundStyle(device.isActiveOn ? accent : .secondary)
+                            .foregroundStyle(statusColor)
                             .lineLimit(1)
                     }
 
@@ -160,7 +172,7 @@ public struct DeviceCardView: View {
                     } else if device.hasDetailDrawer {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .contentShape(Rectangle())
@@ -169,7 +181,7 @@ public struct DeviceCardView: View {
             .help(device.hasDetailDrawer ? "点击展开详细控制" : device.name)
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 8)
+        .padding(.vertical, 8.5)
     }
 
     // MARK: - Standard Single-Column Row (1-Click Toggle + Expand Trigger)
@@ -184,7 +196,7 @@ public struct DeviceCardView: View {
                 HStack(spacing: 10) {
                     iconBadge
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 2.5) {
                         HStack(spacing: 5) {
                             Text(device.name)
                                 .font(.system(size: 12.5, weight: .semibold))
@@ -193,21 +205,25 @@ public struct DeviceCardView: View {
 
                             if showRoomBadge {
                                 Text(device.roomName)
-                                    .font(.system(size: 9.5, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 5)
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundStyle(.primary.opacity(0.68))
+                                    .padding(.horizontal, 5.5)
                                     .padding(.vertical, 1.5)
                                     .background(
                                         Capsule(style: .continuous)
-                                            .fill(Color.primary.opacity(0.07))
+                                            .fill(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.075))
+                                            .overlay(
+                                                Capsule(style: .continuous)
+                                                    .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.14 : 0.36), lineWidth: 0.6)
+                                            )
                                     )
                             }
                         }
 
                         Text(device.statusSubtitle)
-                            .font(.system(size: 11, weight: .regular))
+                            .font(.system(size: 11, weight: device.isActiveOn ? .semibold : .regular))
                             .monospacedDigit()
-                            .foregroundStyle(device.isActiveOn ? accent : .secondary)
+                            .foregroundStyle(statusColor)
                             .lineLimit(1)
                     }
 
@@ -230,8 +246,8 @@ public struct DeviceCardView: View {
                         }
                     } label: {
                         Image(systemName: isFavorite ? "star.fill" : "star")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(isFavorite ? Color.yellow : Color.secondary.opacity(0.55))
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(isFavorite ? favoriteStarColor : Color.secondary.opacity(0.65))
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
@@ -247,13 +263,16 @@ public struct DeviceCardView: View {
                     } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary.opacity(0.68))
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .frame(width: 24, height: 26)
-                            .background(
-                                Circle()
-                                    .fill(Color.primary.opacity(isExpanded ? 0.10 : 0.0))
-                            )
+                            .frame(width: 24, height: 24)
+                            .background {
+                                if isExpanded {
+                                    Circle()
+                                        .fill(Color.primary.opacity(0.08))
+                                        .glassEffect(.regular, in: Circle())
+                                }
+                            }
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -262,7 +281,7 @@ public struct DeviceCardView: View {
             }
         }
         .padding(.horizontal, 11)
-        .padding(.vertical, 9)
+        .padding(.vertical, 9.5)
     }
 
     private func quickIndexPill(_ index: Int) -> some View {
@@ -280,17 +299,63 @@ public struct DeviceCardView: View {
 
     private var iconBadge: some View {
         ZStack {
-            Circle()
-                .fill(
-                    device.isActiveOn
-                        ? accent
-                        : Color.primary.opacity(0.08)
-                )
-                .frame(width: 32, height: 32)
+            if device.isActiveOn {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                accent.opacity(0.90),
+                                accent
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 33, height: 33)
+                    .glassEffect(.regular.tint(accent.opacity(0.55)), in: Circle())
+                    .overlay {
+                        Circle()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(0.58),
+                                        Color.white.opacity(0.10)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.85
+                            )
+                    }
+                    .shadow(color: accent.opacity(0.30), radius: 5, x: 0, y: 2)
+            } else {
+                Circle()
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06))
+                    .frame(width: 33, height: 33)
+                    .glassEffect(.regular, in: Circle())
+                    .overlay {
+                        Circle()
+                            .strokeBorder(
+                                LinearGradient(
+                                    colors: [
+                                        Color.white.opacity(colorScheme == .dark ? 0.22 : 0.50),
+                                        Color.primary.opacity(0.06)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 0.75
+                            )
+                    }
+            }
 
             Image(systemName: resolvedSymbolName)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(device.isActiveOn ? Color.white : (device.isOnline ? accent : Color.secondary))
+                .foregroundStyle(
+                    device.isActiveOn
+                        ? Color.white
+                        : (device.isOnline ? Color.primary.opacity(0.76) : Color.secondary)
+                )
         }
     }
 
@@ -330,65 +395,69 @@ public struct DeviceCardView: View {
     // MARK: - 1. Light Detail Controls
 
     private func lightDrawer(_ spec: LightSpec) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Brightness Slider
-            HStack(spacing: 8) {
-                Image(systemName: "sun.min.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+        let brightnessVal = Double(spec.brightnessPercent ?? (spec.isOn ? 80 : 0))
+        let kelvinVal = Double(spec.colorTempKelvin ?? 4000)
 
-                Slider(
-                    value: Binding(
-                        get: { Double(spec.brightnessPercent ?? (spec.isOn ? 80 : 0)) },
-                        set: { store.setLightBrightness(device.id, percent: Int($0.rounded())) }
-                    ),
-                    in: 1...100
-                )
-                .tint(accent)
-                .disabled(!device.isOnline)
+        return VStack(alignment: .leading, spacing: 10) {
+            // Liquid Glass Brightness Slider
+            LiquidGlassSlider(
+                value: Binding(
+                    get: { brightnessVal },
+                    set: { store.setLightBrightness(device.id, percent: Int($0.rounded())) }
+                ),
+                in: 1...100,
+                step: 1,
+                iconName: "sun.max.fill",
+                iconColor: statusColor,
+                trackFill: LinearGradient(
+                    colors: [
+                        Color(red: 0.98, green: 0.72, blue: 0.18).opacity(0.62),
+                        Color(red: 0.96, green: 0.56, blue: 0.06).opacity(0.92)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                formattedValue: "\(Int(brightnessVal))%"
+            )
+            .disabled(!device.isOnline)
 
-                Text("\(spec.brightnessPercent ?? (spec.isOn ? 80 : 0))%")
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
-            }
-
-            // Color Temperature Slider
-            HStack(spacing: 8) {
-                Image(systemName: "thermometer.sun.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
-
-                Slider(
-                    value: Binding(
-                        get: { Double(spec.colorTempKelvin ?? 4000) },
-                        set: { store.setLightColorTemp(device.id, kelvin: Int($0.rounded())) }
-                    ),
-                    in: Double(spec.minKelvin)...Double(spec.maxKelvin),
-                    step: 100
-                )
-                .tint(Color(red: 0.98, green: 0.75, blue: 0.32))
-                .disabled(!device.isOnline)
-
-                Text("\(spec.colorTempKelvin ?? 4000)K")
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 42, alignment: .trailing)
-            }
+            // Liquid Glass Color Temperature Slider (Physical Kelvin Spectrum)
+            LiquidGlassSlider(
+                value: Binding(
+                    get: { kelvinVal },
+                    set: { store.setLightColorTemp(device.id, kelvin: Int($0.rounded())) }
+                ),
+                in: Double(spec.minKelvin)...Double(spec.maxKelvin),
+                step: 100,
+                iconName: "thermometer.sun.fill",
+                iconColor: Color.orange,
+                trackFill: LinearGradient(
+                    colors: [
+                        Color(red: 0.98, green: 0.62, blue: 0.16).opacity(0.85),
+                        Color(red: 1.0, green: 0.90, blue: 0.74).opacity(0.80),
+                        Color(red: 0.56, green: 0.82, blue: 1.0).opacity(0.88)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                isSpectrumTrack: true,
+                formattedValue: "\(Int(kelvinVal))K"
+            )
+            .disabled(!device.isOnline)
 
             // Scene Effect Presets (Day / Night / TV / Hospitality)
             if !spec.availableEffects.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(spec.availableEffects, id: \.self) { effect in
-                            let selected = (spec.currentEffect == effect)
-                            Button(SmartDevice.localizeEffect(effect)) {
-                                store.setLightEffect(device.id, effect: effect)
+                    GlassEffectContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(spec.availableEffects, id: \.self) { effect in
+                                let selected = (spec.currentEffect == effect)
+                                Button(SmartDevice.localizeEffect(effect)) {
+                                    store.setLightEffect(device.id, effect: effect)
+                                }
+                                .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
+                                .disabled(!device.isOnline)
                             }
-                            .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
-                            .disabled(!device.isOnline)
                         }
                     }
                 }
@@ -407,7 +476,7 @@ public struct DeviceCardView: View {
                     Image(systemName: "minus")
                         .font(.system(size: 13, weight: .bold))
                         .frame(width: 32, height: 28)
-                        .background(Circle().fill(Color.primary.opacity(0.08)))
+                        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
                 }
                 .buttonStyle(PressableCardButtonStyle())
                 .disabled(!device.isOnline)
@@ -420,11 +489,11 @@ public struct DeviceCardView: View {
                         .monospacedDigit()
                     if let cur = spec.currentTemperature {
                         Text(String(format: "当前室温 %.1f°C", cur))
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(.secondary)
                     } else {
                         Text("设定温度")
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 10.5, weight: .medium))
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -437,7 +506,7 @@ public struct DeviceCardView: View {
                     Image(systemName: "plus")
                         .font(.system(size: 13, weight: .bold))
                         .frame(width: 32, height: 28)
-                        .background(Circle().fill(Color.primary.opacity(0.08)))
+                        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
                 }
                 .buttonStyle(PressableCardButtonStyle())
                 .disabled(!device.isOnline)
@@ -446,14 +515,16 @@ public struct DeviceCardView: View {
 
             // HVAC Modes
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(spec.availableModes, id: \.self) { mode in
-                        let selected = (spec.hvacMode == mode)
-                        Button(SmartDevice.localizeHVACMode(mode)) {
-                            store.setClimateMode(device.id, mode: mode)
+                GlassEffectContainer(spacing: 6) {
+                    HStack(spacing: 6) {
+                        ForEach(spec.availableModes, id: \.self) { mode in
+                            let selected = (spec.hvacMode == mode)
+                            Button(SmartDevice.localizeHVACMode(mode)) {
+                                store.setClimateMode(device.id, mode: mode)
+                            }
+                            .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
+                            .disabled(!device.isOnline)
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
-                        .disabled(!device.isOnline)
                     }
                 }
             }
@@ -465,14 +536,16 @@ public struct DeviceCardView: View {
     private func fanDrawer(_ spec: FanSpec) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if !spec.availablePresetModes.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(spec.availablePresetModes, id: \.self) { mode in
-                        let selected = (spec.presetMode == mode)
-                        Button(mode) {
-                            store.setFanPresetMode(device.id, preset: mode)
+                GlassEffectContainer(spacing: 6) {
+                    HStack(spacing: 6) {
+                        ForEach(spec.availablePresetModes, id: \.self) { mode in
+                            let selected = (spec.presetMode == mode)
+                            Button(mode) {
+                                store.setFanPresetMode(device.id, preset: mode)
+                            }
+                            .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
+                            .disabled(!device.isOnline)
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
-                        .disabled(!device.isOnline)
                     }
                 }
             }
@@ -486,7 +559,7 @@ public struct DeviceCardView: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("实时功率")
-                        .font(.system(size: 10))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text(String(format: "%.0f W", spec.powerWatts ?? 0))
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -497,7 +570,7 @@ public struct DeviceCardView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("今日用电")
-                        .font(.system(size: 10))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Text(String(format: "%.2f kWh", spec.energyKwh ?? 0))
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -516,7 +589,7 @@ public struct DeviceCardView: View {
                     )
                     .toggleStyle(.switch)
                     .controlSize(.mini)
-                    .font(.system(size: 11))
+                    .font(.system(size: 11, weight: .medium))
                 }
             }
         }
@@ -545,12 +618,14 @@ public struct DeviceCardView: View {
 
             if !spec.availableModes.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(spec.availableModes, id: \.self) { mode in
-                            Button(mode) {
-                                store.setFridgeMode(device.id, mode: mode)
+                    GlassEffectContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(spec.availableModes, id: \.self) { mode in
+                                Button(mode) {
+                                    store.setFridgeMode(device.id, mode: mode)
+                                }
+                                .buttonStyle(PillActionButtonStyle(isSelected: spec.currentMode == mode, tintColor: accent))
                             }
-                            .buttonStyle(PillActionButtonStyle(isSelected: spec.currentMode == mode, tintColor: accent))
                         }
                     }
                 }
@@ -564,15 +639,16 @@ public struct DeviceCardView: View {
         target: Double,
         onStep: @escaping (Double) -> Void
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(title)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if let actual {
                     Text(String(format: "实测 %.0f°C", actual))
-                        .font(.system(size: 10))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -606,36 +682,35 @@ public struct DeviceCardView: View {
             }
         }
         .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.primary.opacity(0.05))
-        )
+        .glassEffect(.regular, in: shape)
     }
 
     // MARK: - 6. Vacuum Controls
 
     private func vacuumDrawer(_ spec: VacuumSpec) -> some View {
-        HStack(spacing: 8) {
-            Button {
-                store.performVacuumAction(device.id, action: .start)
-            } label: {
-                Label("开始清扫", systemImage: "play.fill")
-            }
-            .buttonStyle(PillActionButtonStyle(isSelected: spec.status == "cleaning", tintColor: accent))
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    store.performVacuumAction(device.id, action: .start)
+                } label: {
+                    Label("开始清扫", systemImage: "play.fill")
+                }
+                .buttonStyle(PillActionButtonStyle(isSelected: spec.status == "cleaning", tintColor: accent))
 
-            Button {
-                store.performVacuumAction(device.id, action: .pause)
-            } label: {
-                Label("暂停", systemImage: "pause.fill")
-            }
-            .buttonStyle(PillActionButtonStyle(isSelected: spec.status == "paused", tintColor: accent))
+                Button {
+                    store.performVacuumAction(device.id, action: .pause)
+                } label: {
+                    Label("暂停", systemImage: "pause.fill")
+                }
+                .buttonStyle(PillActionButtonStyle(isSelected: spec.status == "paused", tintColor: accent))
 
-            Button {
-                store.performVacuumAction(device.id, action: .returnToBase)
-            } label: {
-                Label("回充", systemImage: "bolt.house.fill")
+                Button {
+                    store.performVacuumAction(device.id, action: .returnToBase)
+                } label: {
+                    Label("回充", systemImage: "bolt.house.fill")
+                }
+                .buttonStyle(PillActionButtonStyle(isSelected: spec.status == "returning", tintColor: accent))
             }
-            .buttonStyle(PillActionButtonStyle(isSelected: spec.status == "returning", tintColor: accent))
         }
     }
 
@@ -643,51 +718,59 @@ public struct DeviceCardView: View {
 
     private func speakerDrawer(_ spec: SpeakerSpec) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Button {
                     store.toggleSpeakerMute(device.id)
                 } label: {
                     Image(systemName: spec.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(spec.isMuted ? .red : .secondary)
-                        .frame(width: 22, height: 22)
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(spec.isMuted ? .red : statusColor)
+                        .frame(width: 24, height: 22)
+                        .glassEffect(.regular.interactive(), in: Circle())
                 }
                 .buttonStyle(.plain)
                 .help("切换麦克风/扬声器静音")
 
-                Slider(
+                LiquidGlassSlider(
                     value: Binding(
                         get: { Double(spec.volumePercent) },
                         set: { store.setSpeakerVolume(device.id, percent: Int($0.rounded())) }
                     ),
-                    in: 0...100
+                    in: 0...100,
+                    step: 1,
+                    iconName: "waveform",
+                    iconColor: statusColor,
+                    trackFill: LinearGradient(
+                        colors: [
+                            accent.opacity(0.60),
+                            accent.opacity(0.92)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    formattedValue: "\(spec.volumePercent)%"
                 )
-                .tint(accent)
-
-                Text("\(spec.volumePercent)%")
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
             }
 
-            HStack(spacing: 6) {
-                if let musicBtn = spec.playMusicButtonId {
-                    Button {
-                        store.pressDeviceButton(musicBtn, label: "播放音乐")
-                    } label: {
-                        Label("放歌", systemImage: "music.note")
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    if let musicBtn = spec.playMusicButtonId {
+                        Button {
+                            store.pressDeviceButton(musicBtn, label: "播放音乐")
+                        } label: {
+                            Label("放歌", systemImage: "music.note")
+                        }
+                        .buttonStyle(PillActionButtonStyle(tintColor: accent))
                     }
-                    .buttonStyle(PillActionButtonStyle(tintColor: accent))
-                }
 
-                if let stopAlarmBtn = spec.stopAlarmButtonId {
-                    Button {
-                        store.pressDeviceButton(stopAlarmBtn, label: "停止闹钟")
-                    } label: {
-                        Label("停闹钟", systemImage: "bell.slash.fill")
+                    if let stopAlarmBtn = spec.stopAlarmButtonId {
+                        Button {
+                            store.pressDeviceButton(stopAlarmBtn, label: "停止闹钟")
+                        } label: {
+                            Label("停闹钟", systemImage: "bell.slash.fill")
+                        }
+                        .buttonStyle(PillActionButtonStyle(tintColor: accent))
                     }
-                    .buttonStyle(PillActionButtonStyle(tintColor: accent))
                 }
             }
 
@@ -696,12 +779,9 @@ public struct DeviceCardView: View {
                     TextField("输入小爱指令或播报文字…", text: $speakerInputText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 11.5))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(Color.primary.opacity(0.06))
-                        )
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 5.5)
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .onSubmit {
                             guard !speakerInputText.isEmpty else { return }
                             store.sendSpeakerText(device.id, text: speakerInputText, asDirective: true)
@@ -734,44 +814,45 @@ public struct DeviceCardView: View {
 
     private func tvDrawer(_ spec: TVSpec) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "speaker.wave.2.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+            LiquidGlassSlider(
+                value: Binding(
+                    get: { Double(spec.volumePercent) },
+                    set: { store.setSpeakerVolume(device.id, percent: Int($0.rounded())) }
+                ),
+                in: 0...100,
+                step: 1,
+                iconName: "speaker.wave.2.fill",
+                iconColor: statusColor,
+                trackFill: LinearGradient(
+                    colors: [
+                        accent.opacity(0.60),
+                        accent.opacity(0.92)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                formattedValue: "\(spec.volumePercent)%"
+            )
 
-                Slider(
-                    value: Binding(
-                        get: { Double(spec.volumePercent) },
-                        set: { store.setSpeakerVolume(device.id, percent: Int($0.rounded())) }
-                    ),
-                    in: 0...100
-                )
-                .tint(accent)
-
-                Text("\(spec.volumePercent)%")
-                    .font(.system(size: 11, weight: .medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .frame(width: 34, alignment: .trailing)
-            }
-
-            HStack(spacing: 6) {
-                if let wakeBtn = spec.turnOnButtonId {
-                    Button {
-                        store.pressDeviceButton(wakeBtn, label: "蓝牙唤醒开机")
-                    } label: {
-                        Label("唤醒开机", systemImage: "power")
-                    }
-                    .buttonStyle(PillActionButtonStyle(tintColor: accent))
-                }
-
-                ForEach(spec.availableSources, id: \.self) { src in
-                    Button(src) {
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(10))
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    if let wakeBtn = spec.turnOnButtonId {
+                        Button {
+                            store.pressDeviceButton(wakeBtn, label: "蓝牙唤醒开机")
+                        } label: {
+                            Label("唤醒开机", systemImage: "power")
                         }
+                        .buttonStyle(PillActionButtonStyle(tintColor: accent))
                     }
-                    .buttonStyle(PillActionButtonStyle(isSelected: spec.currentSource == src, tintColor: accent))
+
+                    ForEach(spec.availableSources, id: \.self) { src in
+                        Button(src) {
+                            Task {
+                                try? await Task.sleep(for: .milliseconds(10))
+                            }
+                        }
+                        .buttonStyle(PillActionButtonStyle(isSelected: spec.currentSource == src, tintColor: accent))
+                    }
                 }
             }
         }

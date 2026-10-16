@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "MenuBarMijia",
     platforms: [
-        .macOS(.v15)
+        .macOS("26.0")
     ],
     products: [
         .library(name: "MijiaCore", targets: ["MijiaCore"]),

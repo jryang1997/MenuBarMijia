@@ -2,6 +2,7 @@ import SwiftUI
 import MijiaCore
 
 public struct ControlCenterPanel: View {
+    @Environment(\.colorScheme) private var colorScheme
     public let store: HomeStore
 
     public init(store: HomeStore) {
@@ -198,7 +199,11 @@ public struct ControlCenterPanel: View {
                     HStack(spacing: 6) {
                         Image(systemName: store.activeDeviceCount > 0 ? "house.fill" : "house")
                             .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(store.activeDeviceCount > 0 ? Color.orange : Color.secondary)
+                            .foregroundStyle(
+                                store.activeDeviceCount > 0
+                                    ? (colorScheme == .dark ? Color.orange : Color(red: 0.86, green: 0.42, blue: 0.04))
+                                    : Color.secondary
+                            )
 
                         Text(store.homeName)
                             .font(.system(size: 15, weight: .bold))
@@ -226,30 +231,26 @@ public struct ControlCenterPanel: View {
                                 .font(.system(size: 11.5, weight: .semibold))
                                 .monospacedDigit()
                         }
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.orange.opacity(0.14))
-                                .overlay(
-                                    Capsule(style: .continuous)
-                                        .strokeBorder(Color.orange.opacity(0.32), lineWidth: 0.8)
-                                )
-                        )
                     }
-                    .buttonStyle(PressableCardButtonStyle())
+                    .buttonStyle(
+                        PillActionButtonStyle(
+                            isSelected: true,
+                            tintColor: Color(red: 0.90, green: 0.44, blue: 0.08)
+                        )
+                    )
                 }
             }
 
             if !store.environmentReadings.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(store.environmentReadings) { env in
-                            environmentChip(env)
-                        }
-                        if store.totalPowerWatts >= 1 {
-                            powerChip(watts: store.totalPowerWatts)
+                    GlassEffectContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(store.environmentReadings) { env in
+                                environmentChip(env)
+                            }
+                            if store.totalPowerWatts >= 1 {
+                                powerChip(watts: store.totalPowerWatts)
+                            }
                         }
                     }
                 }
@@ -258,59 +259,56 @@ public struct ControlCenterPanel: View {
     }
 
     private func powerChip(watts: Double) -> some View {
-        HStack(spacing: 4) {
+        let capsule = Capsule(style: .continuous)
+        return HStack(spacing: 4) {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.green)
+                .foregroundStyle(colorScheme == .dark ? Color.green : Color(red: 0.08, green: 0.54, blue: 0.22))
 
             Text(String(format: "%.0fW", watts))
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .monospacedDigit()
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 9)
         .padding(.vertical, 4.5)
-        .background(
-            Capsule(style: .continuous)
-                .fill(Color.primary.opacity(0.055))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.7)
-                )
+        .glassEffect(.regular, in: capsule)
+        .overlay(
+            capsule
+                .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
         )
     }
 
     private func environmentChip(_ env: EnvironmentReading) -> some View {
-        HStack(spacing: 5) {
+        let capsule = Capsule(style: .continuous)
+        return HStack(spacing: 5) {
             Image(systemName: "thermometer.medium")
                 .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(.teal)
+                .foregroundStyle(colorScheme == .dark ? Color.teal : Color(red: 0.04, green: 0.48, blue: 0.52))
 
             Text(env.label)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.85))
+                .foregroundStyle(.primary.opacity(0.88))
 
             if let t = env.temperature {
                 Text(String(format: "%.1f°", t))
                     .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
                     .monospacedDigit()
             }
 
             if let h = env.humidity {
                 Text(String(format: "· %.0f%%", h))
-                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.68))
                     .monospacedDigit()
             }
         }
-        .padding(.horizontal, 9)
+        .padding(.horizontal, 9.5)
         .padding(.vertical, 4.5)
-        .background(
-            Capsule(style: .continuous)
-                .fill(Color.primary.opacity(0.055))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.7)
-                )
+        .glassEffect(.regular, in: capsule)
+        .overlay(
+            capsule
+                .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
         )
     }
 
@@ -325,44 +323,50 @@ public struct ControlCenterPanel: View {
 
     private var quickActionsAndScenesBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(QuickAction.allCases) { action in
-                    Button {
-                        withAnimation(AppleMotion.snappySpring) {
-                            store.executeQuickAction(action)
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: action.sfSymbolName)
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(.orange)
-                            Text(action.title)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                    }
-                    .buttonStyle(PillActionButtonStyle())
-                }
-
-                if !store.scenes.isEmpty {
-                    Divider()
-                        .frame(height: 14)
-                        .padding(.horizontal, 2)
-
-                    ForEach(store.scenes) { scene in
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    ForEach(QuickAction.allCases) { action in
                         Button {
                             withAnimation(AppleMotion.snappySpring) {
-                                store.triggerScene(scene)
+                                store.executeQuickAction(action)
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: scene.iconName)
+                                Image(systemName: action.sfSymbolName)
                                     .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundStyle(Color.accentColor)
-                                Text(scene.name)
+                                    .foregroundStyle(
+                                        colorScheme == .dark
+                                            ? Color.orange
+                                            : Color(red: 0.82, green: 0.38, blue: 0.04)
+                                    )
+                                Text(action.title)
                                     .font(.system(size: 11, weight: .medium))
                             }
                         }
                         .buttonStyle(PillActionButtonStyle())
+                    }
+
+                    if !store.scenes.isEmpty {
+                        Divider()
+                            .frame(height: 14)
+                            .padding(.horizontal, 2)
+
+                        ForEach(store.scenes) { scene in
+                            Button {
+                                withAnimation(AppleMotion.snappySpring) {
+                                    store.triggerScene(scene)
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: scene.iconName)
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .foregroundStyle(Color.accentColor)
+                                    Text(scene.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                }
+                            }
+                            .buttonStyle(PillActionButtonStyle())
+                        }
                     }
                 }
             }
@@ -372,50 +376,82 @@ public struct ControlCenterPanel: View {
     // MARK: - 2. Room Filter Strip & Grid Toggle
 
     private var roomFilterBar: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    roomPill(title: "全部", roomId: nil)
+                GlassEffectContainer(spacing: 5) {
+                    HStack(spacing: 5) {
+                        roomPill(title: "全部", roomId: nil)
 
-                    ForEach(store.rooms) { room in
-                        roomPill(title: room.name, roomId: room.id)
+                        ForEach(store.rooms) { room in
+                            roomPill(title: room.name, roomId: room.id)
+                        }
                     }
+                    .padding(.trailing, 10)
                 }
             }
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.0),
+                        .init(color: .black, location: 0.91),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
 
-            Button {
-                withAnimation(AppleMotion.snappySpring) {
-                    store.isCompactGridMode.toggle()
-                }
-            } label: {
-                Image(systemName: store.isCompactGridMode ? "rectangle.grid.2x2.fill" : "rectangle.grid.1x2.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(store.isCompactGridMode ? Color.accentColor : Color.secondary)
-                    .frame(width: 26, height: 24)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(store.isCompactGridMode ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
-                    )
-            }
-            .buttonStyle(.plain)
-            .help(store.isCompactGridMode ? "当前：双列紧凑磁贴（点击切换单列）" : "点击切换双列紧凑磁贴视图")
+            GlassEffectContainer(spacing: 5) {
+                HStack(spacing: 5) {
+                    Button {
+                        withAnimation(AppleMotion.snappySpring) {
+                            store.isCompactGridMode.toggle()
+                        }
+                    } label: {
+                        Image(systemName: store.isCompactGridMode ? "rectangle.grid.2x2.fill" : "rectangle.grid.1x2.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(store.isCompactGridMode ? Color.white : Color.primary.opacity(0.78))
+                            .frame(width: 26, height: 24)
+                            .background {
+                                if store.isCompactGridMode {
+                                    Capsule(style: .continuous).fill(Color.accentColor)
+                                }
+                            }
+                            .glassEffect(
+                                store.isCompactGridMode
+                                    ? .regular.tint(.accentColor.opacity(0.45)).interactive()
+                                    : .regular.interactive(),
+                                in: Capsule(style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(store.isCompactGridMode ? "当前：双列紧凑磁贴（点击切换单列）" : "点击切换双列紧凑磁贴视图")
 
-            Button {
-                withAnimation(AppleMotion.snappySpring) {
-                    store.hideOfflineDevices.toggle()
+                    Button {
+                        withAnimation(AppleMotion.snappySpring) {
+                            store.hideOfflineDevices.toggle()
+                        }
+                    } label: {
+                        Image(systemName: store.hideOfflineDevices ? "wifi" : "wifi.slash")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(store.hideOfflineDevices ? Color.white : Color.primary.opacity(0.78))
+                            .frame(width: 26, height: 24)
+                            .background {
+                                if store.hideOfflineDevices {
+                                    Capsule(style: .continuous).fill(Color.accentColor)
+                                }
+                            }
+                            .glassEffect(
+                                store.hideOfflineDevices
+                                    ? .regular.tint(.accentColor.opacity(0.45)).interactive()
+                                    : .regular.interactive(),
+                                in: Capsule(style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(store.hideOfflineDevices ? "当前只显示在线设备（点击显示全部）" : "点击隐藏未通电/离线设备")
                 }
-            } label: {
-                Image(systemName: store.hideOfflineDevices ? "wifi" : "wifi.slash")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(store.hideOfflineDevices ? Color.accentColor : Color.secondary)
-                    .frame(width: 26, height: 24)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(store.hideOfflineDevices ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
-                    )
             }
-            .buttonStyle(.plain)
-            .help(store.hideOfflineDevices ? "当前只显示在线设备（点击显示全部）" : "点击隐藏未通电/离线设备")
         }
     }
 
@@ -435,8 +471,8 @@ public struct ControlCenterPanel: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("\(count)")
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.secondary.opacity(0.75))
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary.opacity(0.80))
                 .monospacedDigit()
             Spacer()
         }
@@ -486,6 +522,7 @@ public struct ControlCenterPanel: View {
     @ViewBuilder
     private var overlayNotifications: some View {
         if let banner = store.undoBanner {
+            let bannerShape = RoundedRectangle(cornerRadius: 13, style: .continuous)
             HStack(spacing: 10) {
                 Image(systemName: "moon.stars.fill")
                     .foregroundStyle(.orange)
@@ -501,19 +538,17 @@ public struct ControlCenterPanel: View {
                         store.undoTurnAllOff()
                     }
                 }
-                .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .orange))
+                .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: Color(red: 0.90, green: 0.44, blue: 0.08)))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 4)
-            )
+            .glassEffect(.regular, in: bannerShape)
+            .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 4)
             .padding(.horizontal, 14)
             .padding(.bottom, 42)
             .transition(AppleMotion.drawerTransition)
         } else if let toast = store.toastNotice {
+            let toastShape = Capsule(style: .continuous)
             HStack(spacing: 6) {
                 Image(systemName: toast.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(toast.isError ? .orange : .green)
@@ -525,11 +560,8 @@ public struct ControlCenterPanel: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 3)
-            )
+            .glassEffect(.regular, in: toastShape)
+            .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 3)
             .padding(.bottom, 42)
             .transition(AppleMotion.drawerTransition)
         }
@@ -554,8 +586,8 @@ public struct ControlCenterPanel: View {
                 store.refreshNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.72))
                     .frame(width: 24, height: 22)
                     .contentShape(Rectangle())
             }
@@ -568,8 +600,8 @@ public struct ControlCenterPanel: View {
                 }
             } label: {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary.opacity(0.72))
                     .frame(width: 24, height: 22)
                     .contentShape(Rectangle())
             }
