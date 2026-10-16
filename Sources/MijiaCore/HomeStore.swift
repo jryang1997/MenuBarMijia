@@ -1184,4 +1184,262 @@ public final class HomeStore {
             }
         }
     }
+
+    // MARK: - Assistant Commands
+
+    public var isShowingAssistantBar: Bool = false
+    public private(set) var assistantState: AssistantState = .idle
+    private var assistantResetTask: Task<Void, Never>?
+    /// Test seam replacing the network resolver built from `assistantConfig`.
+    var assistantResolverOverride: ModelIntentResolver?
+
+    public var assistantConfig: AssistantConfig {
+        get { AssistantConfig.load(from: userDefaults) }
+        set { newValue.save(to: userDefaults) }
+    }
+
+    public func dismissAssistantBar() {
+        isShowingAssistantBar = false
+        if assistantState != .thinking {
+            setAssistantState(.idle)
+        }
+    }
+
+    /// Resolves a natural-language command (local parser first, model fallback) and applies it.
+    @discardableResult
+    public func runAssistantCommand(_ text: String) async -> IntentPlan? {
+        let utterance = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !utterance.isEmpty else { return nil }
+        setAssistantState(.thinking)
+
+        let plan: IntentPlan
+        if let local = LocalIntentParser.parse(utterance, devices: devices, scenes: scenes) {
+            plan = local
+        } else {
+            let resolver = assistantResolverOverride ?? ModelIntentResolver(config: assistantConfig)
+            do {
+                plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes)
+            } catch {
+                setAssistantState(.failed(error.localizedDescription))
+                return nil
+            }
+        }
+        guard !plan.intents.isEmpty else {
+            setAssistantState(.failed(plan.reply.isEmpty ? "没有找到可执行的设备操作" : plan.reply))
+            return plan
+        }
+
+        let previousSnapshot = devices
+        var groupOrder: [String] = []
+        var intentsByTarget: [String: [DeviceIntent]] = [:]
+        for intent in plan.intents {
+            if intentsByTarget[intent.targetId] == nil { groupOrder.append(intent.targetId) }
+            intentsByTarget[intent.targetId, default: []].append(intent)
+        }
+
+        // Devices run concurrently so every tile flips at once; one device's intents stay ordered
+        // (e.g. hvac mode before target temperature).
+        let deviceTasks = groupOrder.map { targetId in
+            let intents = intentsByTarget[targetId] ?? []
+            return Task { () -> [AssistantApplyOutcome] in
+                var out: [AssistantApplyOutcome] = []
+                for intent in intents {
+                    out.append(await self.apply(intent))
+                }
+                return out
+            }
+        }
+        var outcomes: [AssistantApplyOutcome] = []
+        for task in deviceTasks {
+            outcomes.append(contentsOf: await task.value)
+        }
+
+        var restoreCommands: [DeviceCommand] = []
+        var failedNames: [String] = []
+        var offlineNames: [String] = []
+        var appliedDeviceIds: Set<String> = []
+        for outcome in outcomes {
+            switch outcome {
+            case .applied(let deviceId, let restore):
+                restoreCommands.append(contentsOf: restore)
+                if let deviceId { appliedDeviceIds.insert(deviceId) }
+            case .failed(let name):
+                if !failedNames.contains(name) { failedNames.append(name) }
+            case .offline(let name):
+                if !offlineNames.contains(name) { offlineNames.append(name) }
+            case .skipped:
+                break
+            }
+        }
+
+        if appliedDeviceIds.count > 1 {
+            scheduleUndoBanner(
+                title: plan.reply.isEmpty ? "已执行 AI 指令" : plan.reply,
+                restoreCommands: restoreCommands.reversed(),
+                previousDevices: previousSnapshot
+            )
+        }
+
+        if !failedNames.isEmpty {
+            setAssistantState(.failed("\(failedNames.joined(separator: "、")) 未响应"))
+        } else if outcomes.allSatisfy({ if case .applied = $0 { return false } else { return true } }) {
+            let reason = offlineNames.isEmpty ? "没有可执行的设备操作" : "\(offlineNames.joined(separator: "、")) 当前离线"
+            setAssistantState(.failed(reason))
+        } else {
+            setAssistantState(.done(plan.reply))
+        }
+        return plan
+    }
+
+    private enum AssistantApplyOutcome: Sendable {
+        case applied(deviceId: String?, restore: [DeviceCommand])
+        case failed(String)
+        case offline(String)
+        case skipped
+    }
+
+    private struct AssistantEffect {
+        let updated: SmartDevice
+        let command: DeviceCommand
+        let restore: [DeviceCommand]
+    }
+
+    /// The single execution path for assistant intents: optimistic update, lock, dispatch, rollback on failure.
+    private func apply(_ intent: DeviceIntent) async -> AssistantApplyOutcome {
+        if intent.operation == .activateScene {
+            guard let scene = scenes.first(where: { $0.id == intent.targetId }) else { return .skipped }
+            do {
+                try await provider.execute(.activateScene(entityId: scene.entityId))
+                return .applied(deviceId: nil, restore: [])
+            } catch {
+                return .failed(scene.name)
+            }
+        }
+
+        guard let idx = devices.firstIndex(where: { $0.id == intent.targetId }) else { return .skipped }
+        let previous = devices[idx]
+        guard previous.isOnline else { return .offline(previous.name) }
+        guard let effect = Self.assistantEffect(of: intent.operation, on: previous) else { return .skipped }
+
+        devices[idx] = effect.updated
+        lockOptimistic(previous.id, duration: .seconds(3.0))
+        do {
+            try await provider.execute(effect.command)
+            return .applied(deviceId: previous.id, restore: effect.restore)
+        } catch {
+            if let revertIdx = devices.firstIndex(where: { $0.id == previous.id }) {
+                devices[revertIdx] = previous
+            }
+            optimisticLockUntil.removeValue(forKey: previous.id)
+            return .failed(previous.name)
+        }
+    }
+
+    private static func assistantEffect(of operation: IntentOperation, on device: SmartDevice) -> AssistantEffect? {
+        guard let op = IntentValidator.normalize(operation, for: device) else { return nil }
+        var updated = device
+
+        switch (op, device.kind) {
+        case (.power(let on), .light(var s)):
+            let restore = DeviceCommand.setLightPower(entityId: s.entityId, isOn: s.isOn)
+            s.isOn = on
+            updated.kind = .light(s)
+            return AssistantEffect(updated: updated, command: .setLightPower(entityId: s.entityId, isOn: on), restore: [restore])
+
+        case (.brightness(let percent), .light(var s)):
+            let restore: DeviceCommand = s.isOn
+                ? .setLightBrightness(entityId: s.entityId, percent: s.brightnessPercent ?? 100)
+                : .setLightPower(entityId: s.entityId, isOn: false)
+            s.isOn = true
+            s.brightnessPercent = percent
+            updated.kind = .light(s)
+            return AssistantEffect(updated: updated, command: .setLightBrightness(entityId: s.entityId, percent: percent), restore: [restore])
+
+        case (.colorTemperature(let kelvin), .light(var s)):
+            let restore: DeviceCommand
+            if !s.isOn {
+                restore = .setLightPower(entityId: s.entityId, isOn: false)
+            } else if let prevKelvin = s.colorTempKelvin {
+                restore = .setLightColorTemp(entityId: s.entityId, kelvin: prevKelvin)
+            } else {
+                restore = .setLightPower(entityId: s.entityId, isOn: true)
+            }
+            s.isOn = true
+            s.colorTempKelvin = kelvin
+            s.currentEffect = nil
+            updated.kind = .light(s)
+            return AssistantEffect(updated: updated, command: .setLightColorTemp(entityId: s.entityId, kelvin: kelvin), restore: [restore])
+
+        case (.power(let on), .climate(var s)):
+            let wasOn = s.isOn && s.hvacMode != "off"
+            let resumeMode = s.hvacMode == "off" ? (s.availableModes.first(where: { $0 != "off" }) ?? "heat") : s.hvacMode
+            let restore = DeviceCommand.setClimatePower(entityId: s.entityId, isOn: wasOn, fallbackMode: resumeMode)
+            s.isOn = on
+            s.hvacMode = on ? resumeMode : "off"
+            updated.kind = .climate(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .setClimatePower(entityId: s.entityId, isOn: on, fallbackMode: resumeMode),
+                restore: [restore]
+            )
+
+        case (.hvacMode(let mode), .climate(var s)):
+            let restore = DeviceCommand.setClimateMode(entityId: s.entityId, hvacMode: s.isOn ? s.hvacMode : "off")
+            s.hvacMode = mode
+            s.isOn = (mode != "off")
+            updated.kind = .climate(s)
+            return AssistantEffect(updated: updated, command: .setClimateMode(entityId: s.entityId, hvacMode: mode), restore: [restore])
+
+        case (.targetTemperature(let temperature), .climate(var s)):
+            let restore = DeviceCommand.setClimateTemperature(entityId: s.entityId, temperature: s.targetTemperature)
+            s.targetTemperature = temperature
+            updated.kind = .climate(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .setClimateTemperature(entityId: s.entityId, temperature: temperature),
+                restore: [restore]
+            )
+
+        case (.power(let on), .fan(var s)):
+            let restore = DeviceCommand.setFanPower(entityId: s.entityId, isOn: s.isOn)
+            s.isOn = on
+            updated.kind = .fan(s)
+            return AssistantEffect(updated: updated, command: .setFanPower(entityId: s.entityId, isOn: on), restore: [restore])
+
+        case (.power(let on), .plug(var s)):
+            let restore = DeviceCommand.setSwitch(entityId: s.switchEntityId, isOn: s.isOn)
+            s.isOn = on
+            updated.kind = .plug(s)
+            return AssistantEffect(updated: updated, command: .setSwitch(entityId: s.switchEntityId, isOn: on), restore: [restore])
+
+        case (.power(let on), .vacuum(var s)):
+            let restore = DeviceCommand.vacuumAction(entityId: s.entityId, action: s.isCleaning ? .start : .returnToBase)
+            s.status = on ? "cleaning" : "returning"
+            updated.kind = .vacuum(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .vacuumAction(entityId: s.entityId, action: on ? .start : .returnToBase),
+                restore: [restore]
+            )
+
+        default:
+            return nil
+        }
+    }
+
+    private func setAssistantState(_ state: AssistantState) {
+        assistantState = state
+        assistantResetTask?.cancel()
+        switch state {
+        case .done, .failed:
+            assistantResetTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(3.2))
+                guard !Task.isCancelled, let self, self.assistantState == state else { return }
+                self.assistantState = .idle
+            }
+        case .idle, .thinking:
+            break
+        }
+    }
 }
+
