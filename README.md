@@ -1,107 +1,205 @@
-# MenuBarMijia · 米家控制中心 (macOS)
-
-一款基于 **Swift 6 + SwiftUI** 原生构建的 macOS 菜单栏智能家居控制中心。通过局域网 **Home Assistant WebSocket + REST** 实时联动小米官方 [`xiaomi_home`](https://github.com/Xiaomi/ha_xiaomi_home) 与美的 [`midea_ac_lan`](https://github.com/wuwentao/midea_ac_lan) 生态设备，将零散的 Home Assistant 实体自动聚合成高颜值、零延迟的 macOS 原生控制面板。
-
-<p align="left">
-  <img src="https://img.shields.io/badge/Platform-macOS%2015%2B-000000?logo=apple" alt="macOS 15+">
-  <img src="https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white" alt="Swift 6.0">
-  <img src="https://img.shields.io/badge/Dependencies-Zero-brightgreen" alt="Zero Dependencies">
-  <img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT License">
+<p align="center">
+  <img src="docs/assets/logo.svg" width="128" alt="MenuBarMijia">
 </p>
 
----
+<h1 align="center">MenuBarMijia</h1>
 
-## ✨ 为什么做这个项目？
+<p align="center">
+  菜单栏里的米家遥控器（非官方）<br>
+  <b>不碰手机，不断心流。</b>
+</p>
 
-市面上针对米家或 Home Assistant 的 macOS 菜单栏工具通常存在两类痛点：
-1. **直连米家云 / miIO 类工具**：受限于小米未公开 MIoT-Spec 的设备，且无法跨品牌整合（例如家里同时有米家全屋设备 + 美的空调）。
-2. **传统 Home Assistant 菜单栏客户端**：直接把 HA 里的原始 `entity` 逐条平铺出来——一个智能插座拆出开关、指示灯、童锁、实时功率、今日电量 5 个条目，一个小爱音箱拆出十几个实体，难以直接作为日常控制面板使用。
+> [!NOTE]
+> 本项目是个人开源作品，与小米、米家、美的无关，也未获得其授权或认可。「小米」「米家」「美的」等是各自权利人的商标，本文仅用于说明兼容对象。
 
-**MenuBarMijia** 采用 **「局域网 Home Assistant 桥接 + 智能多实体聚合引擎 (`DeviceSynthesizer`)」** 方案：
-- **多实体自动聚合成「真设备」**：自动读取 HA 的 Area / Device / Entity 注册表，把同一物理设备下的主开关、传感器、子模式、指示灯合并为一张清爽的交互卡片，并自动剔除网关指示灯、DLNA 虚拟映射等噪音实体。
-- **WebSocket 毫秒级双向同步 + 乐观 UI**：长连接监听 `state_changed` 事件（含 25 秒心跳保活与指数退避重连）；点击开关立即反馈，280ms 滑块防抖调节，指令失败自动回滚。
-- **一键全关 + 5 秒悬浮撤销**：出门或睡前点击右上角「全关」，立即关闭全屋开启中的灯具、空调、电暖器、风扇与插座，并提供 5 秒内一键恢复原状的悬浮撤销条。
-- **全品类深度抽屉控制**：
-  - 💡 **灯光**：1%~100% 亮度滑块、2700K~6500K 色温滑块、日光/月光等情景模式切换。
-  - ❄️ **空调 / 踢脚线电暖器**：目标温度步进调节、室温实时对照、制冷/制热/除湿/送风模式切换。
-  - 🌀 **智能风扇**：开关与预设风速模式一键切换。
-  - 🔌 **智能插座**：开关控制、实时功率 (W) 与今日用电量 (kWh) 监控、实体按键童锁开关。
-  - 🧊 **互联网冰箱**：冷藏室 / 冷冻室实测温度显示与目标温度独立调节，支持智能/速冷/速冻/假日模式。
-  - 🤖 **扫地机器人**：清扫状态与电量显示，支持开始清扫、暂停、回充指令。
-  - 🔊 **小爱音箱**：音量调节、麦克风静音切换、一键放歌/停闹钟，并内置**小爱文字指令与 TTS 语音播报输入框**（可在 Mac 上直接打字让小爱播报或静默执行指令）。
-  - 🌡️ **温湿度计 & 智能门锁**：顶部胶囊实时汇总各房间温湿度，菜单栏图标旁支持常驻显示主卧/阳台温度或当前开启设备数。
-- **附带群晖 NAS 一键部署脚本**：内置 [`nas/deploy_ha.sh`](nas/deploy_ha.sh)，支持通过 SSH 一键在群晖 NAS (Container Manager / Docker) 上部署 Home Assistant 并预装 `xiaomi_home` 与 `midea_ac_lan` 集成。
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-26%2B-000000?logo=apple&logoColor=white" alt="macOS 26+">
+  <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
+  <img src="https://img.shields.io/badge/三方Swift依赖-零-30D158" alt="零第三方 Swift 依赖">
+  <img src="https://img.shields.io/badge/License-MIT-0A84FF" alt="MIT">
+</p>
 
----
+<p align="center">
+  <img src="docs/assets/panel.png" width="420" alt="米家控制中心面板截图">
+</p>
 
-## 🏗️ 项目结构
+写代码写到一半，想关个灯。
 
-纯 Swift Package Manager 工程，**零第三方依赖**，严格启用 Swift 6 并发安全检查 (`swiftLanguageMode(.v6)`)：
+摸出手机、解锁、打开米家、等它加载、找到书房、点开吸顶灯。六步走完，刚才在想什么已经忘了。
 
-```text
-├── Package.swift
-├── Sources/
-│   ├── MijiaCore/                  # 核心领域与通信层（独立可测试库）
-│   │   ├── Models.swift            # 统一设备值类型模型 (SmartDevice, DeviceKind, DeviceCommand)
-│   │   ├── DeviceSynthesizer.swift # 多实体智能聚合、房间排序与噪音过滤引擎
-│   │   ├── HomeProvider.swift      # HA WebSocket 实时流 + REST 服务调用 + MockProvider
-│   │   ├── HomeStore.swift         # @Observable 主状态管理、乐观锁、280ms 防抖与全关撤销
-│   │   └── KeychainAndPrefs.swift  # macOS 钥匙串 (Security) 令牌存储与偏好项
-│   └── MenuBarMijiaApp/            # SwiftUI + AppKit 菜单栏视图层
-│       ├── MenuBarMijiaApp.swift   # MenuBarExtra 窗口入口
-│       ├── ControlCenterPanel.swift# 主控制中心面板、环境胶囊、房间筛选栏与悬浮通知
-│       ├── DeviceCardView.swift    # 8 大品类可展开抽屉式设备卡片
-│       ├── SettingsSheetView.swift # 面板标题、菜单栏显示模式、开机自启与 HA 连接配置
-│       └── ThemeAndMotion.swift    # Apple 风格毛玻璃材质 (glassTile) 与阻尼弹簧曲线
-├── Tests/
-│   └── MijiaCoreTests/             # Swift Testing 单元测试（聚合逻辑、乐观更新与全关撤销）
-├── scripts/
-│   └── build_app.sh                # 一键编译 Release 并打包签名「米家控制中心.app」
-└── nas/
-    ├── deploy_ha.sh                # 群晖 NAS 一键部署 Home Assistant + 插件脚本
-    ├── remote_setup.sh             # NAS 端容器初始化与国内镜像源自动回退脚本
-    └── components/                 # 预打包的 xiaomi_home 与 midea_ac_lan 集成
-```
+米家控制中心（本项目 App 的名字，非小米官方产品）把这件事缩成一步：**点一下菜单栏，或者按 `⌥M`**。全屋设备都在这里，开关、调光、一键全关，手不用离开键盘。
 
----
+它是一个原生 SwiftUI 应用，通过局域网里的 [Home Assistant](https://www.home-assistant.io) 连接小米官方 [`xiaomi_home`](https://github.com/Xiaomi/ha_xiaomi_home) 和美的 [`midea_ac_lan`](https://github.com/wuwentao/midea_ac_lan) 集成。米家和美的设备，放在同一个面板里。
 
-## 🚀 快速开始
+## 手不离开键盘
 
-### 1. 准备 Home Assistant 后端
+按 `⌥M` 呼出面板，再按一次收起。打开之后，不碰鼠标也能把事做完：
 
-如果你已有运行中的 Home Assistant（并配置好了小米官方 `xiaomi_home` 集成）：
-1. 登录你的 Home Assistant 网页端，点击左下角个人头像 -> **安全** -> 创建令牌，生成一个**长期访问令牌 (Long-Lived Access Token)**。
+| 按键 | 作用 |
+| --- | --- |
+| `1` – `9` | 直接开关列表里的第 1 – 9 台设备 |
+| `↑` `↓` | 在设备之间移动焦点 |
+| `Space` / `Return` | 开关当前设备；不能直接开关的，展开详情 |
+| `→` `←` | 展开详情，再步进调节亮度 ±10%、温度 ±1°C、音量 ±10% |
+| `Tab` | 在「全部」和各个房间之间切换 |
+| `Esc` | 收起详情，或关闭面板 |
 
-如果你有群晖 NAS（已安装 Container Manager）但尚未部署 Home Assistant，可直接运行仓库自带的一键部署脚本：
+卡片上的数字角标平时是隐藏的，按住 `⌥` 时才浮现，界面保持干净。
+
+## 一台设备，就是一张卡
+
+在 Home Assistant 里，一个智能插座会拆成开关、指示灯、童锁、功率、电量 5 条实体，一个小爱音箱能拆出十几条。大多数菜单栏工具会把它们原样平铺出来，用起来像在翻数据库。
+
+`DeviceSynthesizer` 会读取 HA 的区域、设备和实体注册表，把属于同一台物理设备的实体收拢成一张卡，再按房间排好。网关指示灯、重复的 DLNA / Apple TV 映射这类噪音，会被直接过滤掉。
+
+<p align="center">
+  <img src="docs/assets/synthesizer.svg" width="860" alt="HA 里的 5 条实体，合成 1 张设备卡">
+</p>
+
+## 睡前，一键搞定
+
+面板右上角的「全关」，会关掉所有正在运行的灯、空调、电暖器、风扇和插座。下面一排是常用场景：
+
+- **全屋关灯**：只关灯，其他设备不动
+- **柔和夜灯**：把开着的灯调到 15% 亮度、2700K 暖光
+- **关温控风扇**：关掉空调、电暖器和风扇
+
+你在 Home Assistant 里建好的场景和脚本，也会自动出现在这一排。
+
+按错了也没关系。底部会浮起一条撤销提示，5 秒内点「撤销」，每台设备回到原来的状态。
+
+## 点下去，立刻就变
+
+面板通过 WebSocket 长连接订阅 `state_changed`。家里有人用手机或墙壁开关改了状态，菜单栏这边同步更新，不用手动刷新。
+
+- **先响应，再确认**：点击后界面立即变化，HA 确认失败会自动回滚
+- **滑块防抖**：拖动亮度、色温时不连发，停手 280 ms 后才发出指令
+- **连接常在**：25 秒心跳保活；断线后从 0.8 秒开始、最长 10 秒的退避重连
+
+## 每类设备，都有自己的控件
+
+点开卡片右侧的箭头，展开这类设备专属的控制抽屉：
+
+| 设备 | 抽屉里能做什么 |
+| --- | --- |
+| 灯光 | 亮度 1–100%、色温 2700–6500K、日光 / 月光情景 |
+| 空调 · 电暖器 | 目标温度步进、对照当前室温、制冷 / 制热 / 除湿 / 送风 |
+| 风扇 | 开关、预设风速模式 |
+| 插座 | 实时功率、今日用电、按键锁 |
+| 冰箱 | 冷藏室与冷冻室的实测温度、目标温度，切换冰箱支持的模式 |
+| 扫地机 | 清扫状态与电量，开始 / 暂停 / 回充 |
+| 小爱音箱 | 音量、静音、放歌、停闹钟；直接打字，让小爱播报或执行指令 |
+| 电视 | 唤醒开机、音量 |
+
+## 替你留意着
+
+有些事不该靠记性。打开「主动提醒」后，它会用 macOS 系统通知告诉你：
+
+- 咖啡机这类插座连续开了 45 分钟，或空调、电暖器连续开了 4 小时，通知里可以直接「立即关闭」
+- 温湿度计、门锁电量低于 15%
+- 星标的常用设备突然离线
+
+每种提醒都有节制：同一台设备低电量 24 小时内只提醒一次，长开提醒每个开启周期只提醒一次。
+
+## 菜单栏，一眼就够
+
+<p align="center">
+  <img src="docs/assets/menubar.png" width="330" alt="菜单栏图标">
+</p>
+
+菜单栏图标旁可以常驻显示任意一个温湿度计的温度（也可以温湿度同显）、全屋插座的实时总功率、开启中的设备数，或者只留一个小房子。
+
+还有一些顺手的细节：
+
+- **双列磁贴**：一键切换单列详情和双列紧凑磁贴；点图标直接开关，点标题展开控制
+- **常用置顶**：星标设备放进「常用控制」，可以自己调整顺序
+- **隐藏设备**：右键「隐藏此设备」，不想看到的从面板里拿掉，设置里随时恢复
+- **登录自启**：可设置登录 Mac 时自动启动
+- **令牌安全**：访问令牌存放在 macOS 钥匙串里，App 只与你填写的 Home Assistant 地址通信
+
+## 开始使用
+
+**环境**：macOS 26 及以上，Xcode 26 / Swift 6。
+
+**前提**：App 本身不直连米家云或设备，必须配合 [Home Assistant](https://www.home-assistant.io) 使用，并在 HA 里装好 [`xiaomi_home`](https://github.com/XiaoMi/ha_xiaomi_home) 集成；美的设备另需 [`midea_ac_lan`](https://github.com/wuwentao/midea_ac_lan)（可选）。
+
+### 1. 准备 Home Assistant
+
+已经有 Home Assistant，并装好了 `xiaomi_home` 集成？在 HA 网页端点击左下角头像 → **安全** → 创建一个**长期访问令牌**，备用。
+
+还没有？如果你有装了 Container Manager 的群晖 NAS，仓库里带了一键部署脚本：
+
 ```bash
 bash nas/deploy_ha.sh
 ```
-按提示输入群晖局域网 IP 和管理员账号，脚本会自动拉取镜像、配置 `--network host` 并放入米家与美的局域网集成。
 
-### 2. 编译并打包 macOS 应用
+按提示填入 NAS 的局域网 IP 和管理员账号。脚本会拉取镜像、以 host 网络模式启动 Home Assistant，并预装 `xiaomi_home` 与 `midea_ac_lan`。
 
-环境要求：**macOS 15.0 (Sequoia)+**、**Xcode 16 / Swift 6.0+**。
+- **集成从哪来**：仓库不附带这两个集成。脚本会在 Mac 上从它们官方 GitHub 的最新 Release 下载源码并打包上传。GitHub 直连不通时，可指定代理前缀，如 `GH_PROXY=https://ghproxy.net/ bash nas/deploy_ha.sh`；也可以自己下载后，把集成目录（`custom_components/<域名>/` 里的内容）压成 `nas/components/xiaomi_home.zip`、`nas/components/midea_ac_lan.zip`，脚本会优先使用。
+- **镜像源**：为方便国内网络，脚本默认依次尝试 DaoCloud、南京大学、1ms、dockerproxy 等**第三方镜像源**，最后才回落到 ghcr.io 和 Docker Hub 官方源。只想用官方源：`OFFICIAL_ONLY=1 bash nas/deploy_ha.sh`。
+
+### 2. 编译应用
 
 ```bash
-# 运行单元测试
-swift test
-
-# 编译 Release 版本并生成原生「米家控制中心.app」
-bash scripts/build_app.sh
-
-# 启动应用（或将其拖入 /Applications 应用程序目录）
-open "米家控制中心.app"
+bash scripts/build_app.sh       # 编译 Release，打包成「米家控制中心.app」
+open "米家控制中心.app"           # 也可以先拖进「应用程序」文件夹
 ```
 
-### 3. 连接配置
+### 3. 连接
 
-1. 启动后点击屏幕右上角菜单栏的 🏠 图标打开面板。
-2. 点击右下角 ⚙️ **设置** 按钮（或首次启动点击「前往连接配置」）。
-3. 填入你的 **Home Assistant 地址**（如 `http://192.168.1.100:8123`）和 **长期访问令牌**（令牌将通过 macOS `Security` 框架安全保存在系统钥匙串中）。
-4. 点击 **保存并重新连接**，即可实时同步全屋房间与设备。
+1. 点击菜单栏里的小房子图标，打开面板
+2. 点右下角的设置按钮（首次启动时点「前往连接配置」）
+3. 填入 HA 地址（如 `http://192.168.1.100:8123`）和长期访问令牌
+4. 点「保存并重新连接」，房间和设备会自动同步进来
 
----
+## 参与开发
 
-## 📄 开源协议
+纯 Swift Package，没有任何第三方 Swift 依赖，开启 Swift 6 严格并发检查。核心逻辑放在独立的 `MijiaCore` 库里，可以脱离界面单独测试。
 
-本项目基于 [MIT License](LICENSE) 开源。
+```bash
+bash scripts/check.sh           # 密钥扫描 + 编码规范检查 + swift test
+```
+
+提交前请先读 [`CODING_STANDARDS.md`](CODING_STANDARDS.md)。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策记录在 [`docs/adr/`](docs/adr/)，V2 的完整规格在 [`docs/specs/`](docs/specs/)。
+
+<details>
+<summary>目录结构</summary>
+
+```text
+Sources/
+├── MijiaCore/                          领域与通信层
+│   ├── Models.swift                    设备模型：SmartDevice / DeviceKind / DeviceCommand
+│   ├── DeviceSynthesizer.swift         多实体聚合、场景提取、房间排序、噪音过滤
+│   ├── HomeProvider.swift              HA WebSocket 实时流 + REST 调用，附 MockProvider
+│   ├── HomeStore.swift                 @Observable 状态中心：乐观更新、防抖、撤销、键盘导航
+│   └── KeychainAndPrefs.swift          钥匙串令牌与偏好设置
+└── MenuBarMijiaApp/                    SwiftUI + AppKit 界面层
+    ├── MenuBarMijiaApp.swift           MenuBarExtra 入口
+    ├── ControlCenterPanel.swift        主面板、场景栏、房间筛选、浮动提示
+    ├── DeviceCardView.swift            设备卡片、双列磁贴与各品类控制抽屉
+    ├── HotkeyAndNotificationManager.swift  全局快捷键与系统通知
+    ├── SettingsSheetView.swift         偏好设置与 HA 连接配置
+    └── ThemeAndMotion.swift            Liquid Glass 材质与弹簧动效
+Tests/MijiaCoreTests/                   Swift Testing 单元测试
+scripts/                                打包（build_app.sh）与提交前检查（check.sh）
+nas/                                    群晖一键部署 Home Assistant 及集成
+docs/                                   ADR、V2 规格与 README 配图
+```
+
+</details>
+
+## 第三方组件
+
+本仓库不包含、也不再分发以下集成，部署脚本只是从官方地址下载到你自己的设备上，使用时请遵守各自的许可：
+
+| 组件 | 来源 | 许可 |
+| --- | --- | --- |
+| Xiaomi Home Integration（`xiaomi_home`） | [XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home) | 小米自有许可，仅限非商业地配合 Home Assistant 使用，见 [LICENSE.md](https://github.com/XiaoMi/ha_xiaomi_home/blob/main/LICENSE.md) |
+| Midea AC LAN（`midea_ac_lan`） | [wuwentao/midea_ac_lan](https://github.com/wuwentao/midea_ac_lan) | MIT，见 [LICENSE](https://github.com/wuwentao/midea_ac_lan/blob/master/LICENSE) |
+| Home Assistant | [home-assistant/core](https://github.com/home-assistant/core) | Apache-2.0 |
+
+本仓库的 MIT 许可只覆盖本项目自己的代码。
+
+## License
+
+[MIT](LICENSE) © Zhiyuan Yang
