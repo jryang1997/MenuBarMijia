@@ -1396,7 +1396,7 @@ public final class HomeStore {
                 setAssistantState(.done("当前居家状态已处于理想区间"))
             }
         } catch {
-            setAssistantState(.failed(error.localizedDescription))
+            setAssistantState(.failed(AssistantError.userMessage(for: error)))
         }
     }
 
@@ -1434,7 +1434,7 @@ public final class HomeStore {
             do {
                 plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes, context: context)
             } catch {
-                setAssistantState(.failed(error.localizedDescription))
+                setAssistantState(.failed(AssistantError.userMessage(for: error)))
                 return nil
             }
         }

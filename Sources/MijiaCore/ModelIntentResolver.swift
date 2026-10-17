@@ -14,6 +14,35 @@ public enum AssistantError: LocalizedError, Equatable, Sendable {
         case .malformedResponse: return "AI 返回的内容无法解析"
         }
     }
+
+    /// What the command bar shows when the model call fails: what happened plus what to do next.
+    public static func userMessage(for error: Error) -> String {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "AI 服务 10 秒没回应，换个简短说法再试；「关灯」这类简单指令不用联网"
+            case .notConnectedToInternet, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost,
+                 .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed:
+                return "连不上 AI 服务，请检查网络；「打开书房灯」这类简单指令仍可直接使用"
+            case .secureConnectionFailed, .serverCertificateUntrusted, .serverCertificateHasBadDate:
+                return "和 AI 服务的安全连接失败，请检查服务地址或代理设置"
+            default:
+                return "AI 服务连接失败（\(urlError.code.rawValue)），稍后再试"
+            }
+        }
+        switch error as? AssistantError {
+        case .httpStatus(401), .httpStatus(403):
+            return "AI 服务的 API Key 无效或已过期，请到设置里重新填写"
+        case .httpStatus(429):
+            return "AI 服务请求太频繁，稍等几秒再试"
+        case .httpStatus(let code) where code >= 500:
+            return "AI 服务暂时出错（\(code)），稍后再试"
+        case .malformedResponse, .emptyResponse:
+            return "AI 返回的内容看不懂，换个说法再试"
+        default:
+            return error.localizedDescription
+        }
+    }
 }
 
 /// LLM fallback for utterances the LocalIntentParser cannot resolve, via an OpenAI-compatible
