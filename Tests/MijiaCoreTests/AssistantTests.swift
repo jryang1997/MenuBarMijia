@@ -322,8 +322,8 @@ struct AssistantTests {
     @Test("UserHabitMemory learns time-bucket habits, personal phrases, and filters already-active states")
     func userHabitMemoryLearning() {
         var memory = UserHabitMemory()
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600)!
+        // TimeBucket reads the machine's local time, so build 21:30 in the local zone too.
+        let calendar = Calendar.current
         let eveningDate = calendar.date(from: DateComponents(year: 2026, month: 10, day: 16, hour: 21, minute: 30))!
 
         memory.record(
