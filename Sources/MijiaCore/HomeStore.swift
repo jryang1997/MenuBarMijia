@@ -127,7 +127,7 @@ public final class HomeStore {
     }
 
     public private(set) var toastNotice: ToastNotice?
-    public private(set) var undoBanner: UndoBanner?
+    public internal(set) var undoBanner: UndoBanner?
     public var onSafetyAlert: ((SafetyAlert) -> Void)?
     public var onGlobalHotkeyPreferenceChanged: ((Bool) -> Void)?
 
@@ -1281,8 +1281,8 @@ public final class HomeStore {
     public private(set) var assistantFocusRequest: Int = 0
     /// Bumped to ask the command bar to start or toggle live speech recognition.
     public private(set) var assistantVoiceRequest: Int = 0
-    public private(set) var assistantState: AssistantState = .idle
-    public private(set) var assistantSuggestions: [AssistantSuggestion] = []
+    public internal(set) var assistantState: AssistantState = .idle
+    public internal(set) var assistantSuggestions: [AssistantSuggestion] = []
     public private(set) var isProactiveRecommending: Bool = false
     private var assistantResetTask: Task<Void, Never>?
     /// Test seam replacing the network resolver built from `assistantConfig`.
@@ -1307,6 +1307,24 @@ public final class HomeStore {
             assistantVoiceRequest &+= 1
         } else {
             assistantFocusRequest &+= 1
+        }
+    }
+
+    public func setPreviewState(
+        assistantState: AssistantState,
+        suggestions: [AssistantSuggestion],
+        undoBanner: UndoBanner? = nil,
+        homeBackend: HomeBackend? = nil,
+        miSessionMaskedUserId: String? = nil
+    ) {
+        self.assistantState = assistantState
+        self.assistantSuggestions = suggestions
+        self.undoBanner = undoBanner
+        if let homeBackend {
+            self.homeBackend = homeBackend
+        }
+        if let miSessionMaskedUserId {
+            self.miSessionMaskedUserId = miSessionMaskedUserId
         }
     }
 

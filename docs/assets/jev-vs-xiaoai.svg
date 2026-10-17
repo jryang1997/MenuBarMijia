@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="520" viewBox="0 0 1280 520">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0E1017"/>
+      <stop offset="100%" stop-color="#151924"/>
+    </linearGradient>
+    <linearGradient id="jevCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#172A24"/>
+      <stop offset="100%" stop-color="#111E2E"/>
+    </linearGradient>
+    <linearGradient id="jevAccent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#30D158"/>
+      <stop offset="100%" stop-color="#0A84FF"/>
+    </linearGradient>
+    <linearGradient id="oldAccent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#FF9F0A"/>
+      <stop offset="100%" stop-color="#FF453A"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="520" rx="28" fill="url(#bg)"/>
+
+  <!-- Title -->
+  <text x="56" y="54" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="22" font-weight="700">
+    为什么引入 Jev (System One) 决策模型？告别「一来一回」的语音废话
+  </text>
+  <text x="56" y="82" fill="#8E96AA" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="14" font-weight="500">
+    传统智能音箱需要先唤醒、等应答、再逐台设备下指令；MenuBarMijia 长按菜单栏直接说，单 Token 毫秒级并发输出全屋决策。
+  </text>
+
+  <!-- Row 1: Traditional Multi-turn Voice Assistant -->
+  <rect x="48" y="108" width="1184" height="162" rx="20" fill="#1B1E28" stroke="#2D3242" stroke-width="1.2"/>
+  <rect x="68" y="126" width="210" height="28" rx="14" fill="#33231E"/>
+  <text x="84" y="145" fill="#FF6961" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="13" font-weight="700">
+    传统语音助手 · 多轮串行对话
+  </text>
+  <text x="1050" y="145" fill="#FF9F0A" font-family="ui-monospace, 'SF Mono', monospace" font-size="14" font-weight="700">
+    耗时 ≈ 6.5 ~ 9.0 秒
+  </text>
+
+  <!-- Traditional Steps -->
+  <g transform="translate(68, 170)">
+    <rect x="0" y="0" width="186" height="76" rx="14" fill="#242836" stroke="#363C50"/>
+    <text x="16" y="28" fill="#8E96AA" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="600">STEP 1 · 喊唤醒词</text>
+    <text x="16" y="52" fill="#FFFFFF" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="14" font-weight="600">“小爱同学”</text>
+
+    <text x="198" y="42" fill="#636B82" font-size="18" font-weight="700">→</text>
+
+    <rect x="220" y="0" width="196" height="76" rx="14" fill="#242836" stroke="#363C50"/>
+    <text x="236" y="28" fill="#FF9F0A" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="600">STEP 2 · 被迫停顿等应答</text>
+    <text x="236" y="52" fill="#D0D5E2" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="14">音箱：“在呢 / 哎” (1.8s)</text>
+
+    <text x="428" y="42" fill="#636B82" font-size="18" font-weight="700">→</text>
+
+    <rect x="450" y="0" width="224" height="76" rx="14" fill="#242836" stroke="#363C50"/>
+    <text x="466" y="28" fill="#8E96AA" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="600">STEP 3 · 只能说标准指令</text>
+    <text x="466" y="52" fill="#FFFFFF" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="14" font-weight="600">“把书房吸顶灯设为月光”</text>
+
+    <text x="686" y="42" fill="#636B82" font-size="18" font-weight="700">→</text>
+
+    <rect x="708" y="0" width="214" height="76" rx="14" fill="#242836" stroke="#363C50"/>
+    <text x="724" y="28" fill="#FF9F0A" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="600">STEP 4 · 冗长 TTS 播报</text>
+    <text x="724" y="52" fill="#D0D5E2" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="14">“好的，已为您设置…”</text>
+
+    <text x="934" y="42" fill="#636B82" font-size="18" font-weight="700">→</text>
+
+    <rect x="956" y="0" width="188" height="76" rx="14" fill="#2E2024" stroke="#5C3238"/>
+    <text x="972" y="28" fill="#FF6961" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12" font-weight="600">STEP 5 · 空调还得重喊</text>
+    <text x="972" y="52" fill="#FFD3D0" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="13.5">再走一遍唤醒流程…</text>
+  </g>
+
+  <!-- Row 2: MenuBarMijia + Jev SystemOne -->
+  <rect x="48" y="292" width="1184" height="196" rx="20" fill="url(#jevCard)" stroke="#2E6F5E" stroke-width="1.5"/>
+  <rect x="68" y="312" width="328" height="28" rx="14" fill="#183D32"/>
+  <text x="84" y="331" fill="#30D158" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif" font-size="13" font-weight="700">
+    MenuBarMijia + Jev (/v1/systemone) · 单轮并发决策
+  </text>
+  <text x="968" y="331" fill="#30D158" font-family="ui-monospace, 'SF Mono', monospace" font-size="14" font-weight="700">
+    本地 0ms / Jev 并发 ≈ 180ms
+  </text>
+
+  <!-- Jev Steps -->
+  <g transform="translate(68, 356)">
+    <rect x="0" y="0" width="280" height="108" rx="16" fill="#13222A" stroke="#2D5A68" stroke-width="1.2"/>
+    <text x="18" y="28" fill="#5AC8FA" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12.5" font-weight="700">1. 按住菜单栏温度图标直接说</text>
+    <text x="18" y="54" fill="#FFFFFF" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="14.5" font-weight="600">“准备写代码，屋里有点热”</text>
+    <text x="18" y="80" fill="#8E96AA" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12">无需唤醒词 · 支持模糊感受与个人口头禅</text>
+    <text x="18" y="97" fill="#30D158" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="11.5" font-weight="600">✓ 明确指令（如“书房灯月光模式”）本地 0ms 直达</text>
+
+    <text x="294" y="56" fill="#30D158" font-size="20" font-weight="700">⇒</text>
+
+    <rect x="322" y="0" width="388" height="108" rx="16" fill="#13222A" stroke="#30D158" stroke-width="1.3"/>
+    <text x="340" y="28" fill="#30D158" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12.5" font-weight="700">2. ~typesafe/jev-latest 单 Token 多头概率决策</text>
+    <text x="340" y="52" fill="#FFFFFF" font-family="ui-monospace, 'SF Mono', monospace" font-size="12.5">POST /v1/systemone (questions: 全屋设备并发提问)</text>
+    <text x="340" y="76" fill="#D0D5E2" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12.5">• 高置信度动作 (&gt;70%) → 直接组成并发执行计划</text>
+    <text x="340" y="96" fill="#FFB340" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12.5">• 模糊候选动作 (30%~70%) → 生成带百分比的一键胶囊</text>
+
+    <text x="724" y="56" fill="#30D158" font-size="20" font-weight="700">⇒</text>
+
+    <rect x="752" y="0" width="392" height="108" rx="16" fill="#13222A" stroke="#0A84FF" stroke-width="1.3"/>
+    <text x="770" y="28" fill="#5AC8FA" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12.5" font-weight="700">3. 全屋设备并发响应 + 5 秒撤销 + 习惯记忆</text>
+    <text x="770" y="53" fill="#FFFFFF" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="13.5" font-weight="600">⚡ 书房吸顶灯(日光) + 屏幕挂灯(80%) + 空调(24.5°C)</text>
+    <text x="770" y="76" fill="#30D158" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12.5">✨ Jev 猜你想做：按时段/室温/习惯主动给出 88% 建议胶囊</text>
+    <text x="770" y="96" fill="#8E96AA" font-family="-apple-system, 'PingFang SC', sans-serif" font-size="12">支持 小米云 Miot-Spec 扫码直连 &amp; Home Assistant 双引擎</text>
+  </g>
+</svg>

@@ -671,6 +671,9 @@ public struct ControlCenterPanel: View {
     private var statusFooterLabel: String {
         switch store.connectionStatus {
         case .connected:
+            if store.homeBackend == .xiaomiCloud {
+                return "\(store.serverHostSummary) · Miot 直连"
+            }
             return "HA 实时连接 (\(store.serverHostSummary))"
         case .connecting:
             return "正在连接 (\(store.serverHostSummary))…"

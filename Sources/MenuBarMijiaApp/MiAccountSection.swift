@@ -16,11 +16,16 @@ public struct MiAccountSection: View {
         case failed(String)
     }
 
-    @State private var phase: ScanPhase = .idle
+    @State private var phase: ScanPhase
     @State private var loginTask: Task<Void, Never>?
 
-    public init(store: HomeStore) {
+    public init(store: HomeStore, previewTicket: QRLoginTicket? = nil) {
         self.store = store
+        if let previewTicket {
+            self._phase = State(initialValue: .waitingForScan(ticket: previewTicket, expiresAt: Date().addingTimeInterval(previewTicket.timeout)))
+        } else {
+            self._phase = State(initialValue: .idle)
+        }
     }
 
     public var body: some View {

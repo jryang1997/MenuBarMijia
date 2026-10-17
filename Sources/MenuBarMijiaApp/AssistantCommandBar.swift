@@ -80,6 +80,12 @@ public final class SpeechInputController {
 
     public init() {}
 
+    public func setPreviewState(isListening: Bool, isHoldToTalk: Bool, draft: String) {
+        self.isListening = isListening
+        self.isHoldToTalk = isHoldToTalk
+        self.draft = draft
+    }
+
     public func toggle(store: HomeStore) {
         if isListening {
             stop(andSubmit: hasCapturedSpeech, store: store)
@@ -492,13 +498,19 @@ struct AssistantSettingsSection: View {
         let habitCount = store.userHabitMemory.entries.count + store.userHabitMemory.phrases.count
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("AI 指令与个性化记忆 (Jev System One)")
+                Text("AI 决策与习惯记忆 (Jev)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(AssistantConfig.loadCodexBarOpenRouterKey() != nil ? "已自动接入 CodexBar OpenRouter" : "常规指令 0ms，复杂指令走 Jev")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
+                if AssistantConfig.loadCodexBarOpenRouterKey() != nil {
+                    Text("● 已自动接入 CodexBar")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.green)
+                } else {
+                    Text("常规 0ms · 复杂走 Jev")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             labeledField("服务地址 (默认 OpenRouter /v1，支持 System One 决策协议)") {
@@ -517,7 +529,7 @@ struct AssistantSettingsSection: View {
             }
 
             HStack {
-                Text("已学习个人习惯与口头禅：\(habitCount) 条（自动注入 Jev 情境状态）")
+                Text("已学习个人习惯与口头禅：\(habitCount) 条（自动注入 Jev）")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                 Spacer()
