@@ -40,13 +40,13 @@ public struct SettingsSheetView: View {
                 Spacer()
 
                 Button {
-                    if let url = URL(string: store.serverURLString) {
-                        NSWorkspace.shared.open(url)
+                    withAnimation(AppleMotion.snappySpring) {
+                        store.reopenOnboarding()
                     }
                 } label: {
                     HStack(spacing: 3) {
-                        Text("HA 网页")
-                        Image(systemName: "arrow.up.right.square")
+                        Image(systemName: "sparkles")
+                        Text("新手引导")
                     }
                     .font(.system(size: 11, weight: .medium))
                 }

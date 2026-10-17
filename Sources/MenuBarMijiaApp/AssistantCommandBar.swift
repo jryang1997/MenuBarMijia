@@ -86,6 +86,19 @@ public final class SpeechInputController {
         self.draft = draft
     }
 
+    public var hasVoicePermissions: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && SFSpeechRecognizer.authorizationStatus() == .authorized
+    }
+
+    public func requestPermissions() async -> Bool {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { return false }
+        let micAllowed = await SpeechRuntimeBridge.requestMicrophoneAccess()
+        guard micAllowed else { return false }
+        let speechStatus = await SpeechRuntimeBridge.requestSpeechAuthorization()
+        return speechStatus == .authorized
+    }
+
     public func toggle(store: HomeStore) {
         if isListening {
             stop(andSubmit: hasCapturedSpeech, store: store)

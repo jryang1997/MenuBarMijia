@@ -53,8 +53,18 @@ struct PrivacyControlsTests {
         #expect(first.prefersOnDeviceSpeech == false)
         first.isHabitLearningEnabled = false
         first.prefersOnDeviceSpeech = true
+        first.completeOnboarding()
+        #expect(first.hasCompletedOnboarding == true)
+        #expect(first.shouldShowOnboarding == false)
+
         let second = HomeStore(provider: mock, defaultsSuiteName: suite)
         #expect(second.isHabitLearningEnabled == false)
         #expect(second.prefersOnDeviceSpeech == true)
+        #expect(second.hasCompletedOnboarding == true)
+
+        second.reopenOnboarding()
+        #expect(second.shouldShowOnboarding == true)
+        second.completeOnboarding()
+        #expect(second.shouldShowOnboarding == false)
     }
 }

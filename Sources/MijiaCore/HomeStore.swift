@@ -114,6 +114,33 @@ public final class HomeStore {
         didSet { userDefaults.set(prefersOnDeviceSpeech, forKey: "assistant_on_device_speech") }
     }
 
+    /// Persisted flag set once the user finishes or dismisses the first-launch onboarding guide.
+    public var hasCompletedOnboarding: Bool = false {
+        didSet { userDefaults.set(hasCompletedOnboarding, forKey: "has_completed_onboarding") }
+    }
+
+    /// Transient flag allowing the user to reopen the onboarding guide from Settings at any time.
+    public var isShowingOnboarding: Bool = false
+
+    public var shouldShowOnboarding: Bool {
+        if isShowingOnboarding { return true }
+        guard !hasCompletedOnboarding, devices.isEmpty else { return false }
+        if case .connected = connectionStatus { return false }
+        let hasMiSession = (miSessionMaskedUserId != nil)
+        let hasHAToken = !KeychainHelper.loadToken().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !hasMiSession && !hasHAToken
+    }
+
+    public func completeOnboarding() {
+        hasCompletedOnboarding = true
+        isShowingOnboarding = false
+    }
+
+    public func reopenOnboarding() {
+        isShowingSettings = false
+        isShowingOnboarding = true
+    }
+
     public var serverURLString: String {
         didSet { userDefaults.set(serverURLString, forKey: "ha_server_url") }
     }
@@ -168,6 +195,7 @@ public final class HomeStore {
         self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.defaultHomeName
         self.isHabitLearningEnabled = boolOrDefaultTrue("assistant_habit_learning_enabled")
         self.prefersOnDeviceSpeech = ud.bool(forKey: "assistant_on_device_speech")
+        self.hasCompletedOnboarding = ud.bool(forKey: "has_completed_onboarding")
         self.hideOfflineDevices = ud.bool(forKey: "hide_offline_devices")
         self.showQuickActionsBar = boolOrDefaultTrue("show_quick_actions_bar")
         self.enableGlobalHotkey = boolOrDefaultTrue("enable_global_hotkey")
@@ -1181,6 +1209,7 @@ public final class HomeStore {
         MiSessionStore.save(session)
         self.miSessionMaskedUserId = session.maskedUserId
         self.homeBackend = .xiaomiCloud
+        self.completeOnboarding()
         eventTask?.cancel()
         shutdownCurrentProvider()
         self.provider = MiCloudProvider()
@@ -1211,6 +1240,9 @@ public final class HomeStore {
     public func updateConnection(serverURL: String, token: String) {
         self.serverURLString = serverURL
         KeychainHelper.saveToken(token)
+        if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            self.completeOnboarding()
+        }
         if homeBackend != .homeAssistant || !(provider is HAWebSocketProvider) {
             switchBackend(.homeAssistant)
         } else if let haProvider = provider as? HAWebSocketProvider {

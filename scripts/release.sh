@@ -14,14 +14,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-: "${DEVELOPER_ID:?请设置 DEVELOPER_ID，例如 \"Developer ID Application: Zhiyuan Yang (ABCDE12345)\"}"
+DEVELOPER_ID="${DEVELOPER_ID:--}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-menumijia-notary}"
 VERSION="$(tr -d '[:space:]' < VERSION)"
 APP="$ROOT/MenuMijia.app"
 DIST="$ROOT/dist"
 DMG="$DIST/MenuMijia-$VERSION.dmg"
 
-echo "▶ [1/5] 编译并用 Developer ID 签名 MenuMijia $VERSION"
+echo "▶ [1/5] 编译并签名 MenuMijia $VERSION (SIGN_IDENTITY=$DEVELOPER_ID)"
 SIGN_IDENTITY="$DEVELOPER_ID" bash scripts/build_app.sh
 codesign --verify --strict --verbose=2 "$APP"
 
@@ -31,11 +31,12 @@ cp -R "$APP" "$DIST/stage/"
 ln -s /Applications "$DIST/stage/Applications"
 hdiutil create -volname "MenuMijia $VERSION" -srcfolder "$DIST/stage" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$DIST/stage"
-codesign --force --timestamp --sign "$DEVELOPER_ID" "$DMG"
 
-if [ "${SKIP_NOTARIZE:-0}" = "1" ]; then
-    echo "⚠️  已跳过公证：别人打开时仍会看到“无法验证开发者”。"
+if [ "$DEVELOPER_ID" = "-" ] || [ "${SKIP_NOTARIZE:-0}" = "1" ]; then
+    codesign --force --sign "$DEVELOPER_ID" "$DMG"
+    echo "ℹ️  已生成本地签名 DMG（未使用付费 Developer ID 公证；其他用户首次打开可在「隐私与安全性」点「仍要打开」或执行 xattr -cr /Applications/MenuMijia.app）。"
 else
+    codesign --force --timestamp --sign "$DEVELOPER_ID" "$DMG"
     echo "▶ [3/5] 提交苹果公证（通常 1–5 分钟）"
     xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
 
@@ -44,8 +45,7 @@ else
 fi
 
 echo "▶ [5/5] 最终检查"
-spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG" || true
 shasum -a 256 "$DMG" | tee "$DMG.sha256"
 
 echo "✅ 完成：$DMG"
-echo "   发布：在 GitHub 新建 Release，标签填 v$VERSION，上传这个 DMG。App 里的「检查更新」会读到它。"
+echo "   发布：在 GitHub 新建 Release，标签填 v${VERSION}，上传这个 DMG。App 里的「检查更新」会读到它。"

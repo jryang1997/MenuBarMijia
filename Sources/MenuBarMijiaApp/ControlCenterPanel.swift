@@ -15,6 +15,10 @@ public struct ControlCenterPanel: View {
                 SettingsSheetView(store: store)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else if store.shouldShowOnboarding {
+                OnboardingGuideView(store: store)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
             } else {
                 mainDashboard
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -536,18 +540,30 @@ public struct ControlCenterPanel: View {
                 .font(.system(size: 22))
                 .foregroundStyle(.secondary)
             if case .disconnected = store.connectionStatus {
-                Text("尚未连接到 Home Assistant")
+                Text(store.homeBackend == .xiaomiCloud ? "尚未登录米家云端账号" : "尚未连接到 Home Assistant")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.primary)
-                Text("点击下方按钮配置你的服务器地址与访问令牌")
+                Text(store.homeBackend == .xiaomiCloud
+                     ? "无需额外部署服务器，使用手机「米家」App 扫码即可同步设备"
+                     : "点击下方按钮配置服务器地址与令牌，或切换为手机米家扫码直连")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
-                Button("前往连接配置") {
-                    withAnimation(AppleMotion.snappySpring) {
-                        store.isShowingSettings = true
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 8) {
+                    Button("打开新手引导") {
+                        withAnimation(AppleMotion.snappySpring) {
+                            store.reopenOnboarding()
+                        }
                     }
+                    .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
+
+                    Button("偏好设置") {
+                        withAnimation(AppleMotion.snappySpring) {
+                            store.isShowingSettings = true
+                        }
+                    }
+                    .buttonStyle(PillActionButtonStyle())
                 }
-                .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
                 .padding(.top, 2)
             } else {
                 Text(store.hideOfflineDevices ? "该房间暂无通电在线的设备" : "正在同步设备列表…")

@@ -42,9 +42,12 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         setupNotificationsIfBundled()
         startSafetyTimer()
         Task { @MainActor [weak self] in
-            for delayMs in [300, 1200] {
+            for (idx, delayMs) in [350, 900].enumerated() {
                 try? await Task.sleep(for: .milliseconds(delayMs))
                 _ = self?.findAnyStatusBarItem()
+                if idx == 0, let self, let store = self.store, store.shouldShowOnboarding {
+                    self.ensureMenuBarExtraWindowVisible()
+                }
             }
         }
     }
