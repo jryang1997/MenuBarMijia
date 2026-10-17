@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    # Package.swift 要求 macOS 26 SDK
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ripgrep
+        run: brew install ripgrep
+      - name: Build app (release)
+        run: swift build -c release --product MenuBarMijiaApp
+      - name: Lint & test
+        run: bash scripts/check.sh
+
+  linux-core:
+    # 只验证 MijiaCore（无 Xcode 的快速检查）
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test MijiaCore on Linux
+        run: bash scripts/linux-check/run.sh
