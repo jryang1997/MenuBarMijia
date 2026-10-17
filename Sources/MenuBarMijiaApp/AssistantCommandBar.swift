@@ -151,14 +151,14 @@ public final class SpeechInputController {
         let micAllowed = await SpeechRuntimeBridge.requestMicrophoneAccess()
         guard micAllowed else {
             isHoldToTalk = false
-            errorMessage = "请在「系统设置 → 隐私与安全性 → 麦克风」中允许米家控制中心"
+            errorMessage = "请在「系统设置 → 隐私与安全性 → 麦克风」中允许 MenuMijia"
             return
         }
 
         let speechStatus = await SpeechRuntimeBridge.requestSpeechAuthorization()
         guard speechStatus == .authorized else {
             isHoldToTalk = false
-            errorMessage = "请在「系统设置 → 隐私与安全性 → 语音识别」中允许米家控制中心"
+            errorMessage = "请在「系统设置 → 隐私与安全性 → 语音识别」中允许 MenuMijia"
             return
         }
 

@@ -8,7 +8,8 @@ echo "▶ 正在编译 MenuBarMijiaApp (Release)..."
 swift build -c release --product MenuBarMijiaApp
 
 BIN_PATH="$(swift build -c release --show-bin-path)/MenuBarMijiaApp"
-APP_DIR="$ROOT/米家控制中心.app"
+APP_DIR="$ROOT/MenuMijia.app"
+rm -rf "$ROOT/米家控制中心.app"  # 旧名字的产物
 
 WAS_RUNNING=0
 if pgrep -x MenuBarMijiaApp >/dev/null 2>&1; then
@@ -32,7 +33,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>米家控制中心</string>
+    <string>MenuMijia</string>
     <key>CFBundleExecutable</key>
     <string>MenuBarMijiaApp</string>
     <key>CFBundleIdentifier</key>
@@ -40,7 +41,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>米家控制中心</string>
+    <string>MenuMijia</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -75,5 +76,5 @@ echo "✅ 已打包完成：$APP_DIR"
 
 if [ "$WAS_RUNNING" = "1" ]; then
     open "$APP_DIR"
-    echo "🔄 已自动重启米家控制中心.app"
+    echo "🔄 已自动重启 MenuMijia.app"
 fi

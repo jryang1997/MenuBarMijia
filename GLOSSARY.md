@@ -1,4 +1,4 @@
-# MenuBarMijia (米家控制中心)
+# MenuMijia（仓库名 MenuBarMijia）
 
 macOS 菜单栏智能家居控制中心，将群晖 Home Assistant 或米家云端直连接入的设备合成为符合 Apple Control Center 交互范式的桌面面板。
 

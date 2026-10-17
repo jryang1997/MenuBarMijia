@@ -23,7 +23,7 @@ public enum KeychainHelper {
     static let service = "com.yangzhiyuan.MenuBarMijia"
     private static let account = "ha_access_token"
 
-    public static let defaultHomeName = "米家控制中心"
+    public static let defaultHomeName = "我的家"
     public static let defaultNASURL = "http://homeassistant.local:8123"
     public static let defaultSeededToken = ""
 

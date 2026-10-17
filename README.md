@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" width="128" alt="MenuBarMijia">
+  <img src="docs/assets/logo.svg" width="128" alt="MenuMijia">
 </p>
 
-<h1 align="center">MenuBarMijia</h1>
+<h1 align="center">MenuMijia</h1>
 
 <p align="center">
-  菜单栏里的米家控制中心（非官方）<br>
+  Mac 菜单栏里的米家语音助手（非官方，与小米公司无关）<br>
   <b>按住菜单栏说句话，0.2 秒全屋并发响应。不碰手机，也不跟音箱一来一回废话。</b>
 </p>
 
@@ -30,7 +30,7 @@
 - **掏手机**：解锁 → 打开米家 → 等加载 → 找房间 → 调吸顶灯 → 退出去再找空调。六步走完，刚才代码的思路彻底断了。
 - **喊小爱同学**：「小爱同学！」→ 等音箱叮一声回应「哎」→ 说「把书房灯调成月光模式」→ 等它听懂再播报一句「好的，已为您切换」→ 再喊一次「小爱同学！」去调空调。一来一回七八秒，费口舌又打断注意力。
 
-**米家控制中心**把这件事缩成一个动作：**鼠标按住屏幕顶部的菜单栏温度图标直接说话，松手即执行**；或者按 `⌥M` 呼出面板，敲一下键盘。
+**MenuMijia** 把这件事缩成一个动作：**鼠标按住屏幕顶部的菜单栏温度图标直接说话，松手即执行**；或者按 `⌥M` 呼出面板，敲一下键盘。
 
 没有唤醒词，没有一来一回的语音播报，一句话同时操控多台设备，5 秒内随时一键撤销。而且现在**无需购买 NAS、无需部署 Docker 或 Home Assistant**，下载后直接掏出手机米家 App 扫个码就能用。
 
@@ -43,7 +43,7 @@
 本项目接入了专为结构化快速决策设计的 **Jev 模型（`~typesafe/jev-latest`，基于 `/v1/systemone` 协议）**，配合本地确定性规则引擎，构成了**双层混合决策架构**：
 
 <p align="center">
-  <img src="docs/assets/jev-vs-xiaoai.svg" width="880" alt="传统语音助手多轮对话 vs MenuBarMijia + Jev 毫秒级单次并发决策对比">
+  <img src="docs/assets/jev-vs-xiaoai.svg" width="880" alt="传统语音助手多轮对话 vs MenuMijia + Jev 毫秒级单次并发决策对比">
 </p>
 
 1. **明确指令 0 ms 本地直达（`IntentEngine`）**  
@@ -104,14 +104,14 @@
 ## 手不离开键盘
 
 <p align="center">
-  <img src="docs/assets/panel.png" width="420" alt="米家控制中心 V3 主面板实机截图">
+  <img src="docs/assets/panel.png" width="420" alt="MenuMijia V3 主面板实机截图">
 </p>
 
 按 `⌥M` 呼出面板，再按一次收起。打开之后，全程不碰鼠标也能操控全屋：
 
 | 按键 | 作用 |
 | --- | --- |
-| `⌥M` | 全局呼出 / 收起米家控制中心面板 |
+| `⌥M` | 全局呼出 / 收起 MenuMijia 面板 |
 | `V` | 直接开启 / 停止实时语音控制（说完停顿 1.1s 自动执行） |
 | `/` | 呼出自然语言指令栏并聚焦输入框 |
 | `1` – `9` | 直接开关列表里的第 1 – 9 台设备（按住 `⌥` 浮现数字角标） |
@@ -169,11 +169,11 @@
 ```bash
 git clone https://github.com/jryang1997/MenuBarMijia.git
 cd MenuBarMijia
-bash scripts/build_app.sh       # 编译 Release，签名打包并启动「米家控制中心.app」
+bash scripts/build_app.sh       # 编译 Release，签名打包并启动「MenuMijia.app」
 ```
 
 > [!TIP]
-> `scripts/build_app.sh` 会自动生成包含麦克风与语音识别权限声明的 `米家控制中心.app` 并完成本地签名。你可以直接将生成的 `米家控制中心.app` 拖入 `/Applications`（应用程序）文件夹，并在设置中开启「登录 Mac 时自动启动」。
+> `scripts/build_app.sh` 会自动生成包含麦克风与语音识别权限声明的 `MenuMijia.app` 并完成本地签名。你可以直接将生成的 `MenuMijia.app` 拖入 `/Applications`（应用程序）文件夹，并在设置中开启「登录 Mac 时自动启动」。
 
 ### 2. 连接你的米家设备（二选一）
 

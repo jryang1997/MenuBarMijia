@@ -73,7 +73,7 @@ public struct SettingsSheetView: View {
                                 .font(.system(size: 12))
                             Spacer()
                             TextField(
-                                "米家控制中心",
+                                "我的家",
                                 text: Binding(
                                     get: { store.homeName },
                                     set: { store.homeName = $0 }
@@ -309,7 +309,7 @@ public struct SettingsSheetView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "power")
-                        Text("退出米家控制中心")
+                        Text("退出 MenuMijia")
                     }
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.red.opacity(0.85))
