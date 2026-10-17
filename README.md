@@ -160,6 +160,33 @@
 
 ---
 
+## 常用说法
+
+打开指令栏（`⌥M` 或按住菜单栏图标）直接说。下面这些不用联网，本地 0ms 就能听懂：
+
+| 想做的事 | 可以这样说 |
+| --- | --- |
+| 开关 | 「关客厅灯」「把空调打开」 |
+| 微调亮度 | 「再暗一点」「主卧灯亮一点」 |
+| 微调温度 | 「调高两度」「温度低一点」 |
+| 风扇 | 「风扇开高档」「风速调低」「摇头」「停止摇头」 |
+| 定时 | 「10 分钟后关灯」「半小时后关空调」；「取消定时」 |
+| 撤销 | 「撤销」「刚才那个撤销」（10 分钟内有效） |
+
+> [!NOTE]
+> 没说具体设备的微调（比如「再暗一点」）只作用于**正开着**的设备。定时只在 App 运行期间有效，退出或重启后不会保留。
+
+---
+
+## 隐私
+
+- **默认留在本机**：习惯记忆、口头禅、设备列表都存在你的 Mac 上；米家登录信息和 API 密钥存在钥匙串里。
+- **发给 AI 的内容**：只有本地听不懂的话才会发给你配置的模型接口，内容是这句话、设备名称/房间/状态、时间段、室温，以及（如果开着）习惯摘要。API Key 和米家登录信息不会发送。设置页里写得很清楚。
+- **可以关**：设置里能关掉「学习我的使用习惯」（关掉后不再记录，也不会发给 AI），也能逐条删除已记住的习惯。
+- **语音可以只在本机识别**：打开「语音只在本机识别」后，声音不会发给苹果（需要系统支持该语言的离线识别）。
+
+---
+
 ## 快速开始
 
 **运行环境**：macOS 26 及以上，Xcode 26 / Swift 6。
@@ -194,8 +221,18 @@ bash scripts/build_app.sh       # 编译 Release，签名打包并启动「MenuM
 纯 Swift Package，**零第三方 Swift 依赖**，开启 Swift 6 严格并发检查（Strict Concurrency）。核心协议、Miot-Spec 合成器、Jev `/v1/systemone` 决策客户端与习惯记忆引擎均位于独立的 `MijiaCore` 库中，可脱离 UI 单独运行单元测试。
 
 ```bash
-bash scripts/check.sh           # 隐私/密钥扫描 + 编码规范检查 + swift test (48 项测试)
+bash scripts/check.sh           # 隐私/密钥扫描 + 编码规范检查 + swift test
+bash scripts/linux-check/run.sh # 没有 Mac 时：在 Linux 上编译并测试 MijiaCore（需要 Swift 6.1）
 ```
+
+### 发布安装版
+
+```bash
+DEVELOPER_ID="Developer ID Application: 你的名字 (TEAMID)" \
+bash scripts/release.sh         # 签名 → 打 DMG → 苹果公证 → 盖章，产物在 dist/
+```
+
+版本号写在 `VERSION` 文件里，构建号自动取 git 提交数。需要苹果开发者账号；公证凭据先用 `xcrun notarytool store-credentials menumijia-notary` 存好（脚本开头有完整步骤）。只想本地打包、不公证：加 `SKIP_NOTARIZE=1`。把 DMG 上传到 GitHub Releases 后，用户在设置页点「检查更新」就能看到。
 
 提交前请先阅读 [`CODING_STANDARDS.md`](CODING_STANDARDS.md)。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策记录在 [`docs/adr/`](docs/adr/)。
 
@@ -206,8 +243,13 @@ bash scripts/check.sh           # 隐私/密钥扫描 + 编码规范检查 + swi
 Sources/
 ├── MijiaCore/                          领域、协议与智能决策层（零 UI 依赖）
 │   ├── Models.swift                    统一设备领域模型：SmartDevice / DeviceKind / DeviceCommand
-│   ├── IntentEngine.swift              0ms 本地自然语言意图引擎 + Jev /v1/systemone 概率决策客户端
+│   ├── CommandIntent.swift             意图模型（开关、亮度、色温、相对微调、风扇档位、摇头……）与校验
+│   ├── LocalIntentParser.swift         0ms 本地自然语言解析
+│   ├── ModelIntentResolver.swift       Jev /v1/systemone 概率决策客户端与错误提示
+│   ├── AssistantConfig.swift           模型接口配置
+│   ├── AssistantSchedule.swift         「10 分钟后…」「取消定时」「撤销」的说法识别
 │   ├── UserHabitMemory.swift           本地分时段习惯学习与个人口头禅记忆引擎
+│   ├── UpdateChecker.swift             读取 GitHub Releases 检查新版本
 │   ├── MiCloud/                        小米云直连后端（免 Home Assistant）
 │   │   ├── MiAccountLogin.swift        小米账号二维码生成、长轮询登录与 Keychain 会话管理
 │   │   ├── MiCloudClient.swift         小米 IoT 云端 RC4 加密签名与 Miot-Spec RPC 客户端
@@ -217,6 +259,7 @@ Sources/
 │   ├── DeviceSynthesizer.swift         Home Assistant 多实体聚合、房间排序、噪音过滤
 │   ├── HomeProvider.swift              HomeProvider 协议、HA WebSocket 实时流与 MockProvider
 │   ├── HomeStore.swift                 @Observable 状态中心：双后端切换、乐观锁、防抖、5s 撤销
+│   ├── HomeStore+Assistant.swift       指令执行：意图落地、定时、语音撤销
 │   └── KeychainAndPrefs.swift          macOS 钥匙串安全存储与偏好设置
 └── MenuBarMijiaApp/                    SwiftUI + AppKit 原生界面层
     ├── MenuBarMijiaApp.swift           应用入口与生命周期绑定
@@ -228,7 +271,7 @@ Sources/
     ├── SettingsSheetView.swift         双后端连接配置、Jev 决策设置与偏好面板
     └── ThemeAndMotion.swift            macOS 26 Liquid Glass 材质与阻尼弹簧动效
 Tests/MijiaCoreTests/                   Swift Testing 单元测试套件（覆盖合成、Miot、Jev、习惯记忆等）
-scripts/                                打包签名（build_app.sh）与提交前门禁检查（check.sh）
+scripts/                                打包（build_app.sh）、发布公证（release.sh）、门禁检查（check.sh）、Linux 测试（linux-check/）
 nas/                                    群晖 NAS 一键部署 Home Assistant 脚本（可选）
 docs/                                   ADR、规格文档与 README 实机截图/动图资源
 ```
