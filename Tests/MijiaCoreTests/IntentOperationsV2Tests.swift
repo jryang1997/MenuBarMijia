@@ -47,12 +47,30 @@ struct IntentOperationsV2Tests {
         #expect(plan.reply == "已主卧床头灯亮度调至 60%")
     }
 
-    @Test("再暗一点 without a target picks the only light that is on")
+    @Test("再暗一点 without a target picks all lights that are currently on")
     func dimmerTargetsTheLitLight() throws {
         let plan = try #require(Self.parse("再暗一点"))
         #expect(plan.intents == [DeviceIntent(targetId: "dev_bedside", operation: .brightness(60))])
         let brighter = try #require(Self.parse("亮一点"))
         #expect(brighter.intents == [DeviceIntent(targetId: "dev_bedside", operation: .brightness(100))])
+
+        // When multiple lights are currently on, "再暗一点" dims all active lights without touching off lights.
+        let activeDesk = SmartDevice(
+            id: "dev_study_desk", name: "书房台灯", roomId: "shu_fang", roomName: "书房",
+            model: "yeelink.light.lamp4", isOnline: true,
+            kind: .light(LightSpec(entityId: "light.study_desk", isOn: true, brightnessPercent: 50))
+        )
+        let extraOffLight = SmartDevice(
+            id: "dev_hall", name: "玄关灯", roomId: "xuan_guan", roomName: "玄关",
+            model: "yeelink.light.ceiling1", isOnline: true,
+            kind: .light(LightSpec(entityId: "light.hall", isOn: false, brightnessPercent: 100))
+        )
+        let multiOnDevices = [Self.bedside, activeDesk, extraOffLight, Self.livingAC, Self.fan]
+        let multiPlan = try #require(LocalIntentParser.parse("再暗一点", devices: multiOnDevices, scenes: []))
+        #expect(multiPlan.intents == [
+            DeviceIntent(targetId: "dev_bedside", operation: .brightness(60)),
+            DeviceIntent(targetId: "dev_study_desk", operation: .brightness(30))
+        ])
     }
 
     @Test("Brightness steps clamp to 1...100 and start from 0 when the light is off")
@@ -122,6 +140,26 @@ struct IntentOperationsV2Tests {
             DeviceIntent(targetId: "dev_fan", operation: .oscillation(true))
         ])
         #expect(ModelIntentResolver.systemPrompt(catalog: catalog).contains("brightness_step"))
+
+        // Jev /v1/systemone also supports relative step, fan speed, and oscillation choices
+        let systemOneData = try JSONSerialization.data(withJSONObject: [
+            "answers": [
+                "target": ["choice": "d4", "confidence": 0.96],
+                "op": ["choice": "fan_high", "confidence": 0.94],
+                "temp": ["choice": "none", "confidence": 0.99],
+                "dev_d1": ["choice": "bri_down_20", "confidence": 0.88]
+            ]
+        ])
+        let jevPlan = try ModelIntentResolver.planFromSystemOne(
+            data: systemOneData,
+            catalog: catalog,
+            devices: Self.devices,
+            scenes: []
+        )
+        #expect(jevPlan.intents == [
+            DeviceIntent(targetId: "dev_fan", operation: .fanSpeed("Level3")),
+            DeviceIntent(targetId: "dev_bedside", operation: .brightness(60))
+        ])
     }
 
     // MARK: - 执行

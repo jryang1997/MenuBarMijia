@@ -3,10 +3,30 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
+  linux-core:
+    # 验证密钥扫描、编码规范与 MijiaCore 全量单测（Ubuntu + Swift 6.1）
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secret & coding-standard checks
+        run: |
+          if grep -rnE 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}' Sources/ Tests/; then
+            echo "Detected hardcoded JWT token" && exit 1
+          fi
+          grep -q 'defaultSeededToken = ""' Sources/MijiaCore/KeychainAndPrefs.swift
+          if grep -rnE 'event\.keyCode\s*==\s*[0-9]+' Sources/; then
+            echo "Raw event.keyCode numeric literal found" && exit 1
+          fi
+      - name: Test MijiaCore on Linux
+        run: bash scripts/linux-check/run.sh
+
   macos:
-    # Package.swift 要求 macOS 26 SDK
+    # Package.swift 要求 macOS 26 SDK（GitHub 托管 Runner 暂未提供 macos-26 镜像，仅手动或自托管触发）
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -17,11 +37,3 @@ jobs:
       - name: Lint & test
         run: bash scripts/check.sh
 
-  linux-core:
-    # 只验证 MijiaCore（无 Xcode 的快速检查）
-    runs-on: ubuntu-latest
-    container: swift:6.1
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test MijiaCore on Linux
-        run: bash scripts/linux-check/run.sh

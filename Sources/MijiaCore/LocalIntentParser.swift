@@ -222,8 +222,9 @@ public enum LocalIntentParser {
                 if let wanted, !wanted.contains(category) { return false }
                 return true
             }
-            // A bare category ("打开空调") is only unambiguous when the home has exactly one such device.
-            if !hasScope && matchedRooms.isEmpty && candidates.count != 1 { return nil }
+            // A bare category ("打开空调") is only unambiguous when the home has exactly one such device;
+            // relative adjustments ("再暗一点") intentionally apply to all currently-on matching devices.
+            if !onlyActive && !hasScope && matchedRooms.isEmpty && candidates.count != 1 { return nil }
             targetIds = candidates.map(\.id)
         }
 

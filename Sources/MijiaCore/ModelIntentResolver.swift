@@ -174,6 +174,8 @@ public struct ModelIntentResolver: Sendable {
             "bri_20": "调暗灯光 (亮度 20%)",
             "bri_50": "中等亮度 (亮度 50%)",
             "bri_100": "调亮/最亮灯光 (亮度 100%)",
+            "bri_down_20": "相对调暗一点 (-20%)",
+            "bri_up_20": "相对调亮一点 (+20%)",
             "ct_2700": "暖光/黄光 (色温 2700K)",
             "ct_4000": "自然光 (色温 4000K)",
             "ct_6500": "白光/冷光 (色温 6500K)",
@@ -183,6 +185,14 @@ public struct ModelIntentResolver: Sendable {
             "hvac_fan": "空调送风模式",
             "hvac_auto": "空调自动模式",
             "temp": "仅调节空调温度",
+            "temp_up_2": "空调温度相对调高 2°C",
+            "temp_down_2": "空调温度相对调低 2°C",
+            "fan_low": "风速调为低档/一档",
+            "fan_medium": "风速调为中档/二档",
+            "fan_high": "风速调为高档/三档",
+            "fan_auto": "风速调为自动档",
+            "osc_on": "开启风扇摇头/摆风",
+            "osc_off": "停止风扇摇头/摆风",
             "scene": "执行智能场景"
         ]
         let tempCriteria: [String: String] = [
@@ -551,6 +561,10 @@ public struct ModelIntentResolver: Sendable {
             }
             criteria["bri_20"] = "调暗灯光 (20%)"
             criteria["bri_100"] = "调亮灯光 (100%)"
+            if spec.isOn {
+                criteria["bri_down_20"] = "再暗一点 (-20%)"
+                criteria["bri_up_20"] = "再亮一点 (+20%)"
+            }
         case .climate(let spec):
             if spec.availableModes.contains("cool") {
                 criteria["cool_24"] = "开启制冷 24°C（快速降温）"
@@ -564,6 +578,18 @@ public struct ModelIntentResolver: Sendable {
             if spec.availableModes.contains("dry") {
                 criteria["hvac_dry"] = "开启除湿模式"
             }
+            if spec.isOn {
+                criteria["temp_up_2"] = "温度相对调高 2°C"
+                criteria["temp_down_2"] = "温度相对调低 2°C"
+            }
+        case .fan(let spec):
+            if !spec.availablePresetModes.isEmpty {
+                criteria["fan_low"] = "风速调为低档"
+                criteria["fan_medium"] = "风速调为中档"
+                criteria["fan_high"] = "风速调为高档"
+            }
+            criteria["osc_on"] = "开启摇头"
+            criteria["osc_off"] = "停止摇头"
         default:
             break
         }
@@ -607,6 +633,8 @@ public struct ModelIntentResolver: Sendable {
         case "bri_20": return .brightness(20)
         case "bri_50": return .brightness(50)
         case "bri_100": return .brightness(100)
+        case "bri_down_20": return .brightnessStep(-20)
+        case "bri_up_20": return .brightnessStep(20)
         case "ct_2700": return .colorTemperature(2700)
         case "ct_4000": return .colorTemperature(4000)
         case "ct_6500": return .colorTemperature(6500)
@@ -615,6 +643,14 @@ public struct ModelIntentResolver: Sendable {
         case "hvac_dry": return .hvacMode("dry")
         case "hvac_fan": return .hvacMode("fan_only")
         case "hvac_auto": return .hvacMode("auto")
+        case "temp_up_2": return .temperatureStep(2)
+        case "temp_down_2": return .temperatureStep(-2)
+        case "fan_low": return .fanSpeed("low")
+        case "fan_medium": return .fanSpeed("medium")
+        case "fan_high": return .fanSpeed("high")
+        case "fan_auto": return .fanSpeed("auto")
+        case "osc_on": return .oscillation(true)
+        case "osc_off": return .oscillation(false)
         case "scene": return .activateScene
         default: return nil
         }
