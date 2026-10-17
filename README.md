@@ -225,7 +225,21 @@ bash scripts/check.sh           # 隐私/密钥扫描 + 编码规范检查 + swi
 bash scripts/linux-check/run.sh # 没有 Mac 时：在 Linux 上编译并测试 MijiaCore（需要 Swift 6.1）
 ```
 
-### 发布安装版
+### Windows 11 系统托盘版（`windows/`）
+
+仓库内置基于 **Tauri v2 (Rust + TypeScript + WebView2)** 的 Windows 11 系统托盘客户端，完整复刻小米云 RC4 加密协议、二维码扫码直连、Miot-Spec 自动合成、0ms 本地解析、OpenRouter Jev `/v1/systemone` 决策引擎、定时倒计时与 10 分钟内撤销，并支持 `Alt+M` 全局热键呼出。
+
+```bash
+cd windows
+npm install
+npm test        # 运行 RC4 加密向量、扫码、Miot 合成、0ms 本地解析与 Jev 决策单测
+npm run build   # TypeScript 严格类型检查 + 前端打包
+npx tauri build # 在 Windows 上打包 .exe (NSIS) 与 .msi 安装包
+```
+
+每次推送到 `main` 分支时，GitHub Actions（`windows-latest`）会自动编译并把 `MenuMijia-1.0.0-windows-x64-setup.exe` 与 `.msi` 附加到 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases)。
+
+### 发布 macOS 安装版
 
 ```bash
 DEVELOPER_ID="Developer ID Application: 你的名字 (TEAMID)" \
