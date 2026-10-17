@@ -1290,6 +1290,10 @@ public final class HomeStore {
     /// Commands waiting on a spoken delay ("10 分钟后关灯"), soonest first. Not persisted across launches.
     public private(set) var scheduledCommands: [ScheduledCommand] = []
     private var scheduledTasks: [UUID: Task<Void, Never>] = [:]
+    /// The most recent assistant action, kept so "撤销" can restore it after the 5 s banner is gone.
+    private var lastAssistantUndo: (reply: String, restore: [DeviceCommand], previous: [SmartDevice], at: Date)?
+    /// How long a spoken "撤销" can still reach back.
+    static let voiceUndoWindow: TimeInterval = 10 * 60
     /// Test seam for the delay before a scheduled command fires.
     var assistantSleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 
@@ -1413,6 +1417,10 @@ public final class HomeStore {
             setAssistantState(count > 0 ? .done("已取消 \(count) 个定时") : .failed("现在没有定时任务"))
             return nil
         }
+        if UndoPhrase.isUndo(spoken) {
+            await undoLastAssistantAction()
+            return nil
+        }
         let delayed = DelayPhrase.extract(spoken)
         let utterance = delayed?.remainder ?? spoken
         setAssistantState(.thinking)
@@ -1442,6 +1450,30 @@ public final class HomeStore {
             return schedule(plan, after: delayed.delay)
         }
         return await executeIntentPlan(plan, recordedUtterance: utterance)
+    }
+
+    // MARK: - Voice Undo
+
+    /// Restores only the devices the last assistant action touched; others may have changed since.
+    private func undoLastAssistantAction() async {
+        guard let last = lastAssistantUndo, Date().timeIntervalSince(last.at) <= Self.voiceUndoWindow else {
+            lastAssistantUndo = nil
+            setAssistantState(.failed("没有可以撤销的操作"))
+            return
+        }
+        lastAssistantUndo = nil
+        undoTimerTask?.cancel()
+        undoBanner = nil
+        for previous in last.previous {
+            guard let idx = devices.firstIndex(where: { $0.id == previous.id }) else { continue }
+            devices[idx] = previous
+            lockOptimistic(previous.id, duration: .seconds(3.0))
+        }
+        for cmd in last.restore {
+            try? await provider.execute(cmd)
+        }
+        let what = last.reply.hasPrefix("已") ? String(last.reply.dropFirst()) : last.reply
+        setAssistantState(.done("已撤销：\(what)"))
     }
 
     // MARK: - Scheduled Commands
@@ -1523,6 +1555,15 @@ public final class HomeStore {
             case .skipped:
                 break
             }
+        }
+
+        if !appliedDeviceIds.isEmpty {
+            lastAssistantUndo = (
+                reply: plan.reply,
+                restore: restoreCommands.reversed(),
+                previous: previousSnapshot.filter { appliedDeviceIds.contains($0.id) },
+                at: Date()
+            )
         }
 
         if appliedDeviceIds.count > 1 {

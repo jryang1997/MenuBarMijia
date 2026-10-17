@@ -83,3 +83,36 @@ struct AssistantScheduleTests {
         #expect(store.assistantState == .failed("现在没有定时任务"))
     }
 }
+
+/// 方案 v1 第 2 步：语音撤销（"撤销"、"刚才那个撤销"）。
+struct AssistantUndoTests {
+    @Test("UndoPhrase recognises short undo requests only")
+    func undoPhrases() {
+        #expect(UndoPhrase.isUndo("撤销"))
+        #expect(UndoPhrase.isUndo("刚才那个撤销一下"))
+        #expect(UndoPhrase.isUndo("恢复原样"))
+        #expect(UndoPhrase.isUndo("撤回！"))
+        #expect(!UndoPhrase.isUndo("打开书房灯"))
+        #expect(!UndoPhrase.isUndo("取消定时"))
+    }
+
+    @Test("撤销 restores a single-device assistant action, once")
+    @MainActor
+    func voiceUndo() async throws {
+        let mock = MockHomeProvider(snapshot: SynthesizedHome(devices: [AssistantScheduleTests.ceiling], scenes: []))
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.undo.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        _ = await store.runAssistantCommand("关闭书房吸顶灯")
+        #expect(store.devices.first?.isActiveOn == false)
+
+        _ = await store.runAssistantCommand("撤销")
+        #expect(store.assistantState == .done("已撤销：关闭书房吸顶灯"))
+        #expect(store.devices.first?.isActiveOn == true)
+        #expect(await mock.executedCommands.last == .setLightPower(entityId: "light.study_ceiling", isOn: true))
+
+        _ = await store.runAssistantCommand("撤销")
+        #expect(store.assistantState == .failed("没有可以撤销的操作"))
+    }
+}

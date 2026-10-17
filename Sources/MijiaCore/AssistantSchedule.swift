@@ -105,3 +105,16 @@ public struct ScheduledCommand: Identifiable, Equatable, Sendable {
         self.plan = plan
     }
 }
+
+// MARK: - Spoken Undo ("撤销", "刚才那个撤销")
+
+public enum UndoPhrase {
+    private static let keywords = ["撤销", "撤回", "还原", "恢复原样", "恢复原状", "恢复刚才", "取消刚才", "刚才不算"]
+
+    /// Short utterances only, so a long command that merely mentions "还原" still reaches the parser.
+    public static func isUndo(_ utterance: String) -> Bool {
+        let compact = utterance.filter { !$0.isWhitespace && !"，。！？,.!?".contains($0) }
+        guard compact.count <= 10, !DelayPhrase.isCancel(compact) else { return false }
+        return keywords.contains { compact.contains($0) }
+    }
+}
