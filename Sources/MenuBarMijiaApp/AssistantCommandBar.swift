@@ -338,11 +338,16 @@ struct AssistantCommandBar: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
+            if !store.scheduledCommands.isEmpty {
+                scheduledRow
+            }
+
             suggestionsRow
         }
         .help("长按顶部菜单栏温度图标可按住说话；或点击麦克风说话，打字回车执行")
         .animation(AppleMotion.snappySpring, value: store.assistantState)
         .animation(AppleMotion.snappySpring, value: store.assistantSuggestions)
+        .animation(AppleMotion.snappySpring, value: store.scheduledCommands)
         .animation(AppleMotion.snappySpring, value: speech.isListening)
         .onAppear {
             if store.assistantVoiceRequest != lastHandledVoiceRequest {
@@ -361,6 +366,36 @@ struct AssistantCommandBar: View {
             lastHandledVoiceRequest = newValue
             speech.toggle(store: store)
         }
+    }
+
+    /// Pending "10 分钟后关灯" commands with a live countdown and a cancel button.
+    private var scheduledRow: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(store.scheduledCommands) { entry in
+                HStack(spacing: 5) {
+                    Image(systemName: "timer")
+                        .foregroundStyle(Color.orange)
+                    Text(entry.reply)
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(entry.fireDate, style: .timer)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Button {
+                        store.cancelScheduledCommands(id: entry.id)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("取消这个定时")
+                }
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 4)
+            }
+        }
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     private var suggestionsRow: some View {

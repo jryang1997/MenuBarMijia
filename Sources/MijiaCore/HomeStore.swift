@@ -1287,6 +1287,11 @@ public final class HomeStore {
     private var assistantResetTask: Task<Void, Never>?
     /// Test seam replacing the network resolver built from `assistantConfig`.
     var assistantResolverOverride: ModelIntentResolver?
+    /// Commands waiting on a spoken delay ("10 分钟后关灯"), soonest first. Not persisted across launches.
+    public private(set) var scheduledCommands: [ScheduledCommand] = []
+    private var scheduledTasks: [UUID: Task<Void, Never>] = [:]
+    /// Test seam for the delay before a scheduled command fires.
+    var assistantSleep: @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
 
     public var assistantConfig: AssistantConfig {
         get { AssistantConfig.load(from: userDefaults) }
@@ -1401,8 +1406,15 @@ public final class HomeStore {
     /// Resolves a natural-language command (local parser first, model fallback) and applies it.
     @discardableResult
     public func runAssistantCommand(_ text: String) async -> IntentPlan? {
-        let utterance = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !utterance.isEmpty else { return nil }
+        let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !spoken.isEmpty else { return nil }
+        if DelayPhrase.isCancel(spoken) {
+            let count = cancelScheduledCommands()
+            setAssistantState(count > 0 ? .done("已取消 \(count) 个定时") : .failed("现在没有定时任务"))
+            return nil
+        }
+        let delayed = DelayPhrase.extract(spoken)
+        let utterance = delayed?.remainder ?? spoken
         setAssistantState(.thinking)
 
         let plan: IntentPlan
@@ -1426,7 +1438,47 @@ public final class HomeStore {
             return plan
         }
 
+        if let delayed {
+            return schedule(plan, after: delayed.delay)
+        }
         return await executeIntentPlan(plan, recordedUtterance: utterance)
+    }
+
+    // MARK: - Scheduled Commands
+
+    private func schedule(_ plan: IntentPlan, after delay: TimeInterval) -> IntentPlan {
+        var action = IntentReply.describe(plan.intents, devices: devices, scenes: scenes)
+        if action.hasPrefix("已") { action.removeFirst() }
+        let entry = ScheduledCommand(
+            reply: DelayPhrase.describe(delay) + action,
+            fireDate: Date().addingTimeInterval(delay),
+            plan: plan
+        )
+        scheduledCommands.append(entry)
+        scheduledCommands.sort { $0.fireDate < $1.fireDate }
+        let sleep = assistantSleep
+        scheduledTasks[entry.id] = Task { [weak self] in
+            do { try await sleep(.seconds(delay)) } catch { return }
+            guard let self, !Task.isCancelled else { return }
+            self.scheduledCommands.removeAll { $0.id == entry.id }
+            self.scheduledTasks[entry.id] = nil
+            _ = await self.executeIntentPlan(entry.plan, recordedUtterance: nil)
+        }
+        var reply = plan
+        reply.reply = "好的，" + entry.reply
+        setAssistantState(.done(reply.reply))
+        return reply
+    }
+
+    /// Cancels one pending command, or all of them when `id` is nil. Returns how many were cancelled.
+    @discardableResult
+    public func cancelScheduledCommands(id: UUID? = nil) -> Int {
+        let targets = scheduledCommands.filter { id == nil || $0.id == id }
+        for entry in targets {
+            scheduledTasks.removeValue(forKey: entry.id)?.cancel()
+        }
+        scheduledCommands.removeAll { entry in targets.contains { $0.id == entry.id } }
+        return targets.count
     }
 
     private func executeIntentPlan(_ plan: IntentPlan, recordedUtterance: String?) async -> IntentPlan {
