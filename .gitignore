@@ -24,3 +24,6 @@ xcuserdata/
 
 # 用户自己下载的第三方集成（不随仓库分发）
 nas/components/*.zip
+
+# 发布产物
+dist/

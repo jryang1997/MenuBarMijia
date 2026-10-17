@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "▶ 正在编译 MenuBarMijiaApp (Release)..."
+VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || echo 1.0.0)"
+BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+# 留空 = 本机临时签名（只能自己用）；发布时由 scripts/release.sh 传入 "Developer ID Application: …"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
+
+echo "▶ 正在编译 MenuBarMijiaApp $VERSION (Release)..."
 swift build -c release --product MenuBarMijiaApp
 
 BIN_PATH="$(swift build -c release --show-bin-path)/MenuBarMijiaApp"
@@ -25,7 +30,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
 chmod +x "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
 
-cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -45,9 +50,9 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$BUILD_NUMBER</string>
     <key>LSMinimumSystemVersion</key>
     <string>26.0</string>
     <key>LSUIElement</key>
@@ -71,7 +76,14 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-codesign --force --deep --sign - "$APP_DIR"
+if [ "$SIGN_IDENTITY" = "-" ]; then
+    codesign --force --sign - "$APP_DIR"
+else
+    # 正式签名：开启 Hardened Runtime（苹果公证的前提），并声明麦克风权限
+    codesign --force --options runtime --timestamp \
+        --entitlements "$ROOT/scripts/MenuMijia.entitlements" \
+        --sign "$SIGN_IDENTITY" "$APP_DIR"
+fi
 echo "✅ 已打包完成：$APP_DIR"
 
 if [ "$WAS_RUNNING" = "1" ]; then
