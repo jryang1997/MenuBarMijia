@@ -28,6 +28,34 @@ public enum LocalIntentParser {
         "日光模式": "Day", "日光灯": "Day", "日光": "Day"
     ]
 
+    /// Relative brightness ("暗一点"), resolved against the light's current level.
+    private static let brightnessStepWords: [String: Int] = [
+        "暗一点": -20, "暗一些": -20, "暗点": -20,
+        "亮一点": 20, "亮一些": 20, "亮点": 20
+    ]
+
+    /// Relative temperature words without a number ("温度低一点"); numbered ones ("调高两度") are regex-parsed.
+    private static let temperatureStepWords: [String: Double] = [
+        "高一点": 1, "高一些": 1, "低一点": -1, "低一些": -1,
+        "热一点": 1, "冷一点": -1
+    ]
+
+    private static let fanSpeedWords: [String: String] = [
+        "高档": "high", "高速": "high", "大风": "high", "最大风": "high", "强风": "high",
+        "风速调高": "high", "风速调大": "high", "风速最大": "high",
+        "中档": "medium", "中速": "medium", "风速调中": "medium",
+        "低档": "low", "低速": "low", "小风": "low", "微风": "low",
+        "风速调低": "low", "风速调小": "low", "风速最小": "low",
+        "自动风": "auto", "风速自动": "auto"
+    ]
+
+    /// Longer "stop" phrases are consumed first, so "关闭摇头" never reads as 关闭 + 摇头.
+    private static let oscillationWords: [String: Bool] = [
+        "摇头": true, "摆头": true, "摆风": true,
+        "停止摇头": false, "关闭摇头": false, "关掉摇头": false, "不要摇头": false, "别摇头": false,
+        "停止摆头": false, "关闭摆风": false, "停止摆风": false
+    ]
+
     private static let hvacModeWords: [String: String] = [
         "制冷": "cool", "制热": "heat", "除湿": "dry", "送风": "fan_only", "自动": "auto"
     ]
@@ -54,6 +82,7 @@ public enum LocalIntentParser {
     private static let fillers: Set<String> = [
         "请", "帮我", "帮忙", "麻烦", "给我", "把", "将", "给", "一下", "一点", "一些",
         "吧", "了", "的", "呢", "啊", "呀", "都", "里", "模式",
+        "再", "稍微", "稍", "更", "温度", "风速",
         "调到", "调成", "调为", "调至", "设为", "设成", "设置为", "设置成", "设置", "调节", "调", "到", "为",
         "切换为", "切换到", "切到", "切为", "切成", "切换", "切", "改成", "改为"
     ]
@@ -127,7 +156,19 @@ public enum LocalIntentParser {
         let hasScope = !longestFirst(scopeWords).filter { consume($0, from: &rest) }.isEmpty
         let categories = Set(longestFirst(Set(categoryWords.keys)).filter { consume($0, from: &rest) }.compactMap { categoryWords[$0] })
 
-        // 3. Operation words
+        // 3. Operation words (phrases that contain power verbs or 调高/调低 go first)
+        for word in longestFirst(Set(oscillationWords.keys)) where consume(word, from: &rest) {
+            ops.append(.oscillation(oscillationWords[word]!))
+        }
+        for word in longestFirst(Set(fanSpeedWords.keys)) where consume(word, from: &rest) {
+            ops.append(.fanSpeed(fanSpeedWords[word]!))
+        }
+        for word in longestFirst(Set(brightnessStepWords.keys)) where consume(word, from: &rest) {
+            ops.append(.brightnessStep(brightnessStepWords[word]!))
+        }
+        for word in longestFirst(Set(temperatureStepWords.keys)) where consume(word, from: &rest) {
+            ops.append(.temperatureStep(temperatureStepWords[word]!))
+        }
         for word in longestFirst(Set(lightEffectWords.keys)) where consume(word, from: &rest) {
             ops.append(.lightEffect(lightEffectWords[word]!))
         }
@@ -171,9 +212,12 @@ public enum LocalIntentParser {
             if wanted == nil && !isTurningOff { return nil }
             guard hasScope || !matchedRooms.isEmpty || wanted != nil else { return nil }
 
+            // "再暗一点" with no target means "the light that is on", never a dark one.
+            let onlyActive = ops.allSatisfy(\.isRelative)
             let candidates = devices.filter { dev in
                 let category = IntentDeviceCategory(dev)
                 guard dev.isOnline, category.isAssistantControllable else { return false }
+                if onlyActive && !dev.isActiveOn { return false }
                 if !matchedRooms.isEmpty && !roomDeviceIds.contains(dev.id) { return false }
                 if let wanted, !wanted.contains(category) { return false }
                 return true
@@ -237,8 +281,10 @@ public enum LocalIntentParser {
     private static func impliedCategories(for ops: [IntentOperation]) -> Set<IntentDeviceCategory>? {
         for op in ops {
             switch op {
-            case .brightness, .colorTemperature, .lightEffect: return [.light]
-            case .hvacMode, .targetTemperature: return [.climate, .heater]
+            case .brightness, .brightnessStep, .colorTemperature, .lightEffect: return [.light]
+            case .hvacMode, .targetTemperature, .temperatureStep: return [.climate, .heater]
+            case .fanSpeed: return [.fan, .climate]
+            case .oscillation: return [.fan]
             case .power, .activateScene: continue
             }
         }
@@ -266,12 +312,20 @@ public enum LocalIntentParser {
         switch op {
         case .power: return 0
         case .hvacMode: return 1
-        case .targetTemperature: return 2
+        case .targetTemperature, .temperatureStep: return 2
         case .lightEffect: return 3
-        case .brightness: return 4
+        case .brightness, .brightnessStep: return 4
         case .colorTemperature: return 5
         case .activateScene: return 6
+        case .fanSpeed: return 7
+        case .oscillation: return 8
         }
+    }
+
+    private static func spokenNumber(_ s: String) -> Int? {
+        if let n = Int(s) { return n }
+        let digits: [String: Int] = ["一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10]
+        return digits[s]
     }
 
     private static func longestFirst(_ words: Set<String>) -> [String] {
@@ -287,13 +341,30 @@ public enum LocalIntentParser {
     }
 
     private static func extractNumericOperations(_ text: inout String) -> [IntentOperation] {
+        // Relative degrees first, otherwise "调高2度" would read as an absolute 2°C.
+        let stepPattern = #"(调高|调低|升高|降低|升|降|高|低)(\d{1,2}|[一二两三四五六七八九十])(?:度|℃|°C|°)"#
+        var ops: [IntentOperation] = []
+        if let regex = try? NSRegularExpression(pattern: stepPattern) {
+            let ns = text as NSString
+            let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
+            for match in matches {
+                let direction = ns.substring(with: match.range(at: 1))
+                guard let amount = spokenNumber(ns.substring(with: match.range(at: 2))) else { continue }
+                let sign: Double = (direction.contains("高") || direction.contains("升")) ? 1 : -1
+                ops.append(.temperatureStep(sign * Double(amount)))
+            }
+            if !matches.isEmpty {
+                text = regex.stringByReplacingMatches(
+                    in: text, range: NSRange(location: 0, length: ns.length), withTemplate: String(consumed)
+                )
+            }
+        }
         let patterns: [(String, (Double) -> IntentOperation)] = [
             (#"(\d{4})[kK]"#, { .colorTemperature(Int($0)) }),
             (#"亮度(?:调到|调至|调为|设为|设置为|到|为)?(\d{1,3})(?:%|％)?"#, { .brightness(Int($0)) }),
             (#"(\d{1,3})(?:%|％)"#, { .brightness(Int($0)) }),
             (#"(\d{1,2}(?:\.\d)?)(?:度|℃|°C|°)"#, { .targetTemperature($0) })
         ]
-        var ops: [IntentOperation] = []
         for (pattern, make) in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let ns = text as NSString

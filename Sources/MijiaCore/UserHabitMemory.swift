@@ -221,6 +221,9 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
         case .hvacMode(let mode): return "hvac:\(mode)"
         case .targetTemperature(let t): return "temp:\(Int(t.rounded()))"
         case .activateScene: return "scene:activate"
+        case .fanSpeed(let v): return "fan:\(v)"
+        case .oscillation(let on): return on ? "swing:on" : "swing:off"
+        case .brightnessStep, .temperatureStep: return nil
         }
     }
 
@@ -236,6 +239,9 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
         case ("hvac", let mode): return .hvacMode(mode)
         case ("temp", let v): return Double(v).map(IntentOperation.targetTemperature)
         case ("scene", "activate"): return .activateScene
+        case ("fan", let v): return .fanSpeed(v)
+        case ("swing", "on"): return .oscillation(true)
+        case ("swing", "off"): return .oscillation(false)
         default: return nil
         }
     }
@@ -270,6 +276,17 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
             return !spec.isOn || abs(spec.targetTemperature - temp) >= 0.5
         case .activateScene:
             return true
+        case .fanSpeed(let v):
+            switch dev.kind {
+            case .fan(let spec): return !spec.isOn || spec.presetMode != v
+            case .climate(let spec): return spec.fanMode != v
+            default: return false
+            }
+        case .oscillation(let on):
+            guard case .fan(let spec) = dev.kind else { return false }
+            return !spec.isOn || spec.isOscillating != on
+        case .brightnessStep, .temperatureStep:
+            return false
         }
     }
 
@@ -296,6 +313,9 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
             return "\(dev.name)·\(cn)"
         case .targetTemperature(let t): return "\(dev.name)·\(Int(t.rounded()))°C"
         case .activateScene: return nil
+        case .fanSpeed(let v): return "\(dev.name)·风速\(IntentReply.fanSpeedLabel(v))"
+        case .oscillation(let on): return "\(dev.name)·\(on ? "摇头" : "停止摇头")"
+        case .brightnessStep, .temperatureStep: return nil
         }
     }
 

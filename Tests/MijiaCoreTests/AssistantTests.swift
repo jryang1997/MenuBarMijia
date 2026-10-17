@@ -109,8 +109,12 @@ struct AssistantTests {
 
     @Test("Brightness, kind words, scenes")
     func miscCommands() {
-        #expect(Self.parse("主卧灯调暗一点")?.intents == [
+        // "调暗" is an absolute dim level; "调暗一点" is relative to the current 80%.
+        #expect(Self.parse("主卧灯调暗")?.intents == [
             DeviceIntent(targetId: "dev_bedside", operation: .brightness(20))
+        ])
+        #expect(Self.parse("主卧灯调暗一点")?.intents == [
+            DeviceIntent(targetId: "dev_bedside", operation: .brightness(60))
         ])
         #expect(Self.parse("书房台灯亮度50%")?.intents == [
             DeviceIntent(targetId: "dev_study_desk", operation: .brightness(50))

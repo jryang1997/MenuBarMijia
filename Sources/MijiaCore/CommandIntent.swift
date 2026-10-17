@@ -10,6 +10,20 @@ public enum IntentOperation: Equatable, Sendable {
     case hvacMode(String)         // cool/heat/dry/fan_only/auto/off
     case targetTemperature(Double)
     case activateScene            // target is a HomeScene id
+    case fanSpeed(String)         // fan preset or air-conditioner fan mode; normalized to the device's own option
+    case oscillation(Bool)        // fan swing (摇头)
+
+    // Relative adjustments ("再暗一点", "调高两度"). IntentValidator.normalize resolves them against the
+    // device's current state into .brightness / .targetTemperature, so nothing downstream ever sees them.
+    case brightnessStep(Int)      // ± percent
+    case temperatureStep(Double)  // ± °C
+
+    public var isRelative: Bool {
+        switch self {
+        case .brightnessStep, .temperatureStep: return true
+        default: return false
+        }
+    }
 }
 
 public struct DeviceIntent: Equatable, Sendable {
@@ -144,6 +158,23 @@ public enum IntentValidator {
             guard t.isFinite else { return nil }
             return .targetTemperature(min(s.maxTemp, max(s.minTemp, t)))
 
+        case (.brightnessStep(let delta), .light(let s)):
+            let base = s.isOn ? (s.brightnessPercent ?? 100) : 0
+            return .brightness(min(100, max(1, base + delta)))
+
+        case (.temperatureStep(let delta), .climate(let s)):
+            guard delta.isFinite else { return nil }
+            return .targetTemperature(min(s.maxTemp, max(s.minTemp, s.targetTemperature + delta)))
+
+        case (.fanSpeed(let raw), .fan(let s)):
+            return FanSpeedMatcher.match(raw, in: s.availablePresetModes).map(IntentOperation.fanSpeed)
+
+        case (.fanSpeed(let raw), .climate(let s)):
+            return FanSpeedMatcher.match(raw, in: s.availableFanModes).map(IntentOperation.fanSpeed)
+
+        case (.oscillation, .fan(let s)) where s.isOscillating != nil:
+            return operation
+
         default:
             return nil
         }
@@ -205,9 +236,23 @@ public enum IntentReply {
             case .hvacMode(let m): return "\(joined)切换为\(SmartDevice.localizeHVACMode(m))"
             case .targetTemperature(let t): return "\(joined)设为 \(formatTemperature(t))°C"
             case .activateScene: return "执行场景「\(joined)」"
+            case .fanSpeed(let v):
+                let label = fanSpeedLabel(v)
+                return "\(joined)风速调为\(label.first?.isNumber == true ? " " : "")\(label)"
+            case .oscillation(let on): return "\(joined)\(on ? "开启" : "关闭")摇头"
+            case .brightnessStep(let d): return "\(joined)亮度\(d >= 0 ? "调高" : "调低") \(abs(d))%"
+            case .temperatureStep(let d): return "\(joined)温度\(d >= 0 ? "调高" : "调低") \(formatTemperature(abs(d)))°C"
             }
         }
         return clauses.isEmpty ? "" : "已" + clauses.joined(separator: "，")
+    }
+
+    /// "Level3" → "3 档"，"high" → "高档"；其余原样返回。
+    public static func fanSpeedLabel(_ raw: String) -> String {
+        let lowered = raw.lowercased()
+        if lowered.hasPrefix("level"), let n = Int(lowered.dropFirst(5)) { return "\(n) 档" }
+        let names = ["low": "低档", "medium": "中档", "middle": "中档", "mid": "中档", "high": "高档", "auto": "自动", "silent": "静音", "sleep": "睡眠"]
+        return names[lowered] ?? raw
     }
 
     static func formatTemperature(_ t: Double) -> String {
@@ -307,11 +352,63 @@ public struct IntentCatalog: Sendable {
             let current = (s.isOn && s.hvacMode != "off")
                 ? "\(s.hvacMode) \(IntentReply.formatTemperature(s.targetTemperature))°C"
                 : "关"
-            return "\(current) 可用模式:\(modes) 温度范围:\(range)"
-        case .fan(let s): return s.isOn ? "开" : "关"
+            let fan = s.availableFanModes.isEmpty ? "" : " 可选风速:\(s.availableFanModes.joined(separator: "/"))"
+            return "\(current) 可用模式:\(modes) 温度范围:\(range)\(fan)"
+        case .fan(let s):
+            var out = s.isOn ? "开" : "关"
+            if s.isOn, let preset = s.presetMode { out += " 风速:\(preset)" }
+            if !s.availablePresetModes.isEmpty { out += " 可选风速:\(s.availablePresetModes.joined(separator: "/"))" }
+            if s.isOscillating != nil { out += " 摇头:\(s.isOscillating == true ? "开" : "关")" }
+            return out
         case .plug(let s): return s.isOn ? "开" : "关"
         case .vacuum(let s): return s.isCleaning ? "清扫中" : "待机"
         case .speaker, .tv, .fridge, .sensor: return ""
+        }
+    }
+}
+
+// MARK: - Fan Speed Matching
+
+/// Maps spoken speed words (高/中/低/自动, high/medium/low/auto) onto whatever option names the device
+/// exposes ("Level1…3", "low/medium/high", "静音"…). Exact names win; otherwise rank among the plain
+/// speed levels (first = low, middle = medium, last = high).
+public enum FanSpeedMatcher {
+    private enum Level { case low, medium, high, auto }
+
+    private static let spoken: [(Level, [String])] = [
+        (.auto, ["auto", "自动"]),
+        (.high, ["high", "高", "大", "强", "max", "最大", "strong"]),
+        (.medium, ["medium", "middle", "mid", "中"]),
+        (.low, ["low", "低", "小", "弱", "min", "最小", "微"])
+    ]
+    private static let optionHints: [Level: [String]] = [
+        .auto: ["auto", "自动"],
+        .high: ["high", "strong", "高", "强"],
+        .medium: ["medium", "middle", "mid", "中"],
+        .low: ["low", "低", "弱"]
+    ]
+    /// Options that are modes rather than speed levels, so they never take part in rank matching.
+    private static let nonLevelHints = ["auto", "自动", "sleep", "睡眠", "silent", "静音", "natural", "nature", "自然", "smart", "智能"]
+
+    public static func match(_ raw: String, in options: [String]) -> String? {
+        let wanted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty, !options.isEmpty else { return nil }
+        if let exact = options.first(where: { $0.caseInsensitiveCompare(wanted) == .orderedSame }) { return exact }
+
+        let lowered = wanted.lowercased()
+        guard let level = spoken.first(where: { $0.1.contains(where: { lowered == $0 || lowered.hasPrefix($0) }) })?.0 else {
+            return nil
+        }
+        if let named = options.first(where: { opt in optionHints[level]!.contains { opt.lowercased().contains($0) } }) {
+            return named
+        }
+        let levels = options.filter { opt in !nonLevelHints.contains { opt.lowercased().contains($0) } }
+        guard !levels.isEmpty else { return nil }
+        switch level {
+        case .low: return levels.first
+        case .high: return levels.last
+        case .medium: return levels[levels.count / 2]
+        case .auto: return nil
         }
     }
 }

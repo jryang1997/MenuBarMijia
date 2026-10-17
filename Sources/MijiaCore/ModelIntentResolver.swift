@@ -280,10 +280,12 @@ public struct ModelIntentResolver: Sendable {
         return """
         你是智能家居指令解析器。把用户的中文指令转换为 JSON，只输出 JSON，不要解释。\(contextBlock)
         \(catalog.text)
-        schema: {"actions":[{"device":"id","op":"power|brightness|color_temp|effect|hvac_mode|temperature|scene","value":...}],"reply":"一句话中文回执"}
+        schema: {"actions":[{"device":"id","op":"power|brightness|brightness_step|color_temp|effect|hvac_mode|temperature|temperature_step|fan_speed|oscillation|scene","value":...}],"reply":"一句话中文回执"}
         规则：power 的 value 为 true/false；brightness 为 1-100（调暗用 20，调亮用 100）；color_temp 为开尔文；\
         effect 取 Day（日光模式）或 Night（月光/夜灯模式），且必须是该灯具的可用模式；\
         hvac_mode 取 cool/heat/dry/fan_only/auto/off 且必须是该设备的可用模式；temperature 为摄氏度数字；\
+        brightness_step / temperature_step 是相对调节（"再暗一点"=-20，"调高两度"=2），优先用于"再…一点"类说法；\
+        fan_speed 取 high/medium/low/auto 或该设备"可选风速"里的原名；oscillation 为 true/false（风扇摇头）；\
         scene 的 device 填场景 id，value 填 null。只能使用上面列出的 id。\
         无法执行时 actions 为空数组，并在 reply 中简短说明原因。
         """
@@ -605,6 +607,14 @@ public struct ModelIntentResolver: Sendable {
             return number(from: value).map(IntentOperation.targetTemperature)
         case "scene":
             return .activateScene
+        case "brightness_step":
+            return number(from: value).map { .brightnessStep(Int($0.rounded())) }
+        case "temperature_step":
+            return number(from: value).map(IntentOperation.temperatureStep)
+        case "fan_speed", "fan_mode", "preset":
+            return (value as? String).map(IntentOperation.fanSpeed)
+        case "oscillation", "swing":
+            return bool(from: value).map(IntentOperation.oscillation)
         default:
             return nil
         }

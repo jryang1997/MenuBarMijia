@@ -1652,6 +1652,32 @@ public final class HomeStore {
                 restore: [restore]
             )
 
+        case (.fanSpeed(let preset), .fan(var s)):
+            let restore: DeviceCommand
+            if !s.isOn {
+                restore = .setFanPower(entityId: s.entityId, isOn: false)
+            } else if let previous = s.presetMode {
+                restore = .setFanPresetMode(entityId: s.entityId, presetMode: previous)
+            } else {
+                restore = .setFanPower(entityId: s.entityId, isOn: true)
+            }
+            s.isOn = true
+            s.presetMode = preset
+            updated.kind = .fan(s)
+            return AssistantEffect(updated: updated, command: .setFanPresetMode(entityId: s.entityId, presetMode: preset), restore: [restore])
+
+        case (.fanSpeed(let fanMode), .climate(var s)):
+            let restore = s.fanMode.map { [DeviceCommand.setClimateFanMode(entityId: s.entityId, fanMode: $0)] } ?? []
+            s.fanMode = fanMode
+            updated.kind = .climate(s)
+            return AssistantEffect(updated: updated, command: .setClimateFanMode(entityId: s.entityId, fanMode: fanMode), restore: restore)
+
+        case (.oscillation(let on), .fan(var s)):
+            let restore = DeviceCommand.setFanOscillating(entityId: s.entityId, oscillating: s.isOscillating ?? !on)
+            s.isOscillating = on
+            updated.kind = .fan(s)
+            return AssistantEffect(updated: updated, command: .setFanOscillating(entityId: s.entityId, oscillating: on), restore: [restore])
+
         default:
             return nil
         }
