@@ -141,6 +141,47 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
         }
     }
 
+    // MARK: - Viewing & Forgetting (privacy)
+
+    public struct ReadableItem: Identifiable, Equatable, Sendable {
+        public let id: String
+        public let text: String
+    }
+
+    /// Everything the memory holds, in plain words, for the settings screen.
+    public func readableItems(devices: [SmartDevice], scenes: [HomeScene]) -> [ReadableItem] {
+        var items: [ReadableItem] = []
+        for entry in entries {
+            guard let op = Self.decodeOperation(entry.operationKey) else { continue }
+            let intent = DeviceIntent(targetId: entry.targetId, operation: op)
+            let title = Self.suggestionTitle(for: intent, devices: devices, scenes: scenes) ?? entry.targetId
+            items.append(ReadableItem(
+                id: "e|\(entry.bucket.rawValue)|\(entry.targetId)|\(entry.operationKey)",
+                text: "\(entry.bucket.rawValue)常做：\(title)（\(entry.count) 次）"
+            ))
+        }
+        for phrase in phrases {
+            items.append(ReadableItem(
+                id: "p|\(phrase.phrase)",
+                text: "口头禅「\(phrase.phrase)」→ \(phrase.summary)（\(phrase.count) 次）"
+            ))
+        }
+        return items
+    }
+
+    public mutating func forget(itemId: String) {
+        let parts = itemId.split(separator: "|", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
+        switch parts.first {
+        case "e" where parts.count == 4:
+            entries.removeAll { $0.bucket.rawValue == parts[1] && $0.targetId == parts[2] && $0.operationKey == parts[3] }
+        case "p" where parts.count >= 2:
+            let phrase = String(itemId.dropFirst(2))
+            phrases.removeAll { $0.phrase == phrase }
+        default:
+            break
+        }
+    }
+
     /// Returns personalized one-click habit suggestions for the current time bucket whose target isn't already in that state.
     public func topSuggestions(
         for now: Date = Date(),

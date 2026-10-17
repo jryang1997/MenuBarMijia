@@ -175,6 +175,10 @@ public final class SpeechInputController {
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
+        // Privacy option: keep recognition on this Mac when the system supports it for zh-CN.
+        if store.prefersOnDeviceSpeech && recognizer.supportsOnDeviceRecognition {
+            request.requiresOnDeviceRecognition = true
+        }
 
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
@@ -528,9 +532,14 @@ struct AssistantSettingsSection: View {
     @State private var baseURLDraft: String = ""
     @State private var modelDraft: String = ""
     @State private var apiKeyDraft: String = ""
+    @State private var isShowingHabits = false
+    /// Habit memory lives in UserDefaults (not observed), so bump this to redraw after edits.
+    @State private var habitRevision = 0
 
     var body: some View {
-        let habitCount = store.userHabitMemory.entries.count + store.userHabitMemory.phrases.count
+        let _ = habitRevision
+        let habitItems = store.userHabitMemory.readableItems(devices: store.devices, scenes: store.scenes)
+        let habitCount = habitItems.count
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("AI 决策与习惯记忆 (Jev)")
@@ -563,19 +572,7 @@ struct AssistantSettingsSection: View {
                     .textFieldStyle(.roundedBorder)
             }
 
-            HStack {
-                Text("已学习个人习惯与口头禅：\(habitCount) 条（自动注入 Jev）")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if habitCount > 0 {
-                    Button("清空记忆") {
-                        store.userHabitMemory = UserHabitMemory()
-                        store.showToast("已清空个人习惯记忆")
-                    }
-                    .buttonStyle(PillActionButtonStyle())
-                }
-            }
+            privacySection(habitItems: habitItems, habitCount: habitCount)
 
             HStack {
                 Button("恢复 Jev 默认") {
@@ -605,6 +602,79 @@ struct AssistantSettingsSection: View {
             baseURLDraft = config.baseURL
             modelDraft = config.model
             apiKeyDraft = config.apiKey
+        }
+    }
+
+    @ViewBuilder
+    private func privacySection(habitItems: [UserHabitMemory.ReadableItem], habitCount: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { store.isHabitLearningEnabled },
+                set: { store.isHabitLearningEnabled = $0 }
+            )) {
+                Text("学习我的使用习惯（用于猜你想做）")
+                    .font(.system(size: 11))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+
+            Toggle(isOn: Binding(
+                get: { store.prefersOnDeviceSpeech },
+                set: { store.prefersOnDeviceSpeech = $0 }
+            )) {
+                Text("语音只在本机识别（不把声音发给苹果，系统支持时生效）")
+                    .font(.system(size: 11))
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+
+            HStack {
+                Button(isShowingHabits ? "收起已学习的习惯" : "查看已学习的习惯（\(habitCount) 条）") {
+                    isShowingHabits.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .disabled(habitCount == 0)
+                Spacer()
+                if habitCount > 0 {
+                    Button("清空记忆") {
+                        store.userHabitMemory = UserHabitMemory()
+                        habitRevision &+= 1
+                        store.showToast("已清空个人习惯记忆")
+                    }
+                    .buttonStyle(PillActionButtonStyle())
+                }
+            }
+
+            if isShowingHabits {
+                ForEach(habitItems) { item in
+                    HStack(spacing: 6) {
+                        Text(item.text)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .lineLimit(2)
+                        Spacer(minLength: 4)
+                        Button {
+                            var memory = store.userHabitMemory
+                            memory.forget(itemId: item.id)
+                            store.userHabitMemory = memory
+                            habitRevision &+= 1
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("忘掉这一条")
+                    }
+                }
+            }
+
+            Text("发给 AI 的内容：你说的那句话、设备名称/房间/当前状态、时间段、室温\(store.isHabitLearningEnabled ? "、习惯摘要" : "")。只有本机解析不了的指令才会发送。API Key 和米家登录信息只存在本机钥匙串，不会发送。")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

@@ -104,6 +104,16 @@ public final class HomeStore {
         didSet { userDefaults.set(homeName, forKey: "home_name") }
     }
 
+    /// When off, nothing new is learned and no habit summary is sent to the AI model.
+    public var isHabitLearningEnabled: Bool = true {
+        didSet { userDefaults.set(isHabitLearningEnabled, forKey: "assistant_habit_learning_enabled") }
+    }
+
+    /// Ask macOS to keep speech recognition on this Mac (no audio sent to Apple) when the language supports it.
+    public var prefersOnDeviceSpeech: Bool = false {
+        didSet { userDefaults.set(prefersOnDeviceSpeech, forKey: "assistant_on_device_speech") }
+    }
+
     public var serverURLString: String {
         didSet { userDefaults.set(serverURLString, forKey: "ha_server_url") }
     }
@@ -156,6 +166,8 @@ public final class HomeStore {
         self.homeBackend = initialBackend
         self.miSessionMaskedUserId = MiSessionStore.load()?.maskedUserId
         self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.defaultHomeName
+        self.isHabitLearningEnabled = boolOrDefaultTrue("assistant_habit_learning_enabled")
+        self.prefersOnDeviceSpeech = ud.bool(forKey: "assistant_on_device_speech")
         self.hideOfflineDevices = ud.bool(forKey: "hide_offline_devices")
         self.showQuickActionsBar = boolOrDefaultTrue("show_quick_actions_bar")
         self.enableGlobalHotkey = boolOrDefaultTrue("enable_global_hotkey")
@@ -640,7 +652,7 @@ public final class HomeStore {
             devices: devices,
             scenes: scenes
         )
-        userHabitMemory = memory
+        if isHabitLearningEnabled { userHabitMemory = memory }
 
         Task {
             do {
@@ -708,7 +720,7 @@ public final class HomeStore {
             devices: devices,
             scenes: scenes
         )
-        userHabitMemory = memory
+        if isHabitLearningEnabled { userHabitMemory = memory }
 
         dispatchImmediate(
             deviceId: deviceId,
@@ -1362,7 +1374,9 @@ public final class HomeStore {
             "\(dev.name)(\(IntentCatalog.stateSummary(dev)))"
         }
         let activeSummary = activeParts.isEmpty ? "全屋设备均关闭" : activeParts.joined(separator: "、")
-        let habitSummary = userHabitMemory.promptSummary(for: now, devices: devices, scenes: scenes)
+        let habitSummary = isHabitLearningEnabled
+            ? userHabitMemory.promptSummary(for: now, devices: devices, scenes: scenes)
+            : ""
 
         return AssistantContext(
             timeSummary: timeSummary,
@@ -1582,7 +1596,7 @@ public final class HomeStore {
         } else {
             var memory = userHabitMemory
             memory.record(utterance: recordedUtterance, intents: plan.intents, devices: devices, scenes: scenes)
-            userHabitMemory = memory
+            if isHabitLearningEnabled { userHabitMemory = memory }
 
             if !plan.suggestions.isEmpty {
                 assistantSuggestions = plan.suggestions
