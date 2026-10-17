@@ -101,16 +101,22 @@ public final class SpeechInputController {
     }
 
     public func finishHoldToTalk(store: HomeStore) {
-        guard isHoldToTalk || isListening else { return }
+        guard isHoldToTalk || isListening || isStarting else { return }
         holdReleaseTask?.cancel()
-        recognitionRequest?.endAudio()
         holdReleaseTask = Task { @MainActor [weak self] in
-            // Allow 320ms after mouse release for SFSpeechRecognizer to flush the final syllable.
+            // Allow 320ms after mouse release for SFSpeechRecognizer to flush any syllables spoken while held.
             try? await Task.sleep(for: .milliseconds(320))
             guard !Task.isCancelled, let self else { return }
+            let hasText = self.hasCapturedSpeech || !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if self.isListening {
-                let hasText = self.hasCapturedSpeech || !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                self.stop(andSubmit: hasText, store: store)
+                if hasText {
+                    // User spoke while holding the menu bar icon (Push-to-Talk): stop and execute immediately.
+                    self.stop(andSubmit: true, store: store)
+                } else {
+                    // User long-pressed the menu bar icon to summon voice input and released before speaking:
+                    // seamlessly transition to hands-free listening with 1.1s silence auto-submit.
+                    self.isHoldToTalk = false
+                }
             } else {
                 self.isHoldToTalk = false
             }
@@ -129,7 +135,6 @@ public final class SpeechInputController {
         isStarting = true
         defer { isStarting = false }
 
-        let authStartTime = ContinuousClock.now
         errorMessage = nil
         hasCapturedSpeech = false
         isHoldToTalk = holdMode
@@ -158,22 +163,8 @@ public final class SpeechInputController {
             return
         }
 
-        // If a system permission prompt appeared during Hold-to-Talk and the user already released the mouse,
-        // seamlessly switch to hands-free silence auto-submit so they can speak right away.
-        let authElapsed = ContinuousClock.now - authStartTime
-        if isHoldToTalk && (NSEvent.pressedMouseButtons & 1) == 0 {
-            if authElapsed > .milliseconds(450) {
-                isHoldToTalk = false
-                holdReleaseTask?.cancel()
-                holdReleaseTask = nil
-            } else {
-                isHoldToTalk = false
-                return
-            }
-        }
-
         stop(andSubmit: false, store: store)
-        isHoldToTalk = holdMode && ((NSEvent.pressedMouseButtons & 1) != 0)
+        isHoldToTalk = holdMode && ((NSEvent.pressedMouseButtons & 0x3) != 0)
 
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
