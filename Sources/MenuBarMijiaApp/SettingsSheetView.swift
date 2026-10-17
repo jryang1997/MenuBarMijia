@@ -286,6 +286,8 @@ public struct SettingsSheetView: View {
                     .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
 
                     AssistantSettingsSection(store: store)
+
+                    UpdateSection(store: store)
                 }
                 .padding(.horizontal, 13)
                 .padding(.vertical, 11)
