@@ -8,9 +8,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/core.test.ts"
+    "test": "tsx --test tests/core.test.ts",
+    "tauri": "tauri"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

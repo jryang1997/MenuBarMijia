@@ -61,8 +61,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: "windows/src-tauri -> target"
-      - name: Install frontend dependencies
-        run: npm ci
+      - name: Install frontend & Tauri CLI dependencies
+        run: npm install
       - name: Build Windows Tauri installer (.exe & .msi)
         run: npx tauri build
       - name: Collect Windows installers
