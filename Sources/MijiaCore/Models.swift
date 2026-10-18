@@ -275,6 +275,9 @@ public struct TVSpec: Equatable, Sendable {
     public var mediaEntityId: String
     public var state: String
     public var volumePercent: Int
+    public var isMuted: Bool
+    public var isScreenOff: Bool
+    public var isPairingPromptActive: Bool
     public var currentSource: String?
     public var availableSources: [String]
     public var turnOnButtonId: String?
@@ -283,6 +286,9 @@ public struct TVSpec: Equatable, Sendable {
         mediaEntityId: String,
         state: String,
         volumePercent: Int,
+        isMuted: Bool = false,
+        isScreenOff: Bool = false,
+        isPairingPromptActive: Bool = false,
         currentSource: String? = nil,
         availableSources: [String] = [],
         turnOnButtonId: String? = nil
@@ -290,6 +296,9 @@ public struct TVSpec: Equatable, Sendable {
         self.mediaEntityId = mediaEntityId
         self.state = state
         self.volumePercent = volumePercent
+        self.isMuted = isMuted
+        self.isScreenOff = isScreenOff
+        self.isPairingPromptActive = isPairingPromptActive
         self.currentSource = currentSource
         self.availableSources = availableSources
         self.turnOnButtonId = turnOnButtonId
@@ -359,14 +368,14 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
     /// Whether this device can be toggled on/off with a single primary click
     public var isPrimaryToggleable: Bool {
         switch kind {
-        case .light, .climate, .fan, .plug, .vacuum:
+        case .light, .climate, .fan, .plug, .vacuum, .tv:
             return true
-        case .speaker, .tv, .fridge, .sensor:
+        case .speaker, .fridge, .sensor:
             return false
         }
     }
 
-    /// Whether this device currently counts as "actively turned on" (lights, AC, heater, fan, plug, vacuum cleaning)
+    /// Whether this device currently counts as "actively turned on" (lights, AC, heater, fan, plug, vacuum cleaning, TV on)
     public var isActiveOn: Bool {
         guard isOnline else { return false }
         switch kind {
@@ -376,7 +385,8 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .plug(let s): return s.isOn
         case .vacuum(let s): return s.isCleaning
         case .speaker(let s): return s.state == "playing"
-        case .tv, .fridge, .sensor: return false
+        case .tv(let s): return s.state != "off" && s.state != "standby"
+        case .fridge, .sensor: return false
         }
     }
 
@@ -498,8 +508,23 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return "\(playStr) · \(volStr)"
 
         case .tv(let s):
-            let st = (s.state == "off" || s.state == "standby") ? "待机" : "在线"
-            return "\(st) · 音量 \(s.volumePercent)%"
+            if s.isPairingPromptActive {
+                return "请在电视上点击「允许」配对"
+            }
+            if s.state == "off" || s.state == "standby" {
+                return "已关机 · 可唤醒"
+            }
+            var parts: [String] = []
+            if let src = s.currentSource, !src.isEmpty {
+                parts.append(src)
+            } else {
+                parts.append("在线")
+            }
+            if s.isScreenOff {
+                parts.append("已熄屏")
+            }
+            parts.append(s.isMuted ? "已静音" : "音量 \(s.volumePercent)%")
+            return parts.joined(separator: " · ")
 
         case .sensor(let s):
             if let t = s.temperature, let h = s.humidity {

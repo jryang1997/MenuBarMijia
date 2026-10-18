@@ -813,45 +813,80 @@ public struct DeviceCardView: View {
     // MARK: - 8. TV / Monitor Controls
 
     private func tvDrawer(_ spec: TVSpec) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            LiquidGlassSlider(
-                value: Binding(
-                    get: { Double(spec.volumePercent) },
-                    set: { store.setSpeakerVolume(device.id, percent: Int($0.rounded())) }
-                ),
-                in: 0...100,
-                step: 1,
-                iconName: "speaker.wave.2.fill",
-                iconColor: statusColor,
-                trackFill: LinearGradient(
-                    colors: [
-                        accent.opacity(0.60),
-                        accent.opacity(0.92)
-                    ],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                ),
-                formattedValue: "\(spec.volumePercent)%"
-            )
-
-            GlassEffectContainer(spacing: 6) {
-                HStack(spacing: 6) {
-                    if let wakeBtn = spec.turnOnButtonId {
-                        Button {
-                            store.pressDeviceButton(wakeBtn, label: "蓝牙唤醒开机")
-                        } label: {
-                            Label("唤醒开机", systemImage: "power")
-                        }
-                        .buttonStyle(PillActionButtonStyle(tintColor: accent))
+        let isLG = LGWebOSProtocol.isLGEntity(spec.mediaEntityId)
+        return VStack(alignment: .leading, spacing: 8) {
+            if spec.isPairingPromptActive {
+                HStack(spacing: 8) {
+                    Image(systemName: "tv.badge.wifi")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text("电视已弹出配对提示，请用遥控器点击「接受」")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Button("重发请求") {
+                        store.triggerLGWebOSPairing()
                     }
+                    .buttonStyle(PillActionButtonStyle(tintColor: accent))
+                }
+            }
 
-                    ForEach(spec.availableSources, id: \.self) { src in
-                        Button(src) {
-                            Task {
-                                try? await Task.sleep(for: .milliseconds(10))
-                            }
+            HStack(spacing: 8) {
+                Button {
+                    store.toggleTVMute(device.id)
+                } label: {
+                    Image(systemName: spec.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(PillActionButtonStyle(isSelected: spec.isMuted, tintColor: accent))
+                .help(spec.isMuted ? "取消静音" : "静音")
+
+                LiquidGlassSlider(
+                    value: Binding(
+                        get: { Double(spec.volumePercent) },
+                        set: { store.setSpeakerVolume(device.id, percent: Int($0.rounded())) }
+                    ),
+                    in: 0...100,
+                    step: 1,
+                    iconName: "waveform",
+                    iconColor: statusColor,
+                    trackFill: LinearGradient(
+                        colors: [
+                            accent.opacity(0.60),
+                            accent.opacity(0.92)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    formattedValue: "\(spec.volumePercent)%"
+                )
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                GlassEffectContainer(spacing: 6) {
+                    HStack(spacing: 6) {
+                        Button {
+                            store.togglePrimary(device)
+                        } label: {
+                            Label(device.isActiveOn ? "关机待机" : "唤醒开机", systemImage: "power")
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: spec.currentSource == src, tintColor: accent))
+                        .buttonStyle(PillActionButtonStyle(isSelected: device.isActiveOn, tintColor: accent))
+
+                        if isLG {
+                            Button {
+                                store.toggleTVScreenOff(device.id)
+                            } label: {
+                                Label(spec.isScreenOff ? "点亮屏幕" : "OLED 熄屏", systemImage: "moon.fill")
+                            }
+                            .buttonStyle(PillActionButtonStyle(isSelected: spec.isScreenOff, tintColor: accent))
+                        }
+
+                        ForEach(spec.availableSources, id: \.self) { src in
+                            Button(src) {
+                                store.selectTVSource(device.id, source: src)
+                            }
+                            .buttonStyle(PillActionButtonStyle(isSelected: spec.currentSource == src, tintColor: accent))
+                        }
                     }
                 }
             }

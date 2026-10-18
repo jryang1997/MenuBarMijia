@@ -91,8 +91,8 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
     /// Categories whose state the assistant can change; the rest are omitted from prompts and plans.
     public var isAssistantControllable: Bool {
         switch self {
-        case .light, .climate, .heater, .fan, .plug, .vacuum: return true
-        case .speaker, .tv, .fridge, .sensor: return false
+        case .light, .climate, .heater, .fan, .plug, .vacuum, .tv: return true
+        case .speaker, .fridge, .sensor: return false
         }
     }
 }
@@ -122,7 +122,7 @@ public enum IntentValidator {
     /// Returns the operation adjusted to the device's limits, or nil when the device cannot perform it.
     public static func normalize(_ operation: IntentOperation, for device: SmartDevice) -> IntentOperation? {
         switch (operation, device.kind) {
-        case (.power, .light), (.power, .climate), (.power, .fan), (.power, .plug), (.power, .vacuum):
+        case (.power, .light), (.power, .climate), (.power, .fan), (.power, .plug), (.power, .vacuum), (.power, .tv):
             return operation
 
         case (.brightness(let percent), .light):
@@ -362,7 +362,11 @@ public struct IntentCatalog: Sendable {
             return out
         case .plug(let s): return s.isOn ? "开" : "关"
         case .vacuum(let s): return s.isCleaning ? "清扫中" : "待机"
-        case .speaker, .tv, .fridge, .sensor: return ""
+        case .tv(let s):
+            if s.state == "off" || s.state == "standby" { return "关" }
+            let src = s.currentSource.map { " \($0)" } ?? ""
+            return "开\(src) 音量\(s.volumePercent)%"
+        case .speaker, .fridge, .sensor: return ""
         }
     }
 }

@@ -180,7 +180,7 @@ extension HomeStore {
             lockOptimistic(previous.id, duration: .seconds(3.0))
         }
         for cmd in last.restore {
-            try? await provider.execute(cmd)
+            try? await executeDeviceCommand(cmd)
         }
         let what = last.reply.hasPrefix("已") ? String(last.reply.dropFirst()) : last.reply
         setAssistantState(.done("已撤销：\(what)"))
@@ -322,7 +322,7 @@ extension HomeStore {
         if intent.operation == .activateScene {
             guard let scene = scenes.first(where: { $0.id == intent.targetId }) else { return .skipped }
             do {
-                try await provider.execute(.activateScene(entityId: scene.entityId))
+                try await executeDeviceCommand(.activateScene(entityId: scene.entityId))
                 return .applied(deviceId: nil, restore: [])
             } catch {
                 return .failed(scene.name)
@@ -337,7 +337,7 @@ extension HomeStore {
         devices[idx] = effect.updated
         lockOptimistic(previous.id, duration: .seconds(3.0))
         do {
-            try await provider.execute(effect.command)
+            try await executeDeviceCommand(effect.command)
             return .applied(deviceId: previous.id, restore: effect.restore)
         } catch {
             if let revertIdx = devices.firstIndex(where: { $0.id == previous.id }) {
@@ -452,6 +452,19 @@ extension HomeStore {
             return AssistantEffect(
                 updated: updated,
                 command: .vacuumAction(entityId: s.entityId, action: on ? .start : .returnToBase),
+                restore: [restore]
+            )
+
+        case (.power(let on), .tv(var s)):
+            let wasOn = s.state != "off" && s.state != "standby"
+            let powerEntity = LGWebOSProtocol.isLGEntity(s.mediaEntityId) ? LGWebOSProtocol.powerEntityId : s.mediaEntityId
+            let restore = DeviceCommand.setSwitch(entityId: powerEntity, isOn: wasOn)
+            s.state = on ? "on" : "standby"
+            if on { s.isScreenOff = false }
+            updated.kind = .tv(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .setSwitch(entityId: powerEntity, isOn: on),
                 restore: [restore]
             )
 

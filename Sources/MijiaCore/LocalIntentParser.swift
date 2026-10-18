@@ -68,7 +68,8 @@ public enum LocalIntentParser {
         "暖气": .heater, "电暖器": .heater, "电暖气": .heater, "取暖器": .heater, "暖风机": .heater,
         "风扇": .fan, "电风扇": .fan, "电扇": .fan,
         "插座": .plug,
-        "扫地机": .vacuum, "扫地机器人": .vacuum
+        "扫地机": .vacuum, "扫地机器人": .vacuum,
+        "电视": .tv, "电视机": .tv
     ]
 
     /// Generic room words users say, mapped to room names they may correspond to in HA.

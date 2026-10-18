@@ -14,13 +14,15 @@
       {
         "label": "main",
         "title": "MenuMijia",
-        "width": 380,
-        "height": 600,
+        "width": 360,
+        "height": 520,
         "resizable": false,
         "decorations": false,
+        "transparent": true,
+        "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "visible": true,
+        "visible": false,
         "center": false
       }
     ],

@@ -168,7 +168,13 @@ public final class HomeStore {
     public var onSafetyAlert: ((SafetyAlert) -> Void)?
     public var onGlobalHotkeyPreferenceChanged: ((Bool) -> Void)?
 
+    public var lgConfig: LGWebOSConfig {
+        didSet { lgConfig.save(to: userDefaults) }
+    }
+
     var provider: any HomeProvider
+    var lgWebOSClient: LGWebOSClient?
+    private var latestLGDevice: SmartDevice?
     private var eventTask: Task<Void, Never>?
     private var debounceTasks: [String: Task<Void, Never>] = [:]
     var undoTimerTask: Task<Void, Never>?
@@ -192,6 +198,7 @@ public final class HomeStore {
         let initialBackend = ud.string(forKey: "home_backend").flatMap(HomeBackend.init(rawValue:)) ?? .homeAssistant
         self.homeBackend = initialBackend
         self.miSessionMaskedUserId = MiSessionStore.load()?.maskedUserId
+        self.lgConfig = LGWebOSConfig.load(from: ud)
         self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.defaultHomeName
         self.isHabitLearningEnabled = boolOrDefaultTrue("assistant_habit_learning_enabled")
         self.prefersOnDeviceSpeech = ud.bool(forKey: "assistant_on_device_speech")
@@ -231,6 +238,56 @@ public final class HomeStore {
             self.provider = HAWebSocketProvider(baseURLString: savedURL, token: token)
         }
         startListening()
+        if provider == nil {
+            startLGWebOSIfNeeded()
+        }
+    }
+
+    private func startLGWebOSIfNeeded() {
+        let client = LGWebOSClient(
+            config: lgConfig,
+            onDeviceUpdated: { [weak self] dev in
+                Task { @MainActor [weak self] in
+                    self?.applyLGDeviceUpdate(dev)
+                }
+            },
+            onClientKeyRegistered: { [weak self] key in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.lgConfig.clientKey = key
+                    self.showToast("已成功配对 \(self.lgConfig.name)")
+                }
+            }
+        )
+        self.lgWebOSClient = client
+        if lgConfig.isEnabled {
+            Task { await client.start() }
+        }
+    }
+
+    func applyLGDeviceUpdate(_ dev: SmartDevice) {
+        guard lgConfig.isEnabled else {
+            latestLGDevice = nil
+            devices.removeAll { $0.id == dev.id }
+            return
+        }
+        latestLGDevice = dev
+        let now = ContinuousClock.now
+        if let lockTime = optimisticLockUntil[dev.id], now < lockTime {
+            return
+        }
+        if let idx = devices.firstIndex(where: { $0.id == dev.id }) {
+            devices[idx] = dev
+        } else {
+            devices.append(dev)
+            if favoriteDeviceIds.contains(dev.id) == false && favoriteOrder.count < 8 {
+                favoriteDeviceIds.insert(dev.id)
+                favoriteOrder.insert(dev.id, at: 0)
+            }
+        }
+        if !rooms.contains(where: { $0.id == dev.roomId || $0.name == dev.roomName }) {
+            rooms.append(RoomArea(id: dev.roomId, name: dev.roomName, sortOrder: 1))
+        }
     }
 
     public func startListening() {
@@ -250,7 +307,12 @@ public final class HomeStore {
             self.connectionStatus = status
 
         case .snapshotUpdated(let snapshot):
-            self.rooms = snapshot.rooms
+            var nextRooms = snapshot.rooms
+            if let lgDev = latestLGDevice, lgConfig.isEnabled,
+               !nextRooms.contains(where: { $0.id == lgDev.roomId || $0.name == lgDev.roomName }) {
+                nextRooms.append(RoomArea(id: lgDev.roomId, name: lgDev.roomName, sortOrder: 1))
+            }
+            self.rooms = nextRooms
             self.environmentReadings = snapshot.environmentReadings
             self.scenes = snapshot.scenes
 
@@ -264,6 +326,15 @@ public final class HomeStore {
                     merged.append(local)
                 } else {
                     merged.append(incoming)
+                }
+            }
+            if let lgDev = latestLGDevice, lgConfig.isEnabled,
+               !merged.contains(where: { $0.id == lgDev.id }) {
+                if let lockTime = optimisticLockUntil[lgDev.id], now < lockTime,
+                   let local = existingById[lgDev.id] {
+                    merged.insert(local, at: 0)
+                } else {
+                    merged.insert(lgDev, at: 0)
                 }
             }
             self.devices = merged
@@ -664,7 +735,21 @@ public final class HomeStore {
             updated.kind = .vacuum(s)
             command = .vacuumAction(entityId: s.entityId, action: startCleaning ? .start : .returnToBase)
 
-        case .speaker, .tv, .fridge, .sensor:
+        case .tv(var s):
+            let turnOn = (s.state == "off" || s.state == "standby")
+            s.state = turnOn ? "on" : "standby"
+            if turnOn { s.isScreenOff = false }
+            updated.kind = .tv(s)
+            if LGWebOSProtocol.isLGEntity(s.mediaEntityId) {
+                command = .setSwitch(entityId: LGWebOSProtocol.powerEntityId, isOn: turnOn)
+            } else if turnOn, let btnId = s.turnOnButtonId {
+                command = .pressButton(entityId: btnId)
+            } else {
+                toggleExpanded(device.id)
+                return
+            }
+
+        case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)
             return
         }
@@ -684,7 +769,7 @@ public final class HomeStore {
 
         Task {
             do {
-                try await provider.execute(cmd)
+                try await executeDeviceCommand(cmd)
             } catch {
                 if let revertIdx = self.devices.firstIndex(where: { $0.id == device.id }) {
                     self.devices[revertIdx] = previous
@@ -933,6 +1018,57 @@ public final class HomeStore {
         )
     }
 
+    public func toggleTVMute(_ deviceId: String) {
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .tv(var s) = devices[idx].kind else { return }
+        let previous = devices[idx]
+        s.isMuted.toggle()
+        devices[idx].kind = .tv(s)
+        lockOptimistic(deviceId, duration: .seconds(2.0))
+
+        let entityId = LGWebOSProtocol.isLGEntity(s.mediaEntityId) ? LGWebOSProtocol.muteEntityId : s.mediaEntityId
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setSwitch(entityId: entityId, isOn: s.isMuted)
+        )
+    }
+
+    public func toggleTVScreenOff(_ deviceId: String) {
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .tv(var s) = devices[idx].kind else { return }
+        let previous = devices[idx]
+        s.isScreenOff.toggle()
+        if !s.isScreenOff && (s.state == "off" || s.state == "standby") {
+            s.state = "on"
+        }
+        devices[idx].kind = .tv(s)
+        lockOptimistic(deviceId, duration: .seconds(2.2))
+
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setSwitch(entityId: LGWebOSProtocol.screenOffEntityId, isOn: s.isScreenOff)
+        )
+    }
+
+    public func selectTVSource(_ deviceId: String, source: String) {
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .tv(var s) = devices[idx].kind else { return }
+        let previous = devices[idx]
+        s.currentSource = source
+        s.state = "on"
+        s.isScreenOff = false
+        devices[idx].kind = .tv(s)
+        lockOptimistic(deviceId, duration: .seconds(2.5))
+
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .mediaSelectSource(entityId: s.mediaEntityId, source: source)
+        )
+    }
+
     public func sendSpeakerText(_ deviceId: String, text: String, asDirective: Bool) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -947,7 +1083,7 @@ public final class HomeStore {
 
         Task {
             do {
-                try await provider.execute(.sendNotifyMessage(entityId: eid, message: trimmed))
+                try await executeDeviceCommand(.sendNotifyMessage(entityId: eid, message: trimmed))
                 showToast(asDirective ? "已向小爱下发指令：「\(trimmed)」" : "小爱已播报：「\(trimmed)」")
             } catch {
                 showToast("发送失败：\(error.localizedDescription)", isError: true)
@@ -958,7 +1094,7 @@ public final class HomeStore {
     public func pressDeviceButton(_ buttonEntityId: String, label: String) {
         Task {
             do {
-                try await provider.execute(.pressButton(entityId: buttonEntityId))
+                try await executeDeviceCommand(.pressButton(entityId: buttonEntityId))
                 showToast("已触发：\(label)")
             } catch {
                 showToast("\(label) 执行失败", isError: true)
@@ -971,7 +1107,7 @@ public final class HomeStore {
     public func triggerScene(_ scene: HomeScene) {
         Task {
             do {
-                try await provider.execute(.activateScene(entityId: scene.entityId))
+                try await executeDeviceCommand(.activateScene(entityId: scene.entityId))
                 showToast("已触发场景：\(scene.name)")
             } catch {
                 showToast("场景「\(scene.name)」执行失败", isError: true)
@@ -1069,7 +1205,7 @@ public final class HomeStore {
 
         Task {
             for cmd in commands {
-                try? await provider.execute(cmd)
+                try? await executeDeviceCommand(cmd)
             }
         }
     }
@@ -1125,6 +1261,14 @@ public final class HomeStore {
                 s.status = "returning"
                 devices[idx].kind = .vacuum(s)
 
+            case .tv(var s):
+                if LGWebOSProtocol.isLGEntity(s.mediaEntityId) {
+                    offCommands.append(.setSwitch(entityId: LGWebOSProtocol.powerEntityId, isOn: false))
+                    restoreCommands.append(.setSwitch(entityId: LGWebOSProtocol.powerEntityId, isOn: true))
+                    s.state = "standby"
+                    devices[idx].kind = .tv(s)
+                }
+
             default:
                 break
             }
@@ -1138,7 +1282,7 @@ public final class HomeStore {
 
         Task {
             for cmd in offCommands {
-                try? await provider.execute(cmd)
+                try? await executeDeviceCommand(cmd)
             }
         }
     }
@@ -1177,7 +1321,7 @@ public final class HomeStore {
 
         Task {
             for cmd in banner.restoreCommands {
-                try? await provider.execute(cmd)
+                try? await executeDeviceCommand(cmd)
             }
             showToast("已恢复关闭前的状态")
         }
@@ -1253,9 +1397,43 @@ public final class HomeStore {
         showToast("已保存并重新连接 Home Assistant")
     }
 
+    public func updateLGWebOSConfig(_ newConfig: LGWebOSConfig) {
+        self.lgConfig = newConfig
+        if !newConfig.isEnabled {
+            latestLGDevice = nil
+            devices.removeAll { $0.id == LGWebOSProtocol.deviceId }
+        }
+        if let lgClient = lgWebOSClient {
+            Task {
+                await lgClient.updateConfig(newConfig)
+            }
+        } else {
+            startLGWebOSIfNeeded()
+        }
+        showToast(newConfig.isEnabled ? "已保存并重连 \(newConfig.name)" : "已停用 LG 电视局域网直连")
+    }
+
+    public func triggerLGWebOSPairing() {
+        if lgWebOSClient == nil {
+            startLGWebOSIfNeeded()
+        }
+        guard let lgClient = lgWebOSClient else { return }
+        showToast("已向电视发送配对请求，请在电视屏幕点击「接受」")
+        Task {
+            await lgClient.triggerPairing()
+        }
+    }
+
+    public func discoverLGWebOSTVs() async -> [LGWebOSDiscoveredTV] {
+        await LGWebOSClient.discoverOnLAN(hostHint: lgConfig.host)
+    }
+
     public func refreshNow() {
         Task {
             await provider.refreshNow()
+            if lgConfig.isEnabled, let lgClient = lgWebOSClient {
+                await lgClient.start()
+            }
         }
     }
 
@@ -1274,6 +1452,14 @@ public final class HomeStore {
 
     // MARK: - Internal Dispatch Helpers
 
+    func executeDeviceCommand(_ command: DeviceCommand) async throws {
+        if LGWebOSProtocol.isLGEntity(command.targetEntityId), let lgClient = lgWebOSClient {
+            try await lgClient.execute(command)
+        } else {
+            try await provider.execute(command)
+        }
+    }
+
     func lockOptimistic(_ deviceId: String, duration: Duration) {
         optimisticLockUntil[deviceId] = ContinuousClock.now.advanced(by: duration)
     }
@@ -1285,7 +1471,7 @@ public final class HomeStore {
     ) {
         Task {
             do {
-                try await provider.execute(command)
+                try await executeDeviceCommand(command)
             } catch {
                 if let idx = self.devices.firstIndex(where: { $0.id == deviceId }) {
                     self.devices[idx] = fallback
@@ -1307,7 +1493,7 @@ public final class HomeStore {
             try? await Task.sleep(for: .milliseconds(280))
             guard !Task.isCancelled, let self else { return }
             do {
-                try await self.provider.execute(command)
+                try await self.executeDeviceCommand(command)
             } catch {
                 if let idx = self.devices.firstIndex(where: { $0.id == deviceId }) {
                     self.devices[idx] = fallback

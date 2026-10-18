@@ -10,8 +10,11 @@ import {
   MiAccountLogin,
   MiCloudClient,
   MiotCommandMapper,
+  MiotSpecResolver,
   MiotSynthesizer,
   maskedMiUserId,
+  parseMiotDeviceSpec,
+  parseMiotInstanceIndex,
   type MiotDeviceSpec,
 } from "../src/core/miCloudClient.js";
 import { MiCloudCrypto, RC4 } from "../src/core/miCloudCrypto.js";
@@ -185,6 +188,94 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
         { did: "did1", siid: 2, piid: 3, value: 1 },
       ],
     });
+  });
+
+  it("resolves Xiaomi devices with null specType via instances index and normalizes kebab-case value-range/value-list", async () => {
+    const rawMiotSpecJson = {
+      type: "urn:miot-spec-v2:device:air-conditioner:0000A004:xiaomi-mc5:2",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:air-conditioner:0000780F:xiaomi-mc5:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:xiaomi-mc5:1", format: "bool", access: ["read", "write"] },
+            {
+              iid: 2,
+              type: "urn:miot-spec-v2:property:mode:00000008:xiaomi-mc5:1",
+              format: "uint8",
+              access: ["read", "write"],
+              "value-list": [
+                { value: 2, description: "Cool" },
+                { value: 5, description: "Heat" },
+              ],
+            },
+            {
+              iid: 4,
+              type: "urn:miot-spec-v2:property:target-temperature:00000021:xiaomi-mc5:1",
+              format: "float",
+              access: ["read", "write"],
+              "value-range": [16, 31, 0.5],
+            },
+          ],
+        },
+      ],
+    };
+
+    const parsedSpec = parseMiotDeviceSpec(rawMiotSpecJson);
+    assert.ok(parsedSpec);
+    assert.deepEqual(parsedSpec.services[0]?.properties[2]?.valueRange, [16, 31, 0.5]);
+    assert.equal(parsedSpec.services[0]?.properties[1]?.valueList?.[0]?.description, "Cool");
+
+    const idx = parseMiotInstanceIndex({
+      instances: [
+        { model: "xiaomi.aircondition.mc5", version: 1, type: "urn:old" },
+        { model: "xiaomi.aircondition.mc5", version: 2, type: rawMiotSpecJson.type },
+      ],
+    });
+    assert.equal(idx["xiaomi.aircondition.mc5"], rawMiotSpecJson.type);
+
+    const resolver = new MiotSpecResolver(async (req) => {
+      if (req.url.includes("/instances?status=released")) {
+        return {
+          status: 200,
+          headers: {},
+          body: JSON.stringify({
+            instances: [{ model: "xiaomi.aircondition.mc5", version: 2, type: rawMiotSpecJson.type }],
+          }),
+        };
+      }
+      if (req.url.includes("/instance?type=")) {
+        return {
+          status: 200,
+          headers: {},
+          body: JSON.stringify(rawMiotSpecJson),
+        };
+      }
+      return { status: 404, headers: {}, body: "" };
+    });
+
+    const rawDevices = [
+      { did: "ac1", name: "主卧空调", model: "xiaomi.aircondition.mc5", isOnline: true, specType: null },
+      { did: "plug1", name: "书房插座", model: "unknown.brand.socket1", isOnline: true, specType: null },
+    ];
+    const resolvedSpecs = await resolver.resolveForDevices(rawDevices);
+    const home = MiotSynthesizer.synthesize(
+      rawDevices,
+      [{ id: "r_bed", name: "主卧", dids: ["ac1"] }],
+      resolvedSpecs,
+      new Map<string, unknown>([
+        ["ac1.2.1", true],
+        ["ac1.2.2", 2],
+        ["ac1.2.4", 24.5],
+        ["plug1.2.1", true],
+      ])
+    );
+
+    assert.equal(home.devices.length, 2);
+    assert.equal(home.devices[0]?.kind.kind, "climate");
+    assert.equal(home.devices[0]?.kind.targetTemperature, 24.5);
+    assert.equal(home.devices[1]?.kind.kind, "plug");
+    assert.equal(home.devices[1]?.kind.isOn, true);
   });
 });
 

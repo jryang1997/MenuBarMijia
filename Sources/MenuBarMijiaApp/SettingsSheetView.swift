@@ -285,6 +285,8 @@ public struct SettingsSheetView: View {
                     .padding(12)
                     .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
 
+                    LGWebOSSettingsSection(store: store)
+
                     AssistantSettingsSection(store: store)
 
                     UpdateSection(store: store)
@@ -355,3 +357,117 @@ public struct SettingsSheetView: View {
         }
     }
 }
+
+private struct LGWebOSSettingsSection: View {
+    let store: HomeStore
+    @State private var isEnabled: Bool = true
+    @State private var hostDraft: String = ""
+    @State private var macDraft: String = ""
+    @State private var nameDraft: String = ""
+    @State private var isScanning: Bool = false
+
+    var body: some View {
+        let isPaired = !store.lgConfig.clientKey.isEmpty
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Text("LG webOS 电视局域网直连")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(isPaired ? "● 已配对密钥" : (isEnabled ? "● 待电视确认" : "● 已停用"))
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(isPaired ? .green : (isEnabled ? .orange : .secondary))
+            }
+
+            HStack {
+                Text("启用 LG C2 局域网直连 (SSAP + WoL)")
+                    .font(.system(size: 12))
+                Spacer()
+                Toggle("", isOn: $isEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .onChange(of: isEnabled) { _, newValue in
+                        var next = store.lgConfig
+                        next.isEnabled = newValue
+                        store.updateLGWebOSConfig(next)
+                    }
+            }
+
+            if isEnabled {
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("局域网 IP")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        TextField("10.10.1.171", text: $hostDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("MAC 地址 (Wake-on-LAN)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        TextField("4c:ba:d7:c3:e9:9a", text: $macDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
+                            .font(.system(size: 11, design: .monospaced))
+                    }
+                }
+
+                HStack {
+                    Button(isScanning ? "扫描中…" : "扫描局域网电视") {
+                        isScanning = true
+                        Task {
+                            let found = await store.discoverLGWebOSTVs()
+                            isScanning = false
+                            if let first = found.first {
+                                hostDraft = first.host
+                                store.showToast("已发现：\(first.friendlyName) (\(first.host))")
+                            } else {
+                                store.showToast("未扫描到开机状态的 LG 电视", isError: true)
+                            }
+                        }
+                    }
+                    .buttonStyle(PillActionButtonStyle())
+                    .disabled(isScanning)
+
+                    Button("发起电视配对") {
+                        saveDrafts()
+                        store.triggerLGWebOSPairing()
+                    }
+                    .buttonStyle(PillActionButtonStyle())
+
+                    Spacer()
+
+                    Button("保存配置") {
+                        saveDrafts()
+                    }
+                    .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
+                }
+            }
+        }
+        .padding(12)
+        .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+        .onAppear {
+            isEnabled = store.lgConfig.isEnabled
+            hostDraft = store.lgConfig.host
+            macDraft = store.lgConfig.macAddress
+            nameDraft = store.lgConfig.name
+        }
+    }
+
+    private func saveDrafts() {
+        var next = store.lgConfig
+        next.isEnabled = isEnabled
+        next.host = hostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        next.macAddress = macDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            next.name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        store.updateLGWebOSConfig(next)
+    }
+}
+
