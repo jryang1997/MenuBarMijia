@@ -65,10 +65,7 @@ public actor HAWebSocketProvider: HomeProvider {
     private var loopTask: Task<Void, Never>?
     private var activeWebSocket: URLSessionWebSocketTask?
 
-    private var areas: [HAAreaEntry] = []
-    private var devices: [HADeviceEntry] = []
-    private var entities: [HAEntityEntry] = []
-    private var states: [String: HAEntityState] = [:]
+    private var snapshot = HAHomeSnapshot()
 
     public init(baseURLString: String, token: String) {
         self.baseURLString = Self.normalizeBaseURL(baseURLString)
@@ -176,6 +173,8 @@ public actor HAWebSocketProvider: HomeProvider {
             throw HomeProviderError.unauthorized
         }
 
+        snapshot = HAHomeSnapshot()
+
         continuation?.yield(.statusChanged(.connected))
 
         // 3. Request registries & initial states + subscribe state_changed
@@ -207,60 +206,10 @@ public actor HAWebSocketProvider: HomeProvider {
         // 5. Receive loop
         while !Task.isCancelled {
             let msg = try await receiveJSON(ws: ws)
-            handleIncomingMessage(msg)
-        }
-    }
-
-    private func handleIncomingMessage(_ msg: [String: JSONValue]) {
-        let type = msg["type"]?.stringValue ?? ""
-
-        if type == "result", let id = msg["id"]?.intValue {
-            switch id {
-            case 1:
-                if let arr = msg["result"] {
-                    self.areas = decodeValue([HAAreaEntry].self, from: arr) ?? []
-                }
-            case 2:
-                if let arr = msg["result"] {
-                    self.devices = decodeValue([HADeviceEntry].self, from: arr) ?? []
-                }
-            case 3:
-                if let arr = msg["result"] {
-                    self.entities = decodeValue([HAEntityEntry].self, from: arr) ?? []
-                }
-            case 4, 1000...9999:
-                if case .array(let items) = msg["result"] {
-                    var newStates: [String: HAEntityState] = [:]
-                    for item in items {
-                        if let st = Self.parseEntityState(from: item) {
-                            newStates[st.entityId] = st
-                        }
-                    }
-                    self.states = newStates
-                    emitSynthesizedSnapshot()
-                }
-            default:
-                break
+            if let home = try snapshot.receive(msg) {
+                continuation?.yield(.snapshotUpdated(home))
             }
-        } else if type == "event",
-                  case .object(let eventObj) = msg["event"],
-                  eventObj["event_type"]?.stringValue == "state_changed",
-                  case .object(let dataObj) = eventObj["data"],
-                  let newStateVal = dataObj["new_state"],
-                  let st = Self.parseEntityState(from: newStateVal) {
-            self.states[st.entityId] = st
-            emitSynthesizedSnapshot()
         }
-    }
-
-    private func emitSynthesizedSnapshot() {
-        let home = DeviceSynthesizer.synthesize(
-            areas: areas,
-            devices: devices,
-            entities: entities,
-            states: states
-        )
-        continuation?.yield(.snapshotUpdated(home))
     }
 
     // MARK: - Command Execution via REST Service Endpoint
@@ -420,26 +369,6 @@ public actor HAWebSocketProvider: HomeProvider {
         @unknown default: Data()
         }
         return (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
-    }
-
-    private func decodeValue<T: Decodable>(_ type: T.Type, from val: JSONValue) -> T? {
-        guard let data = try? JSONEncoder().encode(val) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
-    }
-
-    private static func parseEntityState(from val: JSONValue) -> HAEntityState? {
-        guard case .object(let obj) = val,
-              let eid = obj["entity_id"]?.stringValue,
-              let st = obj["state"]?.stringValue else {
-            return nil
-        }
-        let attrs: [String: JSONValue]
-        if case .object(let a) = obj["attributes"] {
-            attrs = a
-        } else {
-            attrs = [:]
-        }
-        return HAEntityState(entityId: eid, state: st, attributes: attrs)
     }
 
     private static func normalizeBaseURL(_ raw: String) -> String {

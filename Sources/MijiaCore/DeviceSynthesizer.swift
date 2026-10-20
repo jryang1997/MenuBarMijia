@@ -242,46 +242,51 @@ public enum DeviceSynthesizer {
                 states: states
             ) {
                 smartDevices.append(built)
-
-                if case .sensor(let sensorSpec) = built.kind,
-                   sensorSpec.temperature != nil || sensorSpec.humidity != nil {
-                    let shortLabel = cleanName
-                        .replacingOccurrences(of: "温湿度计", with: "")
-                        .trimmingCharacters(in: .whitespaces)
-                    envReadings.append(
-                        EnvironmentReading(
-                            id: dev.id,
-                            label: shortLabel.isEmpty ? roomName : shortLabel,
-                            roomName: roomName,
-                            temperature: sensorSpec.temperature,
-                            humidity: sensorSpec.humidity,
-                            battery: sensorSpec.battery
-                        )
-                    )
-                }
             }
         }
 
-        // Also synthesize any standalone climate.* entities (e.g., Midea AC if added without device entry yet)
-        let coveredClimateIds = Set(smartDevices.compactMap { dev -> String? in
-            if case .climate(let c) = dev.kind { return c.entityId }
-            return nil
-        })
+        let registeredDeviceIds = Set(devices.map(\.id))
+        let entityById = Dictionary(uniqueKeysWithValues: entities.map { ($0.entity_id, $0) })
+        for (eid, state) in states {
+            guard eid.hasPrefix("light.") || eid.hasPrefix("climate.")
+                    || eid.hasPrefix("fan.") || eid.hasPrefix("vacuum.")
+                    || eid.hasPrefix("switch.") || eid.hasPrefix("media_player.")
+                    || eid.hasPrefix("sensor.") else { continue }
+            let entity = entityById[eid]
+            guard entity?.disabled_by == nil, entity?.hidden_by == nil else { continue }
+            if let deviceId = entity?.device_id, registeredDeviceIds.contains(deviceId) { continue }
 
-        for (eid, st) in states where eid.hasPrefix("climate.") && !coveredClimateIds.contains(eid) {
-            let friendly = st.attributes["friendly_name"]?.stringValue ?? "空调"
-            let spec = parseClimateSpec(entityId: eid, state: st)
-            smartDevices.append(
-                SmartDevice(
-                    id: eid,
-                    name: cleanDeviceName(friendly, roomName: "客厅", model: "midea.ac"),
-                    roomId: "ke_ting",
-                    roomName: "客厅",
-                    model: "midea.ac",
-                    isOnline: st.isAvailable,
-                    kind: .climate(spec)
-                )
-            )
+            let areaId = entity?.area_id ?? "other"
+            let roomName = normalizeRoomName(areaNameById[areaId] ?? "全屋")
+            let name = entity?.name ?? state.attributes["friendly_name"]?.stringValue
+                ?? entity?.original_name ?? eid
+            if let built = buildSmartDevice(
+                deviceId: eid,
+                name: cleanDeviceName(name, roomName: roomName, model: ""),
+                roomId: normalizedRoomId(for: roomName, fallback: areaId),
+                roomName: roomName,
+                model: "",
+                entities: [entity ?? HAEntityEntry(entity_id: eid)],
+                states: states
+            ) {
+                smartDevices.append(built)
+            }
+        }
+
+        for device in smartDevices {
+            if case .sensor(let sensor) = device.kind,
+               sensor.temperature != nil || sensor.humidity != nil {
+                let label = device.name.replacingOccurrences(of: "温湿度计", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                envReadings.append(EnvironmentReading(
+                    id: device.id,
+                    label: label.isEmpty ? device.roomName : label,
+                    roomName: device.roomName,
+                    temperature: sensor.temperature,
+                    humidity: sensor.humidity,
+                    battery: sensor.battery
+                ))
+            }
         }
 
         // Synthesize HA scenes and scripts
@@ -543,10 +548,43 @@ public enum DeviceSynthesizer {
             )
         }
 
-        // 6. Smart Plug / Outlet (cuco.plug.*)
-        if model.contains("plug") || eids.contains(where: { $0.hasPrefix("switch.cuco") }) {
-            guard let swId = eids.first(where: { $0.hasPrefix("switch.") && $0.contains("_on_") })
-                    ?? eids.first(where: { $0.hasPrefix("switch.") }),
+        let tempId = eids.first { eid in
+            guard eid.hasPrefix("sensor.") else { return false }
+            if let deviceClass = states[eid]?.attributes["device_class"]?.stringValue {
+                return deviceClass == "temperature"
+            }
+            return eid.contains("temperature")
+        }
+        let humId = eids.first { eid in
+            guard eid.hasPrefix("sensor.") else { return false }
+            if let deviceClass = states[eid]?.attributes["device_class"]?.stringValue {
+                return deviceClass == "humidity"
+            }
+            return eid.contains("humidity")
+        }
+        let batId = eids.first { eid in
+            guard eid.hasPrefix("sensor.") else { return false }
+            if let deviceClass = states[eid]?.attributes["device_class"]?.stringValue {
+                return deviceClass == "battery"
+            }
+            return eid.contains("battery_level")
+        }
+        let primarySwitches = entities.filter { entity in
+            guard entity.entity_id.hasPrefix("switch."),
+                  entity.entity_category != "config", entity.entity_category != "diagnostic" else { return false }
+            if states[entity.entity_id]?.attributes["device_class"]?.stringValue == "outlet" { return true }
+            let objectId = entity.entity_id.dropFirst("switch.".count)
+            return objectId.firstMatch(of: #/(?:^|_)(?:physical_controls_locked|child_lock|indicator|mute|sleep_mode)(?:_|$)/#) == nil
+        }
+        let outletSwitch = primarySwitches.first {
+            states[$0.entity_id]?.attributes["device_class"]?.stringValue == "outlet"
+        }
+        if model.contains("plug") || eids.contains(where: { $0.hasPrefix("switch.cuco") })
+            || (!primarySwitches.isEmpty && (outletSwitch != nil || (tempId == nil && humId == nil))
+                && !eids.contains(where: { $0.hasPrefix("media_player.") })) {
+            guard let swId = outletSwitch?.entity_id
+                    ?? primarySwitches.first(where: { $0.entity_id.contains("_on_") })?.entity_id
+                    ?? primarySwitches.first?.entity_id,
                   let st = states[swId] else { return nil }
 
             let powerId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("electric_power") })
@@ -644,11 +682,6 @@ public enum DeviceSynthesizer {
                 )
             }
         }
-
-        // 8. Temperature / Humidity Sensor or Smart Lock
-        let tempId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("temperature") })
-        let humId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("relative_humidity") })
-        let batId = eids.first(where: { $0.hasPrefix("sensor.") && $0.contains("battery_level") })
 
         if tempId != nil || humId != nil {
             let tempSt = tempId.flatMap { states[$0] }

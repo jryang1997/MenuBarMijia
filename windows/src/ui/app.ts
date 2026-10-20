@@ -91,10 +91,14 @@ interface PersistedSettings {
   cachedModelTypes: Record<string, string>;
 }
 
+interface UndoStep {
+  readonly deviceId: string;
+  readonly commands: readonly DeviceCommand[];
+}
+
 interface UndoAction {
   readonly summary: string;
-  readonly snapshot: SmartDevice[];
-  readonly inverseCommands: DeviceCommand[];
+  readonly steps: readonly UndoStep[];
   readonly expiresAtMs: number;
 }
 
@@ -320,9 +324,9 @@ function loadSettings(): PersistedSettings {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<PersistedSettings>;
       const miSession = parsed.miSession ?? null;
-      const mode: ConnectionMode = miSession
-        ? "xiaomiCloud"
-        : (parsed.connectionMode ?? "demo");
+      const mode: ConnectionMode = parsed.connectionMode === "demo" || parsed.connectionMode === "xiaomiCloud"
+        ? parsed.connectionMode
+        : miSession ? "xiaomiCloud" : "demo";
       return {
         connectionMode: mode,
         miSession,
@@ -370,7 +374,7 @@ function saveSettings(settings: PersistedSettings): void {
   }
 }
 
-class MenuMijiaWindowsApp {
+export class MenuMijiaWindowsApp {
   private settings: PersistedSettings = loadSettings();
   private devices: SmartDevice[] =
     this.settings.connectionMode === "xiaomiCloud"
@@ -531,18 +535,20 @@ class MenuMijiaWindowsApp {
   }
 
   private async refreshXiaomiDevices(silent = false): Promise<void> {
-    if (!this.settings.miSession) return;
+    if (!this.settings.miSession || this.settings.connectionMode !== "xiaomiCloud" || this.isSyncingCloud) return;
+    const session = this.settings.miSession;
+    this.isSyncingCloud = true;
     if (!silent) {
-      this.isSyncingCloud = true;
       this.render();
     }
 
     try {
-      const client = new MiCloudClient(this.settings.miSession, this.transport);
+      const client = new MiCloudClient(session, this.transport);
       const [rawDevices, rooms] = await Promise.all([
         client.deviceList(),
         client.homeRooms().catch(() => []),
       ]);
+      if (this.settings.connectionMode !== "xiaomiCloud" || this.settings.miSession !== session) return;
 
       // Stage 1: Instant synthesis with cached/fallback specs so user sees their real devices immediately
       const stage1Specs = this.specResolver.exportCachedSpecs();
@@ -573,6 +579,7 @@ class MenuMijiaWindowsApp {
           : new Map<string, unknown>();
 
       const home = MiotSynthesizer.synthesize(rawDevices, rooms, specs, values);
+      if (this.settings.connectionMode !== "xiaomiCloud" || this.settings.miSession !== session) return;
       this.devices = home.devices;
       this.environmentReadings = [...home.environmentReadings];
 
@@ -699,9 +706,10 @@ class MenuMijiaWindowsApp {
       const sanitized = IntentValidator.sanitize(plan.intents, this.devices, this.scenes);
       const replyText =
         plan.reply || IntentReply.describe(sanitized, this.devices, this.scenes);
-      await this.executeIntents(sanitized, replyText, sourceLabel);
+      const succeeded = await this.executeIntents(sanitized, replyText, sourceLabel);
 
       if (
+        succeeded &&
         this.settings.habitLearningEnabled &&
         plan.source === "model" &&
         sanitized.length > 0
@@ -741,43 +749,57 @@ class MenuMijiaWindowsApp {
     saveSettings(this.settings);
   }
 
-  private buildInverseCommand(dev: SmartDevice): DeviceCommand[] {
+  private buildInverseCommand(dev: SmartDevice, command: DeviceCommand): DeviceCommand[] {
     const k = dev.kind;
-    switch (k.kind) {
-      case "light": {
-        const cmds: DeviceCommand[] = [
+    switch (command.kind) {
+      case "setLightPower":
+        return k.kind === "light" ? [{ kind: "setLightPower", entityId: k.entityId, isOn: k.isOn }] : [];
+      case "setLightBrightness":
+        return k.kind === "light" && k.brightnessPercent !== null ? [
+          { kind: "setLightBrightness", entityId: k.entityId, percent: k.brightnessPercent },
           { kind: "setLightPower", entityId: k.entityId, isOn: k.isOn },
-        ];
-        if (k.brightnessPercent !== null) {
-          cmds.push({
-            kind: "setLightBrightness",
-            entityId: k.entityId,
-            percent: k.brightnessPercent,
-          });
-        }
-        return cmds;
-      }
-      case "climate":
-        return [
-          {
-            kind: "setClimatePower",
-            entityId: k.entityId,
-            isOn: k.isOn,
-            resumeMode: k.hvacMode,
-          },
-          {
-            kind: "setClimateTemperature",
-            entityId: k.entityId,
-            temperature: k.targetTemperature,
-          },
-        ];
-      case "fan":
-        return [{ kind: "setFanPower", entityId: k.entityId, isOn: k.isOn }];
-      case "plug":
-        return [{ kind: "setSwitch", entityId: k.switchEntityId, isOn: k.isOn }];
-      case "vacuum":
-      case "sensor":
+        ] : [];
+      case "setLightColorTemp":
+        return k.kind === "light" && k.colorTempKelvin !== null ? [
+          { kind: "setLightColorTemp", entityId: k.entityId, kelvin: k.colorTempKelvin },
+          { kind: "setLightPower", entityId: k.entityId, isOn: k.isOn },
+        ] : [];
+      case "setLightEffect":
+        return k.kind === "light" && k.currentEffect !== null ? [
+          { kind: "setLightEffect", entityId: k.entityId, effect: k.currentEffect },
+          { kind: "setLightPower", entityId: k.entityId, isOn: k.isOn },
+        ] : [];
+      case "setClimatePower":
+      case "setClimateMode":
+        return k.kind === "climate" ? [{ kind: "setClimateMode", entityId: k.entityId, hvacMode: k.isOn ? k.hvacMode : "off" }] : [];
+      case "setClimateTemperature":
+        return k.kind === "climate" ? [
+          { kind: "setClimateTemperature", entityId: k.entityId, temperature: k.targetTemperature },
+          { kind: "setClimatePower", entityId: k.entityId, isOn: k.isOn, resumeMode: k.hvacMode },
+        ] : [];
+      case "setClimateFanMode":
+        return k.kind === "climate" && k.fanMode !== null ? [{ kind: "setClimateFanMode", entityId: k.entityId, fanMode: k.fanMode }] : [];
+      case "setFanPower":
+        return k.kind === "fan" ? [{ kind: "setFanPower", entityId: k.entityId, isOn: k.isOn }] : [];
+      case "setFanPresetMode":
+        return k.kind === "fan" && k.presetMode !== null ? [
+          { kind: "setFanPresetMode", entityId: k.entityId, presetMode: k.presetMode },
+          { kind: "setFanPower", entityId: k.entityId, isOn: k.isOn },
+        ] : [];
+      case "setFanOscillating":
+        return k.kind === "fan" && k.isOscillating !== null ? [
+          { kind: "setFanOscillating", entityId: k.entityId, oscillating: k.isOscillating },
+          { kind: "setFanPower", entityId: k.entityId, isOn: k.isOn },
+        ] : [];
+      case "setSwitch":
+        return k.kind === "plug" ? [{ kind: "setSwitch", entityId: command.entityId, isOn: command.entityId === k.childLockEntityId ? k.isChildLocked : k.isOn }] : [];
+      case "vacuumAction":
+      case "activateScene":
         return [];
+      default: {
+        const exhaustive: never = command;
+        return exhaustive;
+      }
     }
   }
 
@@ -785,36 +807,50 @@ class MenuMijiaWindowsApp {
     intents: readonly DeviceIntent[],
     replyText: string,
     sourceLabel: string,
-  ): Promise<void> {
-    const commands: DeviceCommand[] = [];
-    const inverseCommands: DeviceCommand[] = [];
-    const snapshot = structuredClone(this.devices);
-
+  ): Promise<boolean> {
+    const commands: Array<{ deviceId: string; command: DeviceCommand }> = [];
     for (const intent of intents) {
       const dev = this.devices.find((d) => d.id === intent.targetId);
       if (!dev) continue;
-      inverseCommands.push(...this.buildInverseCommand(dev));
-      commands.push(...IntentValidator.commandsForIntent(intent, dev));
+      for (const command of IntentValidator.commandsForIntent(intent, dev)) {
+        commands.push({ deviceId: dev.id, command });
+      }
     }
 
-    if (commands.length > 0) {
-      this.lastUndoAction = {
+    const steps: UndoStep[] = [];
+    let succeeded = 0;
+    let canUndo = true;
+    let failed = 0;
+    let failureMessage = "";
+    for (const { deviceId, command } of commands) {
+      const device = this.devices.find((d) => d.id === deviceId);
+      if (!device) {
+        failed += 1;
+        failureMessage = "设备列表已更新，请重新执行";
+        continue;
+      }
+      const inverseCommands = this.buildInverseCommand(device, command);
+      if (await this.applyCommand(command)) {
+        succeeded += 1;
+        canUndo = canUndo && inverseCommands.length > 0;
+        steps.unshift({ deviceId, commands: inverseCommands });
+      } else {
+        failed += 1;
+        failureMessage = this.replyBanner?.text ?? "设备未响应";
+      }
+    }
+    if (succeeded > 0) {
+      this.lastUndoAction = canUndo ? {
         summary: replyText,
-        snapshot,
-        inverseCommands,
+        steps,
         expiresAtMs: Date.now() + 10 * 60 * 1000,
-      };
+      } : null;
     }
-
-    for (const cmd of commands) {
-      await this.applyCommand(cmd);
-    }
-
-    this.replyBanner = {
-      text: replyText,
-      source: sourceLabel,
-    };
+    this.replyBanner = failed > 0
+      ? { text: `已执行 ${commands.length - failed} 项，${failed} 项失败。${failureMessage}`, source: "控制失败", isError: true }
+      : { text: replyText, source: sourceLabel };
     this.render();
+    return failed === 0;
   }
 
   private async executeSingleCommand(
@@ -822,17 +858,14 @@ class MenuMijiaWindowsApp {
     command: DeviceCommand,
     summary: string,
   ): Promise<void> {
-    this.lastUndoAction = {
+    const inverseCommands = this.buildInverseCommand(device, command);
+    if (!(await this.applyCommand(command))) return;
+    this.lastUndoAction = inverseCommands.length > 0 ? {
       summary,
-      snapshot: structuredClone(this.devices),
-      inverseCommands: this.buildInverseCommand(device),
+      steps: [{ deviceId: device.id, commands: inverseCommands }],
       expiresAtMs: Date.now() + 10 * 60 * 1000,
-    };
-    await this.applyCommand(command);
-    this.replyBanner = {
-      text: summary,
-      source: "实时控制",
-    };
+    } : null;
+    this.replyBanner = { text: summary, source: "实时控制" };
     this.render();
   }
 
@@ -847,19 +880,47 @@ class MenuMijiaWindowsApp {
       return;
     }
     const action = this.lastUndoAction;
-    this.lastUndoAction = null;
-    this.devices = action.snapshot;
-    for (const cmd of action.inverseCommands) {
-      await this.dispatchCloudCommand(cmd);
+    const failedSteps: UndoStep[] = [];
+    const blockedDevices = new Set<string>();
+    let failureMessage = "";
+    for (const step of action.steps) {
+      if (blockedDevices.has(step.deviceId)) {
+        failedSteps.push(step);
+        continue;
+      }
+      let failed = false;
+      for (const command of step.commands) {
+        if (!(await this.applyCommand(command))) {
+          failed = true;
+          failureMessage = this.replyBanner?.text ?? "设备未响应";
+        }
+      }
+      if (failed) {
+        failedSteps.push(step);
+        blockedDevices.add(step.deviceId);
+      }
     }
-    this.replyBanner = {
-      text: `已撤销：${action.summary}`,
-      source: "已恢复",
-    };
+    this.lastUndoAction = failedSteps.length > 0
+      ? { ...action, steps: failedSteps }
+      : null;
+    this.replyBanner = failedSteps.length > 0
+      ? { text: `撤销未完成，${failedSteps.length} 项待恢复。${failureMessage}`, source: "控制失败", isError: true }
+      : { text: `已撤销：${action.summary}`, source: "已恢复" };
     this.render();
   }
 
-  private async applyCommand(command: DeviceCommand): Promise<void> {
+  private async applyCommand(command: DeviceCommand): Promise<boolean> {
+    try {
+      await this.dispatchCloudCommand(command);
+    } catch (error) {
+      this.replyBanner = {
+        text: error instanceof Error ? error.message : String(error),
+        source: "控制失败",
+        isError: true,
+      };
+      this.render();
+      return false;
+    }
     for (const dev of this.devices) {
       const k = dev.kind;
       switch (command.kind) {
@@ -946,38 +1007,34 @@ class MenuMijiaWindowsApp {
       }
     }
 
-    await this.dispatchCloudCommand(command);
+    return true;
   }
 
   private async dispatchCloudCommand(command: DeviceCommand): Promise<void> {
-    if (this.settings.connectionMode !== "xiaomiCloud" || !this.settings.miSession) {
-      return;
-    }
+    if (this.settings.connectionMode === "demo") return;
+    if (this.settings.connectionMode !== "xiaomiCloud") throw new Error("Windows 端暂不支持 Home Assistant 连接");
+    if (!this.settings.miSession) throw new Error("请先扫码登录米家");
     const dev = this.devices.find((d) => {
       const k = d.kind;
-      if (k.kind === "plug") return k.switchEntityId === command.entityId;
+      if (k.kind === "plug") return k.switchEntityId === command.entityId || k.childLockEntityId === command.entityId;
       if (k.kind === "sensor") return false;
       return k.entityId === command.entityId;
     });
-    if (!dev) return;
+    if (!dev) throw new Error("无法找到指令对应的设备");
 
-    try {
-      const spec = await this.specResolver.resolve({
-        did: dev.id,
-        name: dev.name,
-        model: dev.model,
-        isOnline: dev.isOnline,
-        specType: null,
-      });
-      const mapped = MiotCommandMapper.map(command, spec);
-      const client = new MiCloudClient(this.settings.miSession, this.transport);
-      if (mapped.kind === "setProps") {
-        await client.setProps(mapped.writes);
-      } else {
-        await client.action(mapped.call);
-      }
-    } catch {
-      // keep optimistic UI state
+    const spec = await this.specResolver.resolve({
+      did: dev.id,
+      name: dev.name,
+      model: dev.model,
+      isOnline: dev.isOnline,
+      specType: null,
+    });
+    const mapped = MiotCommandMapper.map(command, spec);
+    const client = new MiCloudClient(this.settings.miSession, this.transport);
+    if (mapped.kind === "setProps") {
+      await client.setProps(mapped.writes);
+    } else {
+      await client.action(mapped.call);
     }
   }
 

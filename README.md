@@ -210,9 +210,11 @@ bash scripts/build_app.sh       # 编译 Release，签名打包并启动「MenuM
 3. 点击 **「扫码登录米家账号」**，用手机「米家」App 扫描二维码确认
 4. 登录成功后，家庭房间与全屋设备会自动同步进面板，立即可控！
 
-#### 方式 B：连接局域网 Home Assistant（可选）
+#### 方式 B：macOS 连接局域网 Home Assistant（可选）
 1. 在「连接配置」中选择 **「Home Assistant」**，填入 HA 地址（如 `http://192.168.1.100:8123`）和长期访问令牌
 2. 如果你有群晖 NAS 但还没装 HA，可使用仓库自带的一键部署脚本：`bash nas/deploy_ha.sh`（自动拉取镜像并预装 `xiaomi_home` 与 `midea_ac_lan`）
+
+首次连接需要填写你自己的 HA 地址和长期访问令牌。令牌在 HA 的用户个人资料页面创建。连接后，客户端自动读取设备、实体、区域与状态，将已支持的设备类型合成到面板，无需逐台添加。默认地址为 `http://homeassistant.local:8123`；如果无法解析该主机名，填写 HA 的局域网 IP 地址。
 
 ---
 
@@ -229,10 +231,12 @@ bash scripts/linux-check/run.sh # 没有 Mac 时：在 Linux 上编译并测试 
 
 仓库内置基于 **Tauri v2 (Rust + TypeScript + WebView2)** 的 Windows 11 系统托盘客户端，完整复刻小米云 RC4 加密协议、二维码扫码直连、Miot-Spec 自动合成、0ms 本地解析、OpenRouter Jev `/v1/systemone` 决策引擎、定时倒计时与 10 分钟内撤销，并支持 `Alt+M` 全局热键呼出。
 
+Windows 版目前支持米家云扫码直连和演示模式，Home Assistant 连接仅在 macOS 版实现。Windows 的设备控制在云端确认成功后更新卡片，失败时显示错误；批量操作会报告部分失败，撤销只恢复成功指令修改过的属性，并保留原始开关状态。撤销失败可以重试；缺少原始属性值或操作无法逆转时，不提供撤销按钮。
+
 ```bash
 cd windows
 npm install
-npm test        # 运行 RC4 加密向量、扫码、Miot 合成、0ms 本地解析与 Jev 决策单测
+npm test        # 运行协议、意图解析和页面控制/撤销回归测试
 npm run build   # TypeScript 严格类型检查 + 前端打包
 npx tauri build # 在 Windows 上打包 .exe (NSIS) 与 .msi 安装包
 ```
