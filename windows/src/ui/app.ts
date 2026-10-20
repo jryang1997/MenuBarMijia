@@ -1536,6 +1536,17 @@ export class MenuMijiaWindowsApp {
       const ct = k.colorTempKelvin ?? 4000;
       return `
         <div class="cc-tile-drawer">
+          ${k.availableEffects.length > 0 ? `
+            <div class="cc-segmented-pills">
+              ${k.availableEffects.map((effect) => `
+                <button class="cc-seg-pill ${k.currentEffect === effect ? "is-active" : ""}"
+                  data-lighteffect="${this.escapeHtml(dev.id)}" data-effect="${this.escapeHtml(effect)}"
+                  aria-pressed="${k.currentEffect === effect}">
+                  ${this.escapeHtml(effect === "Day" ? "日光" : effect === "Night" ? "月光" : effect)}
+                </button>
+              `).join("")}
+            </div>
+          ` : ""}
           <div class="cc-slider-group">
             <div class="cc-slider-label">
               <span>亮度</span>
@@ -1913,6 +1924,19 @@ export class MenuMijiaWindowsApp {
         const id = btn.dataset.expandDevice ?? null;
         this.expandedDeviceId = this.expandedDeviceId === id ? null : id;
         this.render();
+      });
+    });
+
+    this.root.querySelectorAll<HTMLElement>("[data-lighteffect]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const dev = this.devices.find((d) => d.id === btn.dataset.lighteffect);
+        const effect = btn.dataset.effect;
+        if (!dev || dev.kind.kind !== "light" || !effect) return;
+        void this.executeSingleCommand(
+          dev,
+          { kind: "setLightEffect", entityId: dev.kind.entityId, effect },
+          `已切换${dev.name}灯光模式`,
+        );
       });
     });
 

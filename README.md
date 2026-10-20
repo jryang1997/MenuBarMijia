@@ -233,6 +233,10 @@ bash scripts/linux-check/run.sh # 没有 Mac 时：在 Linux 上编译并测试 
 
 Windows 版目前支持米家云扫码直连和演示模式，Home Assistant 连接仅在 macOS 版实现。Windows 的设备控制在云端确认成功后更新卡片，失败时显示错误；批量操作会报告部分失败，撤销只恢复成功指令修改过的属性，并保留原始开关状态。撤销失败可以重试；缺少原始属性值或操作无法逆转时，不提供撤销按钮。
 
+展开灯具详情可切换设备支持的日光、月光等模式；不支持模式切换的灯具不显示模式按钮。
+
+原生打包需安装 Visual Studio 的「使用 C++ 的桌面开发」组件和 Windows SDK，并使用 MSVC Rust 工具链。在 x64 Native Tools 命令行中构建；若已有 `CC` 或 `CXX` 环境变量指向其他编译器，在该命令行内设为 `cl.exe`。
+
 ```bash
 cd windows
 npm install
