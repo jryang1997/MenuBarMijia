@@ -87,6 +87,22 @@ describe("Windows device control and undo", () => {
     assert.match(tile("light.living_ceiling"), /日光/);
   });
 
+  it("switches moonlight from the light drawer and restores its original mode on undo", async () => {
+    startDemo();
+    await click('[data-expand-device="light.living_ceiling"]');
+    const daylight = '[data-lighteffect="light.living_ceiling"][data-effect="Day"]';
+    const moonlight = '[data-lighteffect="light.living_ceiling"][data-effect="Night"]';
+    assert.equal(element(daylight).getAttribute("aria-pressed"), "true");
+    await click(moonlight);
+    assert.match(tile("light.living_ceiling"), /月光/);
+    assert.match(tile("light.living_ceiling"), /78%/);
+    assert.match(tile("light.living_ceiling"), /4100K/);
+    assert.equal(element(moonlight).getAttribute("aria-pressed"), "true");
+    await click("#btn-undo");
+    assert.match(tile("light.living_ceiling"), /日光/);
+    assert.equal(element(daylight).getAttribute("aria-pressed"), "true");
+  });
+
   it("restores a fan preset and its initially off power state", async () => {
     startDemo();
     await click('[data-expand-device="fan.bedroom_standing"]');
