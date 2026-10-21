@@ -245,7 +245,7 @@ npm run build   # TypeScript 严格类型检查 + 前端打包
 npx tauri build # 在 Windows 上打包 .exe (NSIS) 与 .msi 安装包
 ```
 
-每次推送到 `main` 分支时，GitHub Actions（`windows-latest`）会自动编译并把 `MenuMijia-1.0.0-windows-x64-setup.exe` 与 `.msi` 附加到 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases)。
+每次推送到 `main` 分支时，GitHub Actions 会在核心测试通过后编译 Windows 安装包，并保存为 `MenuMijia-Windows-x64` 构建产物。发布时将产物和 SHA-256 校验文件上传到对应版本的 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases)，普通推送不会覆盖已发布的安装包。Windows 修复版下载见 [v1.0.1](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.0.1)。
 
 ### 发布 macOS 安装版
 

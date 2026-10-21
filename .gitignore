@@ -29,4 +29,5 @@ nas/components/*.zip
 dist/
 node_modules/
 windows/src-tauri/target/
+windows/src-tauri/gen/
 

@@ -44,9 +44,9 @@ jobs:
         run: npm ci && npm test && npm run build
 
   windows-installer:
-    # 在 Windows Server 上编译 Tauri v2 系统托盘安装包 (.exe / .msi) 并同步到 Release
+    # 编译 Windows 安装包并保留为 CI 产物，发布时再上传到对应版本。
     runs-on: windows-latest
-    needs: windows-core
+    needs: [windows-core, linux-core]
     defaults:
       run:
         working-directory: windows
@@ -62,32 +62,23 @@ jobs:
         with:
           workspaces: "windows/src-tauri -> target"
       - name: Install frontend & Tauri CLI dependencies
-        run: npm install
+        run: npm ci
       - name: Build Windows Tauri installer (.exe & .msi)
-        run: npx tauri build
+        run: npx tauri build -- --locked
       - name: Collect Windows installers
         shell: bash
         run: |
+          version="$(tr -d '[:space:]' < ../VERSION)"
           mkdir -p ../dist-windows
-          cp src-tauri/target/release/bundle/nsis/*.exe ../dist-windows/MenuMijia-1.0.0-windows-x64-setup.exe
-          cp src-tauri/target/release/bundle/msi/*.msi ../dist-windows/MenuMijia-1.0.0-windows-x64.msi
+          cp src-tauri/target/release/bundle/nsis/*.exe "../dist-windows/MenuMijia-${version}-windows-x64-setup.exe"
+          cp src-tauri/target/release/bundle/msi/*.msi "../dist-windows/MenuMijia-${version}-windows-x64.msi"
           cd ../dist-windows
-          sha256sum MenuMijia-1.0.0-windows-x64-setup.exe > MenuMijia-1.0.0-windows-x64-setup.exe.sha256
-          sha256sum MenuMijia-1.0.0-windows-x64.msi > MenuMijia-1.0.0-windows-x64.msi.sha256
-          ls -lh
+          sha256sum "MenuMijia-${version}-windows-x64-setup.exe" > "MenuMijia-${version}-windows-x64-setup.exe.sha256"
+          sha256sum "MenuMijia-${version}-windows-x64.msi" > "MenuMijia-${version}-windows-x64.msi.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: MenuMijia-Windows-x64
           path: dist-windows/*
-      - name: Attach Windows installers to v1.0.0 Release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          if gh release view v1.0.0 >/dev/null 2>&1; then
-            gh release upload v1.0.0 ../dist-windows/* --clobber
-          fi
 
   macos:
     # Package.swift 要求 macOS 26 SDK（GitHub 托管 Runner 暂未提供 macos-26 镜像，仅手动或自托管触发）

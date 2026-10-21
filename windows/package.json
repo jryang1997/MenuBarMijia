@@ -1,6 +1,6 @@
 {
   "name": "menumijia-windows",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "MenuMijia for Windows 11 — System Tray Smart Home Control Center with Xiaomi Cloud QR Login & Jev Decision Model",
