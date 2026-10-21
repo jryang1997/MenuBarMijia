@@ -242,9 +242,26 @@ public struct SettingsSheetView: View {
 
                         if store.homeBackend == .homeAssistant {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("服务器地址")
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(.secondary)
+                                HStack {
+                                    Text("服务器地址")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    if let firstHA = store.discoveredHAInstances.first {
+                                        if HAWebSocketProvider.normalizeBaseURL(urlDraft) == firstHA.baseURL {
+                                            Label("局域网已识别 · \(firstHA.locationName)", systemImage: "checkmark.seal.fill")
+                                                .font(.system(size: 10, weight: .medium))
+                                                .foregroundStyle(.green)
+                                        } else {
+                                            Button("填入已发现：\(firstHA.hostAndPort)") {
+                                                urlDraft = firstHA.baseURL
+                                            }
+                                            .buttonStyle(.plain)
+                                            .font(.system(size: 10, weight: .medium))
+                                            .foregroundStyle(Color.accentColor)
+                                        }
+                                    }
+                                }
                                 TextField("http://homeassistant.local:8123", text: $urlDraft)
                                     .textFieldStyle(.roundedBorder)
                                     .controlSize(.small)
@@ -252,9 +269,20 @@ public struct SettingsSheetView: View {
                             }
 
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("长期访问令牌 (安全存入钥匙串)")
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(.secondary)
+                                HStack {
+                                    Text("长期访问令牌 (安全存入钥匙串)")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    if let secURL = URL(string: "\(HAWebSocketProvider.normalizeBaseURL(urlDraft))/profile/security") {
+                                        Button("打开网页取令牌") {
+                                            NSWorkspace.shared.open(secURL)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundStyle(Color.accentColor)
+                                    }
+                                }
                                 SecureField("粘贴 HA 长期访问令牌", text: $tokenDraft)
                                     .textFieldStyle(.roundedBorder)
                                     .controlSize(.small)
@@ -262,7 +290,22 @@ public struct SettingsSheetView: View {
                             }
 
                             HStack {
-                                Button("恢复默认地址") {
+                                Button(store.isDiscoveringHA ? "扫描中…" : "扫描局域网 HA") {
+                                    Task {
+                                        let found = await store.discoverHomeAssistantOnLAN(autoApplyIfDefault: false)
+                                        if let first = found.first {
+                                            urlDraft = first.baseURL
+                                            store.applyDiscoveredHAInstance(first, reconnectProvider: false)
+                                            store.showToast("已发现：\(first.displaySummary)")
+                                        } else {
+                                            store.showToast("未在局域网扫描到 Home Assistant", isError: true)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(PillActionButtonStyle())
+                                .disabled(store.isDiscoveringHA)
+
+                                Button("默认地址") {
                                     urlDraft = KeychainHelper.defaultNASURL
                                 }
                                 .buttonStyle(PillActionButtonStyle())
@@ -326,6 +369,15 @@ public struct SettingsSheetView: View {
         .onAppear {
             urlDraft = store.serverURLString
             tokenDraft = KeychainHelper.loadToken()
+            if store.discoveredHAInstances.isEmpty {
+                Task {
+                    let found = await store.discoverHomeAssistantOnLAN(autoApplyIfDefault: true)
+                    if let first = found.first,
+                       HAWebSocketProvider.normalizeBaseURL(urlDraft) == KeychainHelper.defaultNASURL {
+                        urlDraft = first.baseURL
+                    }
+                }
+            }
         }
     }
 

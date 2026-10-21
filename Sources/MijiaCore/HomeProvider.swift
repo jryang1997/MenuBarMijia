@@ -66,10 +66,16 @@ public actor HAWebSocketProvider: HomeProvider {
     private var activeWebSocket: URLSessionWebSocketTask?
 
     private var snapshot = HAHomeSnapshot()
+    private let onDiscoveredInstance: (@Sendable (HADiscoveredInstance) -> Void)?
 
-    public init(baseURLString: String, token: String) {
+    public init(
+        baseURLString: String,
+        token: String,
+        onDiscoveredInstance: (@Sendable (HADiscoveredInstance) -> Void)? = nil
+    ) {
         self.baseURLString = Self.normalizeBaseURL(baseURLString)
         self.token = token
+        self.onDiscoveredInstance = onDiscoveredInstance
 
         // Bypass system proxies for direct LAN communication with NAS
         let config = URLSessionConfiguration.ephemeral
@@ -138,9 +144,22 @@ public actor HAWebSocketProvider: HomeProvider {
                 backoffSeconds = 0.8
             } catch {
                 if Task.isCancelled { break }
-                let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                logger.error("WebSocket disconnected: \(msg, privacy: .public)")
-                continuation?.yield(.statusChanged(.disconnected(msg)))
+                if case HomeProviderError.unauthorized = error {
+                    let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    logger.error("WebSocket unauthorized: \(msg, privacy: .public)")
+                    continuation?.yield(.statusChanged(.disconnected(msg)))
+                } else {
+                    if let discovered = await HADiscovery.discoverOnLAN(currentURLHint: baseURLString).first,
+                       discovered.baseURL != baseURLString {
+                        logger.info("Auto-switched HA URL to discovered LAN instance: \(discovered.baseURL, privacy: .public)")
+                        self.baseURLString = discovered.baseURL
+                        onDiscoveredInstance?(discovered)
+                        continue
+                    }
+                    let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    logger.error("WebSocket disconnected: \(msg, privacy: .public)")
+                    continuation?.yield(.statusChanged(.disconnected(msg)))
+                }
                 try? await Task.sleep(for: .seconds(backoffSeconds))
                 backoffSeconds = min(backoffSeconds * 1.8, 10.0)
             }
@@ -371,7 +390,31 @@ public actor HAWebSocketProvider: HomeProvider {
         return (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
     }
 
+<<<<<<< HEAD
     private static func normalizeBaseURL(_ raw: String) -> String {
+=======
+    private func decodeValue<T: Decodable>(_ type: T.Type, from val: JSONValue) -> T? {
+        guard let data = try? JSONEncoder().encode(val) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func parseEntityState(from val: JSONValue) -> HAEntityState? {
+        guard case .object(let obj) = val,
+              let eid = obj["entity_id"]?.stringValue,
+              let st = obj["state"]?.stringValue else {
+            return nil
+        }
+        let attrs: [String: JSONValue]
+        if case .object(let a) = obj["attributes"] {
+            attrs = a
+        } else {
+            attrs = [:]
+        }
+        return HAEntityState(entityId: eid, state: st, attributes: attrs)
+    }
+
+    public static func normalizeBaseURL(_ raw: String) -> String {
+>>>>>>> 2f076de (feat(ha): add automatic LAN Home Assistant discovery (mDNS + ARP/HTTP manifest probe))
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
         if !s.hasPrefix("http://") && !s.hasPrefix("https://") {

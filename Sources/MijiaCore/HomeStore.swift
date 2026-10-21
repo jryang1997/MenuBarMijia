@@ -172,8 +172,12 @@ public final class HomeStore {
         didSet { lgConfig.save(to: userDefaults) }
     }
 
+    public private(set) var discoveredHAInstances: [HADiscoveredInstance] = []
+    public private(set) var isDiscoveringHA: Bool = false
+
     var provider: any HomeProvider
     var lgWebOSClient: LGWebOSClient?
+    private let isTestEnvironment: Bool
     private var latestLGDevice: SmartDevice?
     private var eventTask: Task<Void, Never>?
     private var debounceTasks: [String: Task<Void, Never>] = [:]
@@ -189,6 +193,7 @@ public final class HomeStore {
     public init(provider: (any HomeProvider)? = nil, defaultsSuiteName: String? = nil) {
         let ud = defaultsSuiteName.flatMap { UserDefaults(suiteName: $0) } ?? .standard
         self.userDefaults = ud
+        self.isTestEnvironment = (provider != nil || defaultsSuiteName != nil)
         let boolOrDefaultTrue = { (key: String) -> Bool in
             ud.object(forKey: key) == nil ? true : ud.bool(forKey: key)
         }
@@ -237,9 +242,15 @@ public final class HomeStore {
             let token = KeychainHelper.loadToken()
             self.provider = HAWebSocketProvider(baseURLString: savedURL, token: token)
         }
+        if provider == nil, initialBackend == .homeAssistant {
+            self.provider = makeHAProvider(baseURLString: savedURL, token: KeychainHelper.loadToken())
+        }
         startListening()
         if provider == nil {
             startLGWebOSIfNeeded()
+            Task { [weak self] in
+                _ = await self?.discoverHomeAssistantOnLAN(autoApplyIfDefault: true)
+            }
         }
     }
 
@@ -1329,6 +1340,24 @@ public final class HomeStore {
 
     // MARK: - Connection & Settings Management
 
+    private func makeHAProvider(baseURLString: String, token: String) -> HAWebSocketProvider {
+        let callback: (@Sendable (HADiscoveredInstance) -> Void)?
+        if isTestEnvironment {
+            callback = nil
+        } else {
+            callback = { @Sendable [weak self] instance in
+                Task { @MainActor [weak self] in
+                    self?.applyDiscoveredHAInstance(instance, reconnectProvider: false)
+                }
+            }
+        }
+        return HAWebSocketProvider(
+            baseURLString: baseURLString,
+            token: token,
+            onDiscoveredInstance: callback
+        )
+    }
+
     public func switchBackend(_ backend: HomeBackend) {
         let matches: Bool = switch backend {
         case .homeAssistant: provider is HAWebSocketProvider
@@ -1342,7 +1371,7 @@ public final class HomeStore {
 
         switch backend {
         case .homeAssistant:
-            self.provider = HAWebSocketProvider(baseURLString: serverURLString, token: KeychainHelper.loadToken())
+            self.provider = makeHAProvider(baseURLString: serverURLString, token: KeychainHelper.loadToken())
         case .xiaomiCloud:
             self.provider = MiCloudProvider()
         }
@@ -1382,7 +1411,8 @@ public final class HomeStore {
     }
 
     public func updateConnection(serverURL: String, token: String) {
-        self.serverURLString = serverURL
+        let normalized = HAWebSocketProvider.normalizeBaseURL(serverURL)
+        self.serverURLString = normalized
         KeychainHelper.saveToken(token)
         if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.completeOnboarding()
@@ -1391,10 +1421,47 @@ public final class HomeStore {
             switchBackend(.homeAssistant)
         } else if let haProvider = provider as? HAWebSocketProvider {
             Task {
-                await haProvider.updateCredentials(baseURLString: serverURL, token: token)
+                await haProvider.updateCredentials(baseURLString: normalized, token: token)
             }
         }
         showToast("已保存并重新连接 Home Assistant")
+    }
+
+    public func applyDiscoveredHAInstance(_ instance: HADiscoveredInstance, reconnectProvider: Bool = true) {
+        if !discoveredHAInstances.contains(where: { $0.baseURL == instance.baseURL }) {
+            discoveredHAInstances.insert(instance, at: 0)
+        }
+        let normalizedCurrent = HAWebSocketProvider.normalizeBaseURL(serverURLString)
+        if userDefaults.string(forKey: "home_name") == nil,
+           !instance.locationName.isEmpty,
+           instance.locationName != "Home Assistant" {
+            self.homeName = instance.locationName
+        }
+        guard normalizedCurrent != instance.baseURL else { return }
+        self.serverURLString = instance.baseURL
+        if reconnectProvider, let haProvider = provider as? HAWebSocketProvider {
+            let token = KeychainHelper.loadToken()
+            Task {
+                await haProvider.updateCredentials(baseURLString: instance.baseURL, token: token)
+            }
+        }
+    }
+
+    @discardableResult
+    public func discoverHomeAssistantOnLAN(autoApplyIfDefault: Bool = false) async -> [HADiscoveredInstance] {
+        isDiscoveringHA = true
+        defer { isDiscoveringHA = false }
+        let found = await HADiscovery.discoverOnLAN(currentURLHint: serverURLString)
+        self.discoveredHAInstances = found
+        if autoApplyIfDefault, let first = found.first {
+            let normalizedCurrent = HAWebSocketProvider.normalizeBaseURL(serverURLString)
+            let isDefaultURL = (normalizedCurrent == KeychainHelper.defaultNASURL)
+                || (userDefaults.string(forKey: "ha_server_url") == nil)
+            if isDefaultURL && first.baseURL != normalizedCurrent {
+                applyDiscoveredHAInstance(first, reconnectProvider: true)
+            }
+        }
+        return found
     }
 
     public func updateLGWebOSConfig(_ newConfig: LGWebOSConfig) {

@@ -54,6 +54,15 @@ public struct OnboardingGuideView: View {
                store.homeBackend != .xiaomiCloud {
                 store.switchBackend(.xiaomiCloud)
             }
+            Task {
+                let found = await store.discoverHomeAssistantOnLAN(autoApplyIfDefault: true)
+                if let first = found.first {
+                    let normDraft = HAWebSocketProvider.normalizeBaseURL(haURLDraft)
+                    if haURLDraft.isEmpty || normDraft == KeychainHelper.defaultNASURL {
+                        haURLDraft = first.baseURL
+                    }
+                }
+            }
         }
     }
 
@@ -111,6 +120,19 @@ public struct OnboardingGuideView: View {
                     Label("已连接", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 10.5, weight: .semibold))
                         .foregroundStyle(.green)
+                } else if let firstHA = store.discoveredHAInstances.first {
+                    Button {
+                        withAnimation(AppleMotion.snappySpring) {
+                            haURLDraft = firstHA.baseURL
+                            store.applyDiscoveredHAInstance(firstHA, reconnectProvider: false)
+                            store.switchBackend(.homeAssistant)
+                        }
+                    } label: {
+                        Label("已发现局域网 HA · \(firstHA.hostAndPort)", systemImage: "dot.radiowaves.left.and.right")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.green)
+                    }
+                    .buttonStyle(.plain)
                 } else {
                     Text("推荐手机扫码")
                         .font(.system(size: 10, weight: .medium))
@@ -141,10 +163,48 @@ public struct OnboardingGuideView: View {
                 MiAccountSection(store: store)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    TextField("http://homeassistant.local:8123", text: $haURLDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.small)
-                        .font(.system(size: 11, design: .monospaced))
+                    HStack(spacing: 6) {
+                        TextField("http://homeassistant.local:8123", text: $haURLDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.small)
+                            .font(.system(size: 11, design: .monospaced))
+
+                        Button(store.isDiscoveringHA ? "扫描中…" : "自动扫描") {
+                            Task {
+                                let found = await store.discoverHomeAssistantOnLAN(autoApplyIfDefault: false)
+                                if let first = found.first {
+                                    haURLDraft = first.baseURL
+                                    store.applyDiscoveredHAInstance(first, reconnectProvider: false)
+                                    store.showToast("已发现：\(first.displaySummary)")
+                                } else {
+                                    store.showToast("未在局域网扫描到 Home Assistant", isError: true)
+                                }
+                            }
+                        }
+                        .buttonStyle(PillActionButtonStyle())
+                        .disabled(store.isDiscoveringHA)
+                    }
+
+                    if let firstHA = store.discoveredHAInstances.first {
+                        HStack(spacing: 5) {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.green)
+                            Text("已自动识别局域网 HA：\(firstHA.displaySummary)")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Spacer()
+                            if let secURL = URL(string: "\(HAWebSocketProvider.normalizeBaseURL(haURLDraft))/profile/security") {
+                                Button("打开网页取令牌") {
+                                    NSWorkspace.shared.open(secURL)
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
 
                     HStack(spacing: 6) {
                         SecureField("粘贴 HA 长期访问令牌", text: $haTokenDraft)
