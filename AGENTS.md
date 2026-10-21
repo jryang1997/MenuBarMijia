@@ -18,4 +18,4 @@ Read `CODING_STANDARDS.md` when reviewing diffs (`/code-review`) or modifying sy
 
 ### Build & verification
 
-Run `bash scripts/check.sh` for secret scan, mechanical lints, and `swift test`. Run `bash scripts/build_app.sh` to package, sign, and restart `MenuMijia.app`.
+Run `bash scripts/check.sh` for secret scan, mechanical lints, and `swift test`. Run `bash scripts/build_app.sh` to package, sign, and restart `MenuBarMijia.app`.

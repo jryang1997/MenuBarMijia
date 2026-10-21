@@ -13,8 +13,8 @@ echo "▶ 正在编译 MenuBarMijiaApp $VERSION (Release)..."
 swift build -c release --product MenuBarMijiaApp
 
 BIN_PATH="$(swift build -c release --show-bin-path)/MenuBarMijiaApp"
-APP_DIR="$ROOT/MenuMijia.app"
-rm -rf "$ROOT/米家控制中心.app"  # 旧名字的产物
+APP_DIR="$ROOT/MenuBarMijia.app"
+rm -rf "$ROOT/米家控制中心.app" "$ROOT/MenuMijia.app"  # 清理旧名字产物
 
 WAS_RUNNING=0
 if pgrep -x MenuBarMijiaApp >/dev/null 2>&1; then
@@ -38,7 +38,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleDevelopmentRegion</key>
     <string>zh_CN</string>
     <key>CFBundleDisplayName</key>
-    <string>MenuMijia</string>
+    <string>MenuBarMijia</string>
     <key>CFBundleExecutable</key>
     <string>MenuBarMijiaApp</string>
     <key>CFBundleIdentifier</key>
@@ -46,7 +46,7 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>MenuMijia</string>
+    <string>MenuBarMijia</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -85,12 +85,12 @@ if [ "$SIGN_IDENTITY" = "-" ]; then
 else
     # 正式签名：开启 Hardened Runtime（苹果公证的前提），并声明麦克风权限
     codesign --force --options runtime --timestamp \
-        --entitlements "$ROOT/scripts/MenuMijia.entitlements" \
+        --entitlements "$ROOT/scripts/MenuBarMijia.entitlements" \
         --sign "$SIGN_IDENTITY" "$APP_DIR"
 fi
 echo "✅ 已打包完成：$APP_DIR"
 
 if [ "$WAS_RUNNING" = "1" ]; then
     open "$APP_DIR"
-    echo "🔄 已自动重启 MenuMijia.app"
+    echo "🔄 已自动重启 MenuBarMijia.app"
 fi

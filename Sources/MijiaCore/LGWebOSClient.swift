@@ -41,13 +41,17 @@ public struct LGWebOSConfig: Equatable, Sendable {
     public var roomName: String
     public var clientKey: String
 
-    public static let defaultHost = "10.10.1.171"
-    public static let defaultMAC = "4c:ba:d7:c3:e9:9a"
+    public static let defaultHost = ""
+    public static let defaultMAC = ""
     public static let defaultName = "LG C2 电视"
     public static let defaultRoom = "客厅"
 
+    public var hasConfiguredHost: Bool {
+        !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     public init(
-        isEnabled: Bool = true,
+        isEnabled: Bool = false,
         host: String = Self.defaultHost,
         macAddress: String = Self.defaultMAC,
         name: String = Self.defaultName,
@@ -64,7 +68,7 @@ public struct LGWebOSConfig: Equatable, Sendable {
 
     public static func load(from defaults: UserDefaults) -> LGWebOSConfig {
         let enabled = defaults.object(forKey: "lg_webos_enabled") == nil
-            ? true
+            ? false
             : defaults.bool(forKey: "lg_webos_enabled")
         let host = defaults.string(forKey: "lg_webos_host")?.trimmingCharacters(in: .whitespacesAndNewlines)
         let mac = defaults.string(forKey: "lg_webos_mac")?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -245,7 +249,7 @@ public enum LGWebOSProtocol {
         return packet
     }
 
-    /// Parses UPnP XML description returned by LG webOS TV (e.g. `http://10.10.1.171:1869/`).
+    /// Parses UPnP XML description returned by LG webOS TV (e.g. `http://192.168.1.50:1869/`).
     public static func parseUPnPDescription(xml: String, host: String) -> LGWebOSDiscoveredTV {
         func extractTag(_ tag: String) -> String? {
             guard let open = xml.range(of: "<\(tag)>"),
@@ -397,7 +401,7 @@ public actor LGWebOSClient {
     }
 
     public func start() {
-        guard config.isEnabled else { return }
+        guard config.isEnabled, config.hasConfiguredHost else { return }
         emitCurrentDevice()
         loopTask?.cancel()
         loopTask = Task { [weak self] in
@@ -415,7 +419,7 @@ public actor LGWebOSClient {
     public func updateConfig(_ newConfig: LGWebOSConfig) {
         self.config = newConfig
         stop()
-        if newConfig.isEnabled {
+        if newConfig.isEnabled && newConfig.hasConfiguredHost {
             start()
         }
     }
@@ -553,7 +557,7 @@ public actor LGWebOSClient {
     // MARK: - Connection & Subscription Loop
 
     private func runConnectionLoop() async {
-        while !Task.isCancelled && config.isEnabled {
+        while !Task.isCancelled && config.isEnabled && config.hasConfiguredHost {
             do {
                 try await connectAndListen()
             } catch {
@@ -744,15 +748,49 @@ public actor LGWebOSClient {
     }
 
     public static func discoverOnLAN(hostHint: String = LGWebOSConfig.defaultHost) async -> [LGWebOSDiscoveredTV] {
-        guard let url = URL(string: "http://\(hostHint):1869/") else { return [] }
-        var req = URLRequest(url: url)
-        req.timeoutInterval = 1.8
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            if let xml = String(data: data, encoding: .utf8), xml.contains("webOS") || xml.contains("LGE") {
-                return [LGWebOSProtocol.parseUPnPDescription(xml: xml, host: hostHint)]
+        var candidates: [String] = []
+        var seen: Set<String> = []
+        let trimmedHint = hostHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedHint.isEmpty, seen.insert(trimmedHint).inserted {
+            candidates.append(trimmedHint)
+        }
+        let arpHosts = await Task.detached(priority: .utility) {
+            HADiscovery.queryARPHosts()
+        }.value
+        for ip in arpHosts where seen.insert(ip).inserted {
+            candidates.append(ip)
+        }
+        guard !candidates.isEmpty else { return [] }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.connectionProxyDictionary = [:]
+        config.timeoutIntervalForRequest = 0.9
+        config.timeoutIntervalForResource = 1.2
+        config.waitsForConnectivity = false
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+
+        return await withTaskGroup(of: (Int, LGWebOSDiscoveredTV?).self) { group in
+            for (idx, host) in candidates.enumerated() {
+                group.addTask {
+                    guard let url = URL(string: "http://\(host):1869/") else { return (idx, nil) }
+                    var req = URLRequest(url: url)
+                    req.timeoutInterval = 0.9
+                    do {
+                        let (data, _) = try await session.data(for: req)
+                        if let xml = String(data: data, encoding: .utf8),
+                           xml.contains("webOS") || xml.contains("LGE") {
+                            return (idx, LGWebOSProtocol.parseUPnPDescription(xml: xml, host: host))
+                        }
+                    } catch {}
+                    return (idx, nil)
+                }
             }
-        } catch {}
-        return []
+            var found: [(Int, LGWebOSDiscoveredTV)] = []
+            for await (idx, tv) in group {
+                if let tv { found.append((idx, tv)) }
+            }
+            return found.sorted { $0.0 < $1.0 }.map(\.1)
+        }
     }
 }

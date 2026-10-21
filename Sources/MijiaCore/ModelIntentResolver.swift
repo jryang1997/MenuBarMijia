@@ -1,6 +1,7 @@
 import Foundation
 
 public enum AssistantError: LocalizedError, Equatable, Sendable {
+    case missingAPIKey
     case invalidBaseURL(String)
     case httpStatus(Int)
     case emptyResponse
@@ -8,6 +9,7 @@ public enum AssistantError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
+        case .missingAPIKey: return "尚未配置 AI 服务的 API Key，请先在设置中填写"
         case .invalidBaseURL(let url): return "AI 服务地址无效：\(url)"
         case .httpStatus(let code): return "AI 服务返回错误 (\(code))"
         case .emptyResponse: return "AI 没有返回内容"
@@ -31,6 +33,8 @@ public enum AssistantError: LocalizedError, Equatable, Sendable {
             }
         }
         switch error as? AssistantError {
+        case .missingAPIKey:
+            return "尚未配置 AI 服务的 API Key，请到设置里填写后再试；「打开书房灯」这类简单指令无需 Key 即可使用"
         case .httpStatus(401), .httpStatus(403):
             return "AI 服务的 API Key 无效或已过期，请到设置里重新填写"
         case .httpStatus(429):
@@ -54,9 +58,7 @@ public struct ModelIntentResolver: Sendable {
     private let transport: Transport
 
     private static let session: URLSession = {
-        // Bypass system proxies: the default endpoint is a localhost router.
         let cfg = URLSessionConfiguration.ephemeral
-        cfg.connectionProxyDictionary = [:]
         cfg.timeoutIntervalForRequest = 10
         cfg.waitsForConnectivity = false
         return URLSession(configuration: cfg)
@@ -64,7 +66,12 @@ public struct ModelIntentResolver: Sendable {
 
     public init(config: AssistantConfig, transport: Transport? = nil) {
         self.config = config
-        self.transport = transport ?? { request in try await Self.session.data(for: request) }
+        self.transport = transport ?? { request in
+            guard config.hasAPIKey || config.isLoopbackEndpoint else {
+                throw AssistantError.missingAPIKey
+            }
+            return try await Self.session.data(for: request)
+        }
     }
 
     public func resolve(
@@ -297,9 +304,7 @@ public struct ModelIntentResolver: Sendable {
     }
 
     private func effectiveAPIKey() -> String {
-        let key = config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !key.isEmpty { return key }
-        return AssistantConfig.loadCodexBarOpenRouterKey() ?? ""
+        config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func endpointURL(path: String) throws -> URL {

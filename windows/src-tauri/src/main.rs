@@ -213,11 +213,11 @@ fn main() {
 
             let toggle_item =
                 MenuItem::with_id(app, "toggle", "打开/隐藏控制中心 (Alt+M)", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "退出 MenuMijia", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出 MenuBarMijia", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                .tooltip("MenuMijia · 菜单栏米家 (Alt+M)")
+                .tooltip("MenuBarMijia · 菜单栏米家 (Alt+M)")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -245,5 +245,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running MenuMijia Windows application");
+        .expect("error while running MenuBarMijia Windows application");
 }

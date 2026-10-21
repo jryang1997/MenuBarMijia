@@ -271,13 +271,13 @@ public final class HomeStore {
             }
         )
         self.lgWebOSClient = client
-        if lgConfig.isEnabled {
+        if lgConfig.isEnabled && lgConfig.hasConfiguredHost {
             Task { await client.start() }
         }
     }
 
     func applyLGDeviceUpdate(_ dev: SmartDevice) {
-        guard lgConfig.isEnabled else {
+        guard lgConfig.isEnabled, lgConfig.hasConfiguredHost else {
             latestLGDevice = nil
             devices.removeAll { $0.id == dev.id }
             return
@@ -1466,7 +1466,7 @@ public final class HomeStore {
 
     public func updateLGWebOSConfig(_ newConfig: LGWebOSConfig) {
         self.lgConfig = newConfig
-        if !newConfig.isEnabled {
+        if !newConfig.isEnabled || !newConfig.hasConfiguredHost {
             latestLGDevice = nil
             devices.removeAll { $0.id == LGWebOSProtocol.deviceId }
         }
@@ -1477,10 +1477,21 @@ public final class HomeStore {
         } else {
             startLGWebOSIfNeeded()
         }
-        showToast(newConfig.isEnabled ? "已保存并重连 \(newConfig.name)" : "已停用 LG 电视局域网直连")
+        if newConfig.isEnabled {
+            showToast(
+                newConfig.hasConfiguredHost ? "已保存并重连 \(newConfig.name)" : "请先填写或扫描电视局域网 IP",
+                isError: !newConfig.hasConfiguredHost
+            )
+        } else {
+            showToast("已停用 LG 电视局域网直连")
+        }
     }
 
     public func triggerLGWebOSPairing() {
+        guard lgConfig.hasConfiguredHost else {
+            showToast("请先填写或扫描电视局域网 IP", isError: true)
+            return
+        }
         if lgWebOSClient == nil {
             startLGWebOSIfNeeded()
         }
@@ -1491,14 +1502,16 @@ public final class HomeStore {
         }
     }
 
-    public func discoverLGWebOSTVs() async -> [LGWebOSDiscoveredTV] {
-        await LGWebOSClient.discoverOnLAN(hostHint: lgConfig.host)
+    public func discoverLGWebOSTVs(hostHint: String? = nil) async -> [LGWebOSDiscoveredTV] {
+        let hint = (hostHint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveHint = hint.isEmpty ? lgConfig.host : hint
+        return await LGWebOSClient.discoverOnLAN(hostHint: effectiveHint)
     }
 
     public func refreshNow() {
         Task {
             await provider.refreshNow()
-            if lgConfig.isEnabled, let lgClient = lgWebOSClient {
+            if lgConfig.isEnabled, lgConfig.hasConfiguredHost, let lgClient = lgWebOSClient {
                 await lgClient.start()
             }
         }

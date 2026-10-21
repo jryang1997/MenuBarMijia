@@ -87,7 +87,7 @@ public struct OnboardingGuideView: View {
             }
 
             VStack(alignment: .leading, spacing: 1.5) {
-                Text("欢迎使用 MenuMijia")
+                Text("欢迎使用 MenuBarMijia")
                     .font(.system(size: 14, weight: .bold))
                     .tracking(-0.2)
 

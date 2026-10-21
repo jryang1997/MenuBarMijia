@@ -164,14 +164,14 @@ public final class SpeechInputController {
         let micAllowed = await SpeechRuntimeBridge.requestMicrophoneAccess()
         guard micAllowed else {
             isHoldToTalk = false
-            errorMessage = "请在「系统设置 → 隐私与安全性 → 麦克风」中允许 MenuMijia"
+            errorMessage = "请在「系统设置 → 隐私与安全性 → 麦克风」中允许 MenuBarMijia"
             return
         }
 
         let speechStatus = await SpeechRuntimeBridge.requestSpeechAuthorization()
         guard speechStatus == .authorized else {
             isHoldToTalk = false
-            errorMessage = "请在「系统设置 → 隐私与安全性 → 语音识别」中允许 MenuMijia"
+            errorMessage = "请在「系统设置 → 隐私与安全性 → 语音识别」中允许 MenuBarMijia"
             return
         }
 
@@ -563,8 +563,12 @@ struct AssistantSettingsSection: View {
                     Text("● 已自动接入 CodexBar")
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.green)
+                } else if !apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("● 已配置 API Key")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.green)
                 } else {
-                    Text("常规 0ms · 复杂走 Jev")
+                    Text("● 未配置 Key（常规指令本地可用）")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }

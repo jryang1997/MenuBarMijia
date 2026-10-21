@@ -86,10 +86,15 @@ extension HomeStore {
     /// time of day, active devices, and the user's learned habit memory.
     public func requestProactiveJevSuggestions() async {
         guard !isProactiveRecommending else { return }
+        let config = assistantConfig
+        if assistantResolverOverride == nil && !config.hasAPIKey && !config.isLoopbackEndpoint {
+            setAssistantState(.failed(AssistantError.userMessage(for: AssistantError.missingAPIKey)))
+            return
+        }
         isProactiveRecommending = true
         defer { isProactiveRecommending = false }
 
-        let resolver = assistantResolverOverride ?? ModelIntentResolver(config: assistantConfig)
+        let resolver = assistantResolverOverride ?? ModelIntentResolver(config: config)
         let context = buildAssistantContext()
         do {
             let inferred = try await resolver.recommendProactiveSuggestions(
@@ -139,7 +144,12 @@ extension HomeStore {
         if let local = LocalIntentParser.parse(utterance, devices: devices, scenes: scenes) {
             plan = local
         } else {
-            let resolver = assistantResolverOverride ?? ModelIntentResolver(config: assistantConfig)
+            let config = assistantConfig
+            if assistantResolverOverride == nil && !config.hasAPIKey && !config.isLoopbackEndpoint {
+                setAssistantState(.failed(AssistantError.userMessage(for: AssistantError.missingAPIKey)))
+                return nil
+            }
+            let resolver = assistantResolverOverride ?? ModelIntentResolver(config: config)
             let context = buildAssistantContext()
             do {
                 plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes, context: context)

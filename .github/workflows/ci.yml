@@ -21,6 +21,10 @@ jobs:
             echo "Detected hardcoded JWT token" && exit 1
           fi
           grep -q 'defaultSeededToken = ""' Sources/MijiaCore/KeychainAndPrefs.swift
+          grep -q 'defaultHost = ""' Sources/MijiaCore/LGWebOSClient.swift
+          if grep -rnE '10\.10\.1\.[0-9]+|4c:ba:d7:c3:e9:9a|localhost:3425' Sources/ Tests/; then
+            echo "Detected hardcoded personal LAN IP/MAC or localhost:3425" && exit 1
+          fi
           if grep -rnE 'event\.keyCode\s*==\s*[0-9]+' Sources/; then
             echo "Raw event.keyCode numeric literal found" && exit 1
           fi
@@ -70,14 +74,14 @@ jobs:
         run: |
           version="$(tr -d '[:space:]' < ../VERSION)"
           mkdir -p ../dist-windows
-          cp src-tauri/target/release/bundle/nsis/*.exe "../dist-windows/MenuMijia-${version}-windows-x64-setup.exe"
-          cp src-tauri/target/release/bundle/msi/*.msi "../dist-windows/MenuMijia-${version}-windows-x64.msi"
+          cp src-tauri/target/release/bundle/nsis/*.exe "../dist-windows/MenuBarMijia-${version}-windows-x64-setup.exe"
+          cp src-tauri/target/release/bundle/msi/*.msi "../dist-windows/MenuBarMijia-${version}-windows-x64.msi"
           cd ../dist-windows
-          sha256sum "MenuMijia-${version}-windows-x64-setup.exe" > "MenuMijia-${version}-windows-x64-setup.exe.sha256"
-          sha256sum "MenuMijia-${version}-windows-x64.msi" > "MenuMijia-${version}-windows-x64.msi.sha256"
+          sha256sum "MenuBarMijia-${version}-windows-x64-setup.exe" > "MenuBarMijia-${version}-windows-x64-setup.exe.sha256"
+          sha256sum "MenuBarMijia-${version}-windows-x64.msi" > "MenuBarMijia-${version}-windows-x64.msi.sha256"
       - uses: actions/upload-artifact@v4
         with:
-          name: MenuMijia-Windows-x64
+          name: MenuBarMijia-Windows-x64
           path: dist-windows/*
 
   macos:

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" width="128" alt="MenuMijia">
+  <img src="docs/assets/logo.svg" width="128" alt="MenuBarMijia">
 </p>
 
-<h1 align="center">MenuMijia</h1>
+<h1 align="center">MenuBarMijia</h1>
 
 <p align="center">
   Mac 菜单栏里的米家语音助手（非官方，与小米公司无关）<br>
@@ -30,7 +30,7 @@
 - **掏手机**：解锁 → 打开米家 → 等加载 → 找房间 → 调吸顶灯 → 退出去再找空调。六步走完，刚才代码的思路彻底断了。
 - **喊小爱同学**：「小爱同学！」→ 等音箱叮一声回应「哎」→ 说「把书房灯调成月光模式」→ 等它听懂再播报一句「好的，已为您切换」→ 再喊一次「小爱同学！」去调空调。一来一回七八秒，费口舌又打断注意力。
 
-**MenuMijia** 把这件事缩成一个动作：**鼠标按住屏幕顶部的菜单栏温度图标直接说话，松手即执行**；或者按 `⌥M` 呼出面板，敲一下键盘。
+**MenuBarMijia** 把这件事缩成一个动作：**鼠标按住屏幕顶部的菜单栏温度图标直接说话，松手即执行**；或者按 `⌥M` 呼出面板，敲一下键盘。
 
 没有唤醒词，没有一来一回的语音播报，一句话同时操控多台设备，5 秒内随时一键撤销。而且现在**无需购买 NAS、无需部署 Docker 或 Home Assistant**，下载后直接掏出手机米家 App 扫个码就能用。
 
@@ -43,7 +43,7 @@
 本项目接入了专为结构化快速决策设计的 **Jev 模型（`~typesafe/jev-latest`，基于 `/v1/systemone` 协议）**，配合本地确定性规则引擎，构成了**双层混合决策架构**：
 
 <p align="center">
-  <img src="docs/assets/jev-vs-xiaoai.svg" width="880" alt="传统语音助手多轮对话 vs MenuMijia + Jev 毫秒级单次并发决策对比">
+  <img src="docs/assets/jev-vs-xiaoai.svg" width="880" alt="传统语音助手多轮对话 vs MenuBarMijia + Jev 毫秒级单次并发决策对比">
 </p>
 
 1. **明确指令 0 ms 本地直达（`IntentEngine`）**  
@@ -104,14 +104,14 @@
 ## 手不离开键盘
 
 <p align="center">
-  <img src="docs/assets/panel.png" width="420" alt="MenuMijia V3 主面板实机截图">
+  <img src="docs/assets/panel.png" width="420" alt="MenuBarMijia V3 主面板实机截图">
 </p>
 
 按 `⌥M` 呼出面板，再按一次收起。打开之后，全程不碰鼠标也能操控全屋：
 
 | 按键 | 作用 |
 | --- | --- |
-| `⌥M` | 全局呼出 / 收起 MenuMijia 面板 |
+| `⌥M` | 全局呼出 / 收起 MenuBarMijia 面板 |
 | `V` | 直接开启 / 停止实时语音控制（说完停顿 1.1s 自动执行） |
 | `/` | 呼出自然语言指令栏并聚焦输入框 |
 | `1` – `9` | 直接开关列表里的第 1 – 9 台设备（按住 `⌥` 浮现数字角标） |
@@ -189,18 +189,23 @@
 
 ## 快速开始
 
-**运行环境**：macOS 26 及以上，Xcode 26 / Swift 6。
+**运行环境**：macOS 26 及以上（从源码编译需 Xcode 26 / Swift 6）。
 
-### 1. 编译并启动应用
+### 1. 下载安装（或从源码编译）
 
-```bash
-git clone https://github.com/jryang1997/MenuBarMijia.git
-cd MenuBarMijia
-bash scripts/build_app.sh       # 编译 Release，签名打包并启动「MenuMijia.app」
-```
+- **直接安装 DMG**：前往 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest) 下载 `MenuBarMijia-1.0.1.dmg`，将 `MenuBarMijia.app` 拖入 `/Applications`（应用程序）。由于个人开源项目未购买付费 Apple 开发者公证，首次打开若遇到系统拦截，可在终端运行一行命令放行（或在「系统设置 → 隐私与安全性」底部点击「仍要打开」）：
+  ```bash
+  xattr -cr /Applications/MenuBarMijia.app
+  ```
+- **从源码编译并启动**：
+  ```bash
+  git clone https://github.com/jryang1997/MenuBarMijia.git
+  cd MenuBarMijia
+  bash scripts/build_app.sh       # 编译 Release，签名打包并启动「MenuBarMijia.app」
+  ```
 
 > [!TIP]
-> `scripts/build_app.sh` 会自动生成包含麦克风与语音识别权限声明的 `MenuMijia.app` 并完成本地签名。你可以直接将生成的 `MenuMijia.app` 拖入 `/Applications`（应用程序）文件夹，并在设置中开启「登录 Mac 时自动启动」。
+> `scripts/build_app.sh` 会自动生成包含麦克风与语音识别权限声明的 `MenuBarMijia.app` 并完成本地签名。你可以直接将生成的 `MenuBarMijia.app` 拖入 `/Applications`（应用程序）文件夹，并在设置中开启「登录 Mac 时自动启动」。
 
 ### 2. 连接你的米家设备（二选一）
 
@@ -245,7 +250,7 @@ npm run build   # TypeScript 严格类型检查 + 前端打包
 npx tauri build # 在 Windows 上打包 .exe (NSIS) 与 .msi 安装包
 ```
 
-每次推送到 `main` 分支时，GitHub Actions 会在核心测试通过后编译 Windows 安装包，并保存为 `MenuMijia-Windows-x64` 构建产物。发布时将产物和 SHA-256 校验文件上传到对应版本的 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases)，普通推送不会覆盖已发布的安装包。Windows 修复版下载见 [v1.0.1](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.0.1)。
+每次推送到 `main` 分支时，GitHub Actions 会在核心测试通过后编译 Windows 安装包，并保存为 `MenuBarMijia-Windows-x64` 构建产物。发布时将产物和 SHA-256 校验文件上传到对应版本的 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases)，普通推送不会覆盖已发布的安装包。Windows 修复版下载见 [v1.0.1](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.0.1)。
 
 ### 发布 macOS 安装版
 
@@ -254,7 +259,7 @@ DEVELOPER_ID="Developer ID Application: 你的名字 (TEAMID)" \
 bash scripts/release.sh         # 签名 → 打 DMG → 苹果公证 → 盖章，产物在 dist/
 ```
 
-版本号写在 `VERSION` 文件里，构建号自动取 git 提交数。需要苹果开发者账号；公证凭据先用 `xcrun notarytool store-credentials menumijia-notary` 存好（脚本开头有完整步骤）。只想本地打包、不公证：加 `SKIP_NOTARIZE=1`。把 DMG 上传到 GitHub Releases 后，用户在设置页点「检查更新」就能看到。
+版本号写在 `VERSION` 文件里，构建号自动取 git 提交数。需要苹果开发者账号；公证凭据先用 `xcrun notarytool store-credentials menubarmijia-notary` 存好（脚本开头有完整步骤）。只想本地打包、不公证：加 `SKIP_NOTARIZE=1`。把 DMG 上传到 GitHub Releases 后，用户在设置页点「检查更新」就能看到。
 
 提交前请先阅读 [`CODING_STANDARDS.md`](CODING_STANDARDS.md)。领域术语见 [`GLOSSARY.md`](GLOSSARY.md)，架构决策记录在 [`docs/adr/`](docs/adr/)。
 

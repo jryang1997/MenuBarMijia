@@ -6,7 +6,6 @@ import Security
 public struct AssistantConfig: Equatable, Sendable {
     public static let defaultBaseURL = "https://openrouter.ai/api/v1"
     public static let defaultModel = "~typesafe/jev-latest"
-    public static let localRouterBaseURL = "http://localhost:3425/v1"
     private static let legacyDefaultModels: Set<String> = [
         "antigravity/gemini-3.5-flash-lite",
         "glm-5.1"
@@ -25,35 +24,62 @@ public struct AssistantConfig: Equatable, Sendable {
         self.apiKey = apiKey
     }
 
-    public static func load(from defaults: UserDefaults) -> AssistantConfig {
+    public var hasAPIKey: Bool {
+        !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var isLoopbackEndpoint: Bool {
+        guard let host = URL(string: baseURL.trimmingCharacters(in: .whitespacesAndNewlines))?.host?.lowercased() else {
+            return false
+        }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+
+    public static func load(from defaults: UserDefaults, includeAmbientKey: Bool = true) -> AssistantConfig {
         let nonEmpty = { (key: String) -> String? in
             guard let v = defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !v.isEmpty else { return nil }
             return v
         }
-        let keychainKey = KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount)
-        let codexBarKey = loadCodexBarOpenRouterKey() ?? ""
-        let effectiveKey = keychainKey.isEmpty ? codexBarKey : keychainKey
+        let effectiveKey: String
+        if includeAmbientKey {
+            let keychainKey = KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount)
+            let codexBarKey = loadCodexBarOpenRouterKey() ?? ""
+            effectiveKey = keychainKey.isEmpty ? codexBarKey : keychainKey
+        } else {
+            effectiveKey = ""
+        }
 
         let savedBase = nonEmpty(baseURLKey)
         let savedModel = nonEmpty(modelKey)
 
-        // Upgrade legacy local defaults to OpenRouter Jev when a CodexBar OpenRouter key is present.
-        if !effectiveKey.isEmpty,
-           (savedModel == nil || legacyDefaultModels.contains(savedModel!)),
-           (savedBase == nil || savedBase == localRouterBaseURL) {
-            return AssistantConfig(
-                baseURL: defaultBaseURL,
-                model: defaultModel,
-                apiKey: effectiveKey
-            )
+        let resolvedBase: String
+        if let savedBase, !isLegacyLocalRouterURL(savedBase) {
+            resolvedBase = savedBase
+        } else {
+            resolvedBase = defaultBaseURL
+        }
+
+        let resolvedModel: String
+        if let savedModel, !legacyDefaultModels.contains(savedModel) {
+            resolvedModel = savedModel
+        } else {
+            resolvedModel = defaultModel
         }
 
         return AssistantConfig(
-            baseURL: savedBase ?? (effectiveKey.isEmpty ? localRouterBaseURL : defaultBaseURL),
-            model: savedModel ?? (effectiveKey.isEmpty ? "glm-5.1" : defaultModel),
+            baseURL: resolvedBase,
+            model: resolvedModel,
             apiKey: effectiveKey
         )
+    }
+
+    private static func isLegacyLocalRouterURL(_ urlString: String) -> Bool {
+        guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let host = url.host?.lowercased() else {
+            return false
+        }
+        return (host == "localhost" || host == "127.0.0.1") && url.port == 3425
     }
 
     public func save(to defaults: UserDefaults) {

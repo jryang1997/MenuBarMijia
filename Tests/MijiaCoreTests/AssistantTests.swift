@@ -165,9 +165,9 @@ struct AssistantTests {
         let responseData = try JSONSerialization.data(withJSONObject: envelope)
 
         let resolver = ModelIntentResolver(
-            config: AssistantConfig(baseURL: "http://localhost:3425/v1/", model: "test-model"),
+            config: AssistantConfig(baseURL: "https://api.example.com/v1/", model: "test-model", apiKey: "test-key"),
             transport: { request in
-                #expect(request.url?.absoluteString == "http://localhost:3425/v1/chat/completions")
+                #expect(request.url?.absoluteString == "https://api.example.com/v1/chat/completions")
                 #expect(request.httpMethod == "POST")
                 let body = try #require(request.httpBody.flatMap { try JSONSerialization.jsonObject(with: $0) as? [String: Any] })
                 #expect(body["model"] as? String == "test-model")
@@ -186,6 +186,27 @@ struct AssistantTests {
             DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(30)),
             DeviceIntent(targetId: "scene_sleep", operation: .activateScene)
         ])
+    }
+
+    @Test("AssistantConfig defaults to OpenRouter without API key and ModelIntentResolver rejects missing key")
+    func assistantDefaultConfigAndMissingKey() async throws {
+        let suite = "test.assistant.defaults.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let loaded = AssistantConfig.load(from: defaults, includeAmbientKey: false)
+        #expect(loaded.baseURL == AssistantConfig.defaultBaseURL)
+        #expect(loaded.model == AssistantConfig.defaultModel)
+        #expect(loaded.hasAPIKey == false)
+        #expect(loaded.isLoopbackEndpoint == false)
+
+        let unconfiguredResolver = ModelIntentResolver(
+            config: AssistantConfig(baseURL: AssistantConfig.defaultBaseURL, model: AssistantConfig.defaultModel, apiKey: "")
+        )
+        await #expect(throws: AssistantError.missingAPIKey) {
+            try await unconfiguredResolver.resolve("准备写代码", devices: Self.devices, scenes: Self.scenes)
+        }
+        #expect(AssistantError.userMessage(for: AssistantError.missingAPIKey).contains("API Key"))
     }
 
     @Test("AssistantConfig loads OpenRouter key from CodexBar config file")

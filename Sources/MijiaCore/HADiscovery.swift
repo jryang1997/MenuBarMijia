@@ -451,7 +451,7 @@ public enum HADiscovery {
         #endif
     }
 
-    private static func queryARPHosts() -> [String] {
+    static func queryARPHosts() -> [String] {
         #if canImport(Darwin)
         guard let output = runCommand(
             executable: "/usr/sbin/arp",

@@ -48,7 +48,7 @@ struct UpdateSection: View {
 
     private var statusText: String {
         switch status {
-        case .idle: return "MenuMijia 更新发布在 GitHub Releases"
+        case .idle: return "MenuBarMijia 更新发布在 GitHub Releases"
         case .checking: return "正在查看 GitHub 上的最新版本…"
         case .upToDate: return "已是最新版本"
         case .available(let version, _): return "有新版本 \(version)，下载后拖进「应用程序」替换即可"

@@ -356,7 +356,7 @@ public struct SettingsSheetView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "power")
-                        Text("退出 MenuMijia")
+                        Text("退出 MenuBarMijia")
                     }
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.red.opacity(0.85))
@@ -412,7 +412,7 @@ public struct SettingsSheetView: View {
 
 private struct LGWebOSSettingsSection: View {
     let store: HomeStore
-    @State private var isEnabled: Bool = true
+    @State private var isEnabled: Bool = false
     @State private var hostDraft: String = ""
     @State private var macDraft: String = ""
     @State private var nameDraft: String = ""
@@ -420,19 +420,20 @@ private struct LGWebOSSettingsSection: View {
 
     var body: some View {
         let isPaired = !store.lgConfig.clientKey.isEmpty
+        let hasHost = !hostDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("LG webOS 电视局域网直连")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(isPaired ? "● 已配对密钥" : (isEnabled ? "● 待电视确认" : "● 已停用"))
+                Text(isPaired ? "● 已配对密钥" : (isEnabled ? (hasHost ? "● 待电视确认" : "● 待填电视 IP") : "● 已停用"))
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(isPaired ? .green : (isEnabled ? .orange : .secondary))
             }
 
             HStack {
-                Text("启用 LG C2 局域网直连 (SSAP + WoL)")
+                Text("启用 LG 电视局域网直连 (SSAP + WoL)")
                     .font(.system(size: 12))
                 Spacer()
                 Toggle("", isOn: $isEnabled)
@@ -442,6 +443,8 @@ private struct LGWebOSSettingsSection: View {
                     .onChange(of: isEnabled) { _, newValue in
                         var next = store.lgConfig
                         next.isEnabled = newValue
+                        next.host = hostDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        next.macAddress = macDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                         store.updateLGWebOSConfig(next)
                     }
             }
@@ -452,7 +455,7 @@ private struct LGWebOSSettingsSection: View {
                         Text("局域网 IP")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
-                        TextField("10.10.1.171", text: $hostDraft)
+                        TextField("如 192.168.1.50", text: $hostDraft)
                             .textFieldStyle(.roundedBorder)
                             .controlSize(.small)
                             .font(.system(size: 11, design: .monospaced))
@@ -462,7 +465,7 @@ private struct LGWebOSSettingsSection: View {
                         Text("MAC 地址 (Wake-on-LAN)")
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
-                        TextField("4c:ba:d7:c3:e9:9a", text: $macDraft)
+                        TextField("如 AA:BB:CC:DD:EE:FF", text: $macDraft)
                             .textFieldStyle(.roundedBorder)
                             .controlSize(.small)
                             .font(.system(size: 11, design: .monospaced))
@@ -473,7 +476,7 @@ private struct LGWebOSSettingsSection: View {
                     Button(isScanning ? "扫描中…" : "扫描局域网电视") {
                         isScanning = true
                         Task {
-                            let found = await store.discoverLGWebOSTVs()
+                            let found = await store.discoverLGWebOSTVs(hostHint: hostDraft)
                             isScanning = false
                             if let first = found.first {
                                 hostDraft = first.host

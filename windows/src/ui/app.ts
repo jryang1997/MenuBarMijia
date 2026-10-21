@@ -1397,7 +1397,7 @@ export class MenuMijiaWindowsApp {
             <button
               class="cc-footer-pill is-danger"
               id="btn-quit-app"
-              title="完全退出 MenuMijia"
+              title="完全退出 MenuBarMijia"
             >
               ${SF_ICONS.power}
               <span>退出</span>
@@ -1627,7 +1627,7 @@ export class MenuMijiaWindowsApp {
       <div class="cc-sheet-backdrop">
         <div class="cc-sheet">
           <div class="cc-sheet-header">
-            <div class="cc-sheet-badge">MenuMijia 控制中心</div>
+            <div class="cc-sheet-badge">MenuBarMijia 控制中心</div>
             <button class="cc-circle-btn is-small" id="btn-close-onboarding" title="关闭引导">
               ${SF_ICONS.xmark}
             </button>
@@ -1766,7 +1766,7 @@ export class MenuMijiaWindowsApp {
           </div>
 
           <div class="cc-sheet-footer">
-            <button class="cc-btn-danger" id="btn-settings-quit">退出 MenuMijia</button>
+            <button class="cc-btn-danger" id="btn-settings-quit">退出 MenuBarMijia</button>
             <button class="cc-btn-primary" id="btn-save-settings">完成并保存</button>
           </div>
         </div>

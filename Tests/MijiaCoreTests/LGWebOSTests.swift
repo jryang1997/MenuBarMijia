@@ -23,10 +23,10 @@ struct LGWebOSTests {
         )
         #expect(registeredOutcome == .registered(clientKey: "lg-c2-secret-key"))
 
-        let wol = try #require(LGWebOSProtocol.wakeOnLanMagicPacket(macAddress: "4c:ba:d7:c3:e9:9a"))
+        let wol = try #require(LGWebOSProtocol.wakeOnLanMagicPacket(macAddress: "aa:bb:cc:dd:ee:ff"))
         #expect(wol.count == 102)
         #expect(Array(wol.prefix(6)) == [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
-        #expect(Array(wol[6..<12]) == [0x4C, 0xBA, 0xD7, 0xC3, 0xE9, 0x9A])
+        #expect(Array(wol[6..<12]) == [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
         #expect(LGWebOSProtocol.wakeOnLanMagicPacket(macAddress: "invalid") == nil)
 
         let upnpXML = """
@@ -36,10 +36,29 @@ struct LGWebOSTests {
         <UDN>uuid:fe42fad6-8f3a-0211-c3b5-363fad426a96</UDN>
         </device></root>
         """
-        let discovered = LGWebOSProtocol.parseUPnPDescription(xml: upnpXML, host: "10.10.1.171")
+        let discovered = LGWebOSProtocol.parseUPnPDescription(xml: upnpXML, host: "192.168.1.50")
         #expect(discovered.friendlyName == "LG C2 电视")
         #expect(discovered.modelName == "OLED42C2PCA")
         #expect(discovered.uuid == "fe42fad6-8f3a-0211-c3b5-363fad426a96")
+    }
+
+    @Test("LGWebOSConfig defaults to disabled with empty host and MAC address")
+    func defaultConfigIsDisabledAndEmpty() throws {
+        let defaultCfg = LGWebOSConfig()
+        #expect(defaultCfg.isEnabled == false)
+        #expect(defaultCfg.host == "")
+        #expect(defaultCfg.macAddress == "")
+        #expect(defaultCfg.hasConfiguredHost == false)
+
+        let suite = "test.lg.defaults.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let loaded = LGWebOSConfig.load(from: defaults)
+        #expect(loaded.isEnabled == false)
+        #expect(loaded.host == "")
+        #expect(loaded.macAddress == "")
+        #expect(loaded.hasConfiguredHost == false)
     }
 
     @Test("HomeStore TV controls and voice assistant commands work with LG C2 TV")

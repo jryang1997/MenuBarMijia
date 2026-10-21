@@ -31,3 +31,10 @@ node_modules/
 windows/src-tauri/target/
 windows/src-tauri/gen/
 
+# Android 构建缓存与本地私密配置
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+
