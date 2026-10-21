@@ -390,31 +390,7 @@ public actor HAWebSocketProvider: HomeProvider {
         return (try? JSONDecoder().decode([String: JSONValue].self, from: data)) ?? [:]
     }
 
-<<<<<<< HEAD
-    private static func normalizeBaseURL(_ raw: String) -> String {
-=======
-    private func decodeValue<T: Decodable>(_ type: T.Type, from val: JSONValue) -> T? {
-        guard let data = try? JSONEncoder().encode(val) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
-    }
-
-    private static func parseEntityState(from val: JSONValue) -> HAEntityState? {
-        guard case .object(let obj) = val,
-              let eid = obj["entity_id"]?.stringValue,
-              let st = obj["state"]?.stringValue else {
-            return nil
-        }
-        let attrs: [String: JSONValue]
-        if case .object(let a) = obj["attributes"] {
-            attrs = a
-        } else {
-            attrs = [:]
-        }
-        return HAEntityState(entityId: eid, state: st, attributes: attrs)
-    }
-
     public static func normalizeBaseURL(_ raw: String) -> String {
->>>>>>> 2f076de (feat(ha): add automatic LAN Home Assistant discovery (mDNS + ARP/HTTP manifest probe))
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
         if !s.hasPrefix("http://") && !s.hasPrefix("https://") {
