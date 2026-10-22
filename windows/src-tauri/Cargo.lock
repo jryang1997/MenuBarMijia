@@ -1871,7 +1871,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "menumijia-windows"
+name = "menubarmijia-windows"
 version = "1.0.1"
 dependencies = [
  "reqwest 0.12.28",
