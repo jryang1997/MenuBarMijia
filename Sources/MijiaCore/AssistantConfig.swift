@@ -298,17 +298,9 @@ public struct AssistantConfig: Equatable, Sendable {
         defaults.set(trimmedModel, forKey: Self.modelKey)
         let inferred = AssistantProviderPreset.infer(baseURL: trimmedBase)
         let providerAccount = KeychainHelper.assistantProviderAPIKeyAccount(for: inferred)
-        if defaults === UserDefaults.standard {
-            KeychainHelper.saveSecret(trimmedKey, account: providerAccount)
-            if inferred == .openRouterJev {
-                KeychainHelper.saveSecret(trimmedKey, account: KeychainHelper.assistantAPIKeyAccount)
-            }
-        } else {
-            if trimmedKey.isEmpty {
-                defaults.removeObject(forKey: providerAccount)
-            } else {
-                defaults.set(trimmedKey, forKey: providerAccount)
-            }
+        KeychainHelper.saveSecret(trimmedKey, account: providerAccount, defaults: defaults)
+        if inferred == .openRouterJev {
+            KeychainHelper.saveSecret(trimmedKey, account: KeychainHelper.assistantAPIKeyAccount, defaults: defaults)
         }
     }
 
@@ -316,17 +308,13 @@ public struct AssistantConfig: Equatable, Sendable {
     public static func userStoredAPIKey(forBaseURL baseURL: String, defaults: UserDefaults = .standard) -> String {
         let preset = AssistantProviderPreset.infer(baseURL: baseURL)
         let providerAccount = KeychainHelper.assistantProviderAPIKeyAccount(for: preset)
-        if defaults !== UserDefaults.standard {
-            return defaults.string(forKey: providerAccount)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        }
-        let providerKey = KeychainHelper.loadSecret(account: providerAccount)
+        let providerKey = KeychainHelper.loadSecret(account: providerAccount, defaults: defaults)
         if !providerKey.isEmpty {
             return providerKey
         }
         // Pre-v1.0.4 versions stored the OpenRouter key in the generic `assistant_api_key` slot.
         if preset == .openRouterJev {
-            return KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount)
+            return KeychainHelper.loadSecret(account: KeychainHelper.assistantAPIKeyAccount, defaults: defaults)
         }
         return ""
     }
@@ -402,30 +390,57 @@ extension KeychainHelper {
         "assistant_api_key_\(preset.rawValue)"
     }
 
-    public static func loadSecret(account: String) -> String {
+    public static func secretFallbackKey(for account: String) -> String {
+        "keychain_fallback_\(account)"
+    }
+
+    public static func loadSecret(account: String, defaults: UserDefaults = .standard) -> String {
+        let fallbackKey = secretFallbackKey(for: account)
+        if let fallback = defaults.string(forKey: fallbackKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !fallback.isEmpty {
+            return fallback
+        }
+        guard defaults === UserDefaults.standard else {
+            return ""
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let str = String(data: data, encoding: .utf8) else { return "" }
-        return str.trimmingCharacters(in: .whitespacesAndNewlines)
+        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+           let data = item as? Data,
+           let str = String(data: data, encoding: .utf8) {
+            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                defaults.set(trimmed, forKey: fallbackKey)
+                return trimmed
+            }
+        }
+        return ""
     }
 
     /// Saving an empty value deletes the item.
-    public static func saveSecret(_ value: String, account: String) {
+    public static func saveSecret(_ value: String, account: String, defaults: UserDefaults = .standard) {
+        let fallbackKey = secretFallbackKey(for: account)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            defaults.removeObject(forKey: fallbackKey)
+        } else {
+            defaults.set(trimmed, forKey: fallbackKey)
+        }
+        guard defaults === UserDefaults.standard else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
         SecItemDelete(query as CFDictionary)
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return }
         var addQuery = query
         addQuery[kSecValueData as String] = data

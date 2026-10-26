@@ -185,6 +185,23 @@ public final class HomeStore {
     public var onSafetyAlert: ((SafetyAlert) -> Void)?
     public var onGlobalHotkeyPreferenceChanged: ((Bool) -> Void)?
 
+    public static let automaticUpdateCheckInterval: TimeInterval = 6 * 3600
+    public internal(set) var updateState: AppUpdateState = .idle
+    public var automaticallyChecksForUpdates: Bool = true {
+        didSet {
+            userDefaults.set(automaticallyChecksForUpdates, forKey: "automatically_checks_for_updates")
+            if automaticallyChecksForUpdates && !oldValue {
+                Task { @MainActor [weak self] in
+                    await self?.checkForUpdatesIfNeeded()
+                }
+            }
+        }
+    }
+    public var onTerminateForUpdate: (() -> Void)?
+    public var updater: AppUpdater
+    var updateTask: Task<Void, Never>?
+    var activeUpdateAttemptID: UUID?
+
     public var lgConfig: LGWebOSConfig {
         didSet { lgConfig.save(to: userDefaults) }
     }
@@ -207,13 +224,19 @@ public final class HomeStore {
     private var longRunAlertedForSession: Set<String> = []
     private var previousOnlineDeviceIds: Set<String> = []
 
-    public init(provider: (any HomeProvider)? = nil, defaultsSuiteName: String? = nil) {
+    public init(
+        provider: (any HomeProvider)? = nil,
+        defaultsSuiteName: String? = nil,
+        updater: AppUpdater? = nil
+    ) {
         let ud = defaultsSuiteName.flatMap { UserDefaults(suiteName: $0) } ?? .standard
         self.userDefaults = ud
         self.isTestEnvironment = (provider != nil || defaultsSuiteName != nil)
+        self.updater = updater ?? AppUpdater()
         let boolOrDefaultTrue = { (key: String) -> Bool in
             ud.object(forKey: key) == nil ? true : ud.bool(forKey: key)
         }
+        self.automaticallyChecksForUpdates = boolOrDefaultTrue("automatically_checks_for_updates")
 
         let savedLangPref = ud.string(forKey: "app_language").flatMap(AppLanguagePreference.init(rawValue:)) ?? .system
         self.appLanguagePreference = savedLangPref
@@ -226,7 +249,7 @@ public final class HomeStore {
         }
 
         let savedRegion = ud.string(forKey: "mi_cloud_region").flatMap(MiCloudRegion.init(rawValue:))
-            ?? MiSessionStore.load().flatMap { MiCloudRegion(rawValue: $0.region.lowercased()) }
+            ?? MiSessionStore.load(defaults: ud).flatMap { MiCloudRegion(rawValue: $0.region.lowercased()) }
             ?? .cn
         self.miCloudRegion = savedRegion
 
@@ -234,7 +257,7 @@ public final class HomeStore {
         self.serverURLString = savedURL
         let initialBackend = ud.string(forKey: "home_backend").flatMap(HomeBackend.init(rawValue:)) ?? .homeAssistant
         self.homeBackend = initialBackend
-        self.miSessionMaskedUserId = MiSessionStore.load()?.maskedUserId
+        self.miSessionMaskedUserId = MiSessionStore.load(defaults: ud)?.maskedUserId
         self.lgConfig = LGWebOSConfig.load(from: ud)
         self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.localizedDefaultHomeName
         self.isHabitLearningEnabled = boolOrDefaultTrue("assistant_habit_learning_enabled")
@@ -266,11 +289,16 @@ public final class HomeStore {
             self.hiddenDeviceIds = []
         }
 
+        if !self.isTestEnvironment && ud === UserDefaults.standard {
+            KeychainHelper.synchronizeFallbackCredentialsBeforeUpdate(defaults: ud)
+        }
+
         let initialHAToken = (provider == nil && initialBackend == .homeAssistant) ? KeychainHelper.loadToken() : ""
         if let provider {
             self.provider = provider
         } else if initialBackend == .xiaomiCloud {
-            self.provider = MiCloudProvider()
+            nonisolated(unsafe) let ud = userDefaults
+            self.provider = MiCloudProvider(sessionLoader: { MiSessionStore.load(defaults: ud) })
         } else {
             self.provider = HAWebSocketProvider(baseURLString: savedURL, token: initialHAToken)
         }
@@ -1442,13 +1470,14 @@ public final class HomeStore {
         case .homeAssistant:
             self.provider = makeHAProvider(baseURLString: serverURLString, token: KeychainHelper.loadToken())
         case .xiaomiCloud:
-            self.provider = MiCloudProvider()
+            nonisolated(unsafe) let ud = userDefaults
+            self.provider = MiCloudProvider(sessionLoader: { MiSessionStore.load(defaults: ud) })
         }
         startListening()
     }
 
     public func completeMiLogin(_ session: MiSession) {
-        MiSessionStore.save(session)
+        MiSessionStore.save(session, defaults: userDefaults)
         self.miSessionMaskedUserId = session.maskedUserId
         if let region = MiCloudRegion(rawValue: session.region.lowercased()) {
             self.miCloudRegion = region
@@ -1457,13 +1486,14 @@ public final class HomeStore {
         self.completeOnboarding()
         eventTask?.cancel()
         shutdownCurrentProvider()
-        self.provider = MiCloudProvider()
+        nonisolated(unsafe) let ud = userDefaults
+        self.provider = MiCloudProvider(sessionLoader: { MiSessionStore.load(defaults: ud) })
         startListening()
         showToast(L10n.tr("已登录米家账号 (\(session.maskedUserId))", "Signed in to Xiaomi Home (\(session.maskedUserId))"))
     }
 
     public func logoutMiAccount() {
-        MiSessionStore.clear()
+        MiSessionStore.clear(defaults: userDefaults)
         self.miSessionMaskedUserId = nil
         if homeBackend == .xiaomiCloud {
             self.devices = []
@@ -1472,7 +1502,8 @@ public final class HomeStore {
             self.scenes = []
             eventTask?.cancel()
             shutdownCurrentProvider()
-            self.provider = MiCloudProvider()
+            nonisolated(unsafe) let ud = userDefaults
+            self.provider = MiCloudProvider(sessionLoader: { MiSessionStore.load(defaults: ud) })
             startListening()
         }
         showToast(L10n.tr("已退出米家账号", "Signed out of Xiaomi Home"))

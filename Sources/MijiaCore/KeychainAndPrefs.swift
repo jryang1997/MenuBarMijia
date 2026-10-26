@@ -20,7 +20,7 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum KeychainHelper {
-    static let service = "com.jryang1997.MenuBarMijia"
+    public static let service = "com.jryang1997.MenuBarMijia"
     private static let account = "ha_access_token"
 
     public static let defaultHomeName = "我的家"
@@ -39,22 +39,33 @@ public enum KeychainHelper {
            !ud.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return ud.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        if let keychainToken = loadTokenFromKeychain() {
+            UserDefaults.standard.set(keychainToken, forKey: "ha_fallback_token")
+            return keychainToken
+        }
+        return defaultSeededToken
+    }
+
+    private static func loadTokenFromKeychain() -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess,
            let data = item as? Data,
-           let str = String(data: data, encoding: .utf8),
-           !str.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return str.trimmingCharacters(in: .whitespacesAndNewlines)
+           let str = String(data: data, encoding: .utf8) {
+            let trimmed = str.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
         }
-        return defaultSeededToken
+        return nil
     }
 
     public static func saveToken(_ token: String) {
@@ -72,5 +83,29 @@ public enum KeychainHelper {
         var addQuery = query
         addQuery[kSecValueData as String] = data
         SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    /// Snapshots readable Keychain credentials into `UserDefaults` fallback keys while the running
+    /// binary's CDHash matches the Keychain item ACL, preventing loss across ad-hoc signed updates.
+    public static func synchronizeFallbackCredentialsBeforeUpdate(defaults: UserDefaults = .standard) {
+        if defaults === UserDefaults.standard {
+            let existingFallback = defaults.string(forKey: "ha_fallback_token")?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if existingFallback.isEmpty, let keychainToken = loadTokenFromKeychain() {
+                defaults.set(keychainToken, forKey: "ha_fallback_token")
+            }
+        }
+        if let session = MiSessionStore.load(defaults: defaults),
+           let data = try? JSONEncoder().encode(session) {
+            defaults.set(data, forKey: MiSessionStore.fallbackDefaultsKey)
+        }
+        let accounts = AssistantProviderPreset.allCases.map { assistantProviderAPIKeyAccount(for: $0) }
+            + [assistantAPIKeyAccount]
+        for accountName in accounts {
+            let secret = loadSecret(account: accountName, defaults: defaults)
+            if !secret.isEmpty {
+                defaults.set(secret, forKey: secretFallbackKey(for: accountName))
+            }
+        }
     }
 }

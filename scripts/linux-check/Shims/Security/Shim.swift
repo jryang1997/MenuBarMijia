@@ -6,7 +6,8 @@ public let errSecSuccess: OSStatus = 0
 public let errSecItemNotFound: OSStatus = -25300
 public let kSecClass = "class", kSecClassGenericPassword = "genp", kSecAttrService = "svce", kSecAttrAccount = "acct",
   kSecReturnData = "r_Data", kSecMatchLimit = "m_Limit", kSecMatchLimitOne = "m_LimitOne", kSecValueData = "v_Data",
-  kSecAttrAccessible = "pdmn", kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly = "cku"
+  kSecAttrAccessible = "pdmn", kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly = "cku",
+  kSecUseAuthenticationUI = "u_AuthUI", kSecUseAuthenticationUISkip = "u_AuthUISkip"
 nonisolated(unsafe) var store: [String: Data] = [:]
 let lock = NSLock()
 func key(_ q: [String: Any]) -> String { "\(q[kSecAttrService] ?? "")|\(q[kSecAttrAccount] ?? "")" }

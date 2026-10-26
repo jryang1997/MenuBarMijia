@@ -195,29 +195,45 @@ public struct MiAccountLogin: Sendable {
     }
 }
 
-/// Keychain persistence for `MiSession` (service `com.jryang1997.MenuBarMijia`, account `mi_session`).
+/// Keychain persistence for `MiSession` (service `com.jryang1997.MenuBarMijia`, account `mi_session`),
+/// with a `UserDefaults` fallback so ad-hoc signed updates that change the binary CDHash preserve login state.
 public enum MiSessionStore {
-    private static let service = "com.jryang1997.MenuBarMijia"
+    private static let service = KeychainHelper.service
     private static let account = "mi_session"
+    public static let fallbackDefaultsKey = "mi_session_fallback_v1"
 
-    public static func load() -> MiSession? {
+    public static func load(defaults: UserDefaults = .standard) -> MiSession? {
+        if let fallbackData = defaults.data(forKey: fallbackDefaultsKey),
+           let session = try? JSONDecoder().decode(MiSession.self, from: fallbackData) {
+            return session
+        }
+        guard defaults === UserDefaults.standard else {
+            return nil
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return try? JSONDecoder().decode(MiSession.self, from: data)
+        if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+           let data = item as? Data,
+           let session = try? JSONDecoder().decode(MiSession.self, from: data) {
+            defaults.set(data, forKey: fallbackDefaultsKey)
+            return session
+        }
+        return nil
     }
 
     @discardableResult
-    public static func save(_ session: MiSession) -> Bool {
+    public static func save(_ session: MiSession, defaults: UserDefaults = .standard) -> Bool {
         guard let data = try? JSONEncoder().encode(session) else { return false }
-        clear()
+        clear(defaults: defaults)
+        defaults.set(data, forKey: fallbackDefaultsKey)
+        guard defaults === UserDefaults.standard else { return true }
         let add: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -228,7 +244,9 @@ public enum MiSessionStore {
         return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
     }
 
-    public static func clear() {
+    public static func clear(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: fallbackDefaultsKey)
+        guard defaults === UserDefaults.standard else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
