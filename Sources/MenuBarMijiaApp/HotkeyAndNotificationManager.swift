@@ -36,6 +36,9 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
 
     public func start(with store: HomeStore) {
         self.store = store
+        store.onTerminateForUpdate = {
+            NSApplication.shared.terminate(nil)
+        }
         store.onGlobalHotkeyPreferenceChanged = { [weak self] enabled in
             self?.syncGlobalHotKeyRegistration(enabled: enabled)
         }
@@ -344,6 +347,9 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                 guard let win = notification.object as? NSWindow else { return }
                 MainActor.assumeIsolated {
                     guard let self, !self.isStatusBarWindow(win) else { return }
+                    Task { @MainActor [weak self] in
+                        await self?.store?.checkForUpdatesIfNeeded()
+                    }
                     guard (NSEvent.pressedMouseButtons & 0x3) != 0, self.isMouseInMenuBarStrip() else { return }
                     self.beginStatusBarHoldDetection(statusWindow: self.findActiveStatusBarWindow(), eventLocationInWindow: nil)
                 }
@@ -623,6 +629,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                         self.deliverNotification(for: alert)
                     }
                 }
+                await store.checkForUpdatesIfNeeded()
             }
         }
     }

@@ -30,6 +30,9 @@ public struct ControlCenterPanel: View {
         }
         .frame(width: 356, height: 460)
         .background(.ultraThinMaterial)
+        .task {
+            await store.checkForUpdatesIfNeeded()
+        }
     }
 
     // MARK: - Main Dashboard
@@ -671,6 +674,45 @@ public struct ControlCenterPanel: View {
                 .lineLimit(1)
 
             Spacer()
+
+            if let release = store.updateState.badgeRelease {
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        if store.updateState.isReadyToRelaunch {
+                            store.confirmRelaunchForUpdate()
+                        } else {
+                            store.isShowingSettings = true
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(
+                            systemName: store.updateState.isReadyToRelaunch
+                                ? "arrow.triangle.2.circlepath.circle.fill"
+                                : "arrow.down.circle.fill"
+                        )
+                        .font(.system(size: 10.5, weight: .semibold))
+                        Text(
+                            store.updateState.isReadyToRelaunch
+                                ? L10n.tr("重启更新 v\(release.version)", "Relaunch v\(release.version)")
+                                : "v\(release.version)"
+                        )
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .monospacedDigit()
+                    }
+                }
+                .buttonStyle(
+                    PillActionButtonStyle(
+                        isSelected: true,
+                        tintColor: store.updateState.isReadyToRelaunch ? .green : .accentColor
+                    )
+                )
+                .help(
+                    store.updateState.isReadyToRelaunch
+                        ? L10n.tr("点击立即重启并完成 v\(release.version) 更新", "Click to relaunch and finish updating to v\(release.version)")
+                        : L10n.tr("发现新版本 v\(release.version)，点击前往更新", "New version v\(release.version) available")
+                )
+            }
 
             Button {
                 store.refreshNow()
