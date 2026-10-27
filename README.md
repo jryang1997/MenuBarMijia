@@ -10,7 +10,7 @@
 
 <p align="center">
   <b>Native macOS menu-bar controller for Xiaomi Mi Home (Mijia) and Home Assistant, plus a Windows 11 tray app for Mi Home.</b><br>
-  Hold the menu-bar icon, speak a command, release to execute across multiple devices — or run the entire panel from the keyboard.
+  Hold the menu-bar icon, speak a command, release to execute across multiple devices, or run the entire panel from the keyboard.
 </p>
 
 <p align="center">
@@ -27,22 +27,71 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/jev-demo.gif" width="420" alt="Live demo: hold the menu-bar icon, speak, and execute multi-device changes with one-tap undo">
+  <a href="https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.0">Download v1.1.0</a> ·
+  <a href="#install">Install and connect</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
 </p>
 
 <p align="center">
-  <img src="docs/assets/jev-decision-showcase.png" width="860" alt="Left: press-and-hold voice control and concurrent execution; Right: Jev confidence pills and moonlight drawer">
+  <img src="docs/assets/v1.1.0/panel.png" width="440" alt="MenuBarMijia 1.1.0 running on macOS with the built-in demo home">
 </p>
+
+Control your home while you work on your Mac. Press `⌥M`, type a device name or its Pinyin initials, and press Return to toggle it. Hold the menu-bar icon to speak and release to send a command across devices. Scan a QR code with Mi Home to connect, or use your existing Home Assistant installation.
+
+> New screenshots and GIFs are captured from the running macOS app using its offline demo home. Devices and readings are simulated. They show real UI interactions, not hardware response times. Features below apply to macOS unless Windows is named explicitly.
+
+This is a personal open-source project, not affiliated with, authorized by, or endorsed by Xiaomi, Mi Home, or Midea. Their trademarks are used only to identify compatible products.
+
+## Why keep home controls in the menu bar
+
+| When you want to… | What the app does |
+| --- | --- |
+| Find a device without browsing rooms | Search names, rooms, or Pinyin initials. Use arrows to select, Return to toggle, and the right arrow to open controls. |
+| Change several devices in one sentence | Speak without a wake word or spoken reply. Clear commands use a local parser; optional AI handles more complex requests. |
+| Select a light's actual moonlight mode | Read native device modes and expose supported brightness, color temperature, and scene controls. |
+| Make a large HA setup readable | Combine related entities into one physical device card with controls for that device type. |
+| Recover from a batch change | Undo restores the properties changed, including brightness, light mode, and climate settings. Uncertain AI actions wait for a tap. |
+| Turn off study lights when leaving the Mac | Create an Away rule or combine the app's actions with other apps in macOS Shortcuts. No automation rules are enabled by default. |
+| Arrange controls your way | Choose nine skins, four heights, custom groups, card sizes, drag ordering, and inline climate controls. |
+
+## What's new in 1.1.0
+
+- Search by name, room, or Pinyin initials, with keyboard selection and control.
+- Four macOS Shortcuts actions: toggle a device, run a scene, control with a sentence, and query room temperature and humidity. URL commands ask for confirmation by default.
+- Mac automation triggers for Away, Back, and external display connection or disconnection. Repeated events are deduplicated for one minute; actions support undo.
+- Local plug energy history with daily and seven-day totals, device rankings, and an optional electricity price. Figures use measured cumulative counters, never estimates from wattage.
+- Hold All Off for 0.6 seconds. It affects the current room's visible devices, excluding plugs and vacuums by default. Timers missed by more than a minute need confirmation.
+- Keychain credential migration, explicit AI key import and cloud consent, and independent Ed25519 verification for update packages.
+- Less frequent Mi Cloud polling when the panel is closed, paused during sleep or lock, and fewer redundant UI updates.
+- Traditional Chinese resources and Celsius or Fahrenheit display. Some Traditional Chinese strings still fall back.
+
+### Search, control, and undo
 
 <p align="center">
-  <img src="docs/assets/panel.png" width="420" alt="MenuBarMijia main panel">
+  <img src="docs/assets/v1.1.0/search-control-undo.gif" width="440" alt="Actual UI steps: search sftd, turn on the study lamp, turn off all lights, then undo">
 </p>
+
+The GIF uses successive screenshots of actual operations: search, toggle, run “关闭所有灯” (turn off all lights), and undo. [View the static search screenshot](docs/assets/v1.1.0/search.png).
+
+Type directly in the panel or press `⌘F`. In the demo home, `sftd` matches 书房台灯, the study lamp. The global hotkey defaults to `⌥M` and can be changed in Settings.
+
+### Connect Mac events to your home
 
 <p align="center">
-  <img src="docs/assets/menubar.png" width="330" alt="Menu bar icon">
+  <img src="docs/assets/v1.1.0/automation-setup.gif" width="672" alt="Step-by-step UI captures: select Devices and check the demo study lamp for an Away rule">
 </p>
 
-This project is a personal open-source app (`MenuBarMijia.app` on macOS, plus a companion Windows 11 Tauri v2 tray app in `windows/` and Synology NAS Home Assistant scripts in `nas/`). It is not affiliated with, authorized by, or endorsed by Xiaomi, Mi Home, or Midea. “Xiaomi”, “Mi Home” (米家), and “Midea” are trademarks of their owners and are used here only to name compatible products.
+[View the static settings screenshot](docs/assets/v1.1.0/automation.png). The GIF uses successive UI screenshots. It stops before adding the rule, so no temporary automation is saved.
+
+Open **Settings → General → Automation & External Control** to choose a trigger and an action. Lock, lid close, and sleep share the Away trigger. Unlock and wake share Back. Rules run while the app is running; lock notifications and network delivery just before sleep depend on system state.
+
+<p align="center">
+  <img src="docs/assets/v1.1.0/shortcuts.png" width="393" alt="The four MenuBarMijia actions discovered in macOS Shortcuts">
+</p>
+
+In macOS Shortcuts, search for MenuBarMijia to use the four actions. External tools can open `menumijia://toggle?device=<id>`, `menumijia://scene?name=<scene>`, or `menumijia://ask?text=<command>`. URL-encode parameter values. The app asks before executing unless you explicitly enable direct control.
+
+Energy history starts with the first reported cumulative reading and keeps 31 days locally. Earlier usage is not backfilled. A missing reading is not zero consumption. These features, Pinyin search, and Mac event automation do not imply Windows feature parity.
 
 ## Requirements
 
@@ -75,6 +124,9 @@ bash scripts/build_app.sh
 
 The script builds a Release binary, writes microphone and speech-recognition usage strings into `MenuBarMijia.app`, signs it locally, and launches it. Drag `MenuBarMijia.app` to `/Applications` if you want it there.
 
+<details>
+<summary>Maintainers: packaging, signing, and release verification</summary>
+
 A Developer ID build, DMG, and Apple notarization are optional and need an Apple Developer account:
 
 ```bash
@@ -104,6 +156,8 @@ Neither `release.yml` nor `finalize.yml` reads `MENUBARMIJIA_UPDATE_SIGNING_KEY`
 The app refuses to install a package whose Ed25519 signature is missing or does not match. It then verifies the staged bundle's code signature with the requirement `identifier "<bundle id>" and certificate leaf = H"<pinned SHA-1>"`: the leaf certificate hash is the anchor, and the packaged `Info.plist` must carry `MijiaCodeSignCertSHA1`. If that pin is missing or is not a 40-character hex string, the requirement becomes `identifier "<bundle id>" and never`, so **every** update fails verification — including a package with the same bundle ID, so the check never falls back to bundle-ID-only.
 
 A local ad-hoc build (`scripts/build_app.sh`) still launches normally, but it has no valid pin and therefore **cannot install in-app updates**. Release builds must be signed with a fixed certificate and carry that certificate's SHA-1: `scripts/release.sh` refuses to produce a DMG without a non-ad-hoc signing identity and a matching pin. See [`docs/adr/0005-update-signing-trust-chain.md`](docs/adr/0005-update-signing-trust-chain.md).
+
+</details>
 
 ## Connect devices
 
@@ -136,6 +190,7 @@ The menu bar can show a room temperature, temperature and humidity, total plug p
 | Key | Action |
 | --- | --- |
 | `⌥M` | Show or hide the panel (global) |
+| Type / `⌘F` | Search device names, rooms, or Pinyin initials |
 | `V` | Start or stop live voice control (submits after a 1.1s pause) |
 | `/` | Open the command field and focus it |
 | `1`–`9` | Toggle devices 1–9 (hold `⌥` to show the number badges) |
@@ -157,7 +212,7 @@ Device drawers cover lights (brightness, 2700–6500 K color temperature, and th
 
 ## Spoken commands
 
-The local parser accepts both Chinese and English commands offline, without a network round trip.
+The local parser accepts Chinese and English commands without an AI request. Device control still needs the selected Mi Cloud or HA backend.
 
 | Goal | Chinese example | English example |
 | --- | --- | --- |
