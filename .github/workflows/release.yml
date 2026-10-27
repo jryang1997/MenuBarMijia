@@ -471,7 +471,7 @@ jobs:
 
           # 草稿里只允许出现本阶段会产出的附件，以及维护者离线补上的 .ed25519.sig。
           mapfile -t expected < <(cd dist && ls -1 | sort)
-          mapfile -t actual < <(gh release view "${RELEASE_TAG}" --json assets --jq -r '.assets[].name' | tr -d '\r' | sort)
+          mapfile -t actual < <(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort)
           for name in "${actual[@]:-}"; do
             [ -n "$name" ] || continue
             if [ "$name" = "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" ]; then
@@ -505,7 +505,7 @@ jobs:
           # 只对同 tag 的草稿重传这 6 个附件；维护者已上传的 .ed25519.sig 不在 dist/ 里，不会被覆盖。
           sig="MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig"
           had_sig=false
-          if gh release view "${RELEASE_TAG}" --json assets --jq -r '.assets[].name' | tr -d '\r' | grep -qxF "$sig"; then
+          if gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | grep -qxF "$sig"; then
             had_sig=true
           fi
           gh release upload "${RELEASE_TAG}" dist/* --clobber
@@ -523,7 +523,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="$(cd dist && ls -1 | sort)"
-          actual="$(gh release view "${RELEASE_TAG}" --json assets --jq -r '.assets[].name' | tr -d '\r' | sort | grep -vxF "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" || true)"
+          actual="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort | grep -vxF "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" || true)"
           if [ "$actual" != "$expected" ]; then
             echo "❌ 草稿附件与本地构建产物不一致" >&2
             diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
