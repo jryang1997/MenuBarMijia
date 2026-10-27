@@ -149,7 +149,7 @@
 
 ### 睡前一键全关 + 撤销横幅
 
-面板右上角的「**全关**」**按住 0.6 秒**，关掉当前看到的（当前房间、未隐藏的）正在运行的灯、空调、电暖器和风扇。插座（常接路由器、冰箱、鱼缸）和扫地机默认不参与，可在设备右键菜单里选「参与「全关」」（当前未发布的 Windows 源码在设置里勾选；已发布的 Windows 包还没有这一项）。下方快捷栏提供「**全屋关灯**」「**柔和夜灯**」「**关温控风扇**」。
+面板右上角的「**全关**」**按住 0.6 秒**，关掉当前看到的（当前房间、未隐藏的）正在运行的灯、空调、电暖器和风扇。插座（常接路由器、冰箱、鱼缸）和扫地机默认不参与，可在设备右键菜单里选「参与「全关」」（Windows 1.1.0 在设置里勾选）。下方快捷栏提供「**全屋关灯**」「**柔和夜灯**」「**关温控风扇**」。
 
 无论是手动点错，还是语音 / Jev 并发执行了多台设备，面板底部都会浮起一条撤销横幅：**1–2 台设备显示 10 秒，3 台及以上显示 15 秒**（指针停在横幅上会暂停倒计时）。点一下「**撤销**」，被改动的设备会按执行前的值逐条恢复（含原亮度、色温、灯效与空调温度）。横幅消失后，助手的最后一次动作仍会保留「**撤销上一步**」入口，10 分钟内有效。
 
@@ -196,7 +196,7 @@
 
 ## 隐私
 
-- **默认留在本机**：习惯记忆、口头禅与待执行定时保存在你 Mac 本机的 `UserDefaults` 明文配置中（`~/Library/Preferences/`，键名 `assistant_user_habit_memory_v1` 与 `assistant_scheduled_commands_v1`）；米家登录信息、HA 长期访问令牌、AI API 密钥和 LG 电视配对密钥保存在系统钥匙串（Keychain）里，米家会话也不再保存账号级的长期 `passToken`。从旧版本升级时，首次启动会把旧的明文凭证迁入钥匙串，**只有钥匙串写入成功才删除原键**；写入失败时明文副本会保留到下次启动重试，不会出现「凭证明失、需要重新登录」（旧会话数据本身已无法解码的情况除外，那种只能重新扫码登录）。由于 App 使用 ad-hoc 自签名构建，升级后系统可能询问一次钥匙串访问权限；如果拒绝授权，需要重新扫码登录（或重新配对电视）一次。Windows 版当前未发布的源码把米家会话、HA 令牌和 AI Key 放在 Windows 凭据管理器（Credential Manager），WebView 的 `localStorage` 只保留界面设置；升级时先重写不含凭证的设置副本，再尝试写入凭据管理器——因此即使凭据管理器拒绝写入，明文也不会留在 `localStorage`，但该次登录状态只存在于内存中，重启后需要重新登录。**这些还没有随任何 Windows 安装包发布**：已发布的 Windows 包（目前最新是 v1.0.5）仍把这些凭证存在 WebView 的 `localStorage` 里。限制网络请求只发往小米云、你配置的 AI 接口和 HA 地址的严格 CSP 同样尚未发布。
+- **默认留在本机**：习惯记忆、口头禅与待执行定时保存在你 Mac 本机的 `UserDefaults` 明文配置中（`~/Library/Preferences/`，键名 `assistant_user_habit_memory_v1` 与 `assistant_scheduled_commands_v1`）；米家登录信息、HA 长期访问令牌、AI API 密钥和 LG 电视配对密钥保存在系统钥匙串（Keychain）里，米家会话也不再保存账号级的长期 `passToken`。从旧版本升级时，首次启动会把旧的明文凭证迁入钥匙串，**只有钥匙串写入成功才删除原键**；写入失败时明文副本会保留到下次启动重试，不会出现「凭证明失、需要重新登录」（旧会话数据本身已无法解码的情况除外，那种只能重新扫码登录）。1.1.0 发行包使用固定自签名证书，从旧版 ad-hoc 包升级时系统仍可能询问一次钥匙串访问权限；如果拒绝授权，需要重新扫码登录（或重新配对电视）一次。Windows 1.1.0 把米家会话、HA 令牌和 AI Key 放在 Windows 凭据管理器（Credential Manager），WebView 的 `localStorage` 只保留界面设置；升级时先重写不含凭证的设置副本，再尝试写入凭据管理器——因此即使凭据管理器拒绝写入，明文也不会留在 `localStorage`，但该次登录状态只存在于内存中，重启后需要重新登录。旧 Windows 包（至 v1.0.5）仍把凭据存在 WebView 的 `localStorage` 里。1.1.0 同时启用严格 CSP，并将原生请求限制为小米云、你配置的 AI 接口和 HA 地址。独立账号的凭据升级流程仍需实机验收。
 - **发给 AI 的内容**：只有本地听不懂的话才会发给你配置的模型接口，请求体包含这句话、设备名称/房间/状态、时间段、环境摘要，以及（如果开着）习惯摘要。API Key 不会写进提示词，但会作为 HTTP `Authorization: Bearer` 头发给你配置的那个服务（本地 Ollama 等自建接口则发给它本身）；米家登录信息与 HA 令牌不会出现在这条请求里。设置页会说明会发送哪些内容。
 - **可以关**：设置里能关掉「学习我的使用习惯」（关掉后不再记录，也不会发给 AI），也能逐条删除已记住的习惯。
 - **LG 电视连接会固定证书**：首次连接 webOS 电视时，把该次 TLS 叶证书的 SHA-256 按电视 host 存进钥匙串。之后证书一旦变化，客户端直接拒绝连接、停止重试并弹出提示，不会默默信任新的身份。设置里的「重新信任电视」需要二次确认，确认后清除已保存的证书与配对密钥，并要在电视上重新确认配对。已保存的指纹读不出来时，同样按失败处理（失败即关闭）。
@@ -211,7 +211,7 @@
 
 ### 1. 下载安装（或从源码编译）
 
-- **直接安装 DMG**：前往 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest) 下载最新的 macOS 包（当前为 `MenuBarMijia-1.0.6.dmg`），将 `MenuBarMijia.app` 拖入 `/Applications`（应用程序）。由于个人开源项目未购买付费 Apple 开发者公证，首次打开可能被 Gatekeeper 拦截。**推荐做法**：在「系统设置 → 隐私与安全性」底部对这条拦截点「仍要打开」，这样只放行这一个 App，系统其余检查保持有效。也可以在终端运行 `xattr -cr /Applications/MenuBarMijia.app` 放行，但这会清除该 App 的所有扩展属性、跳过隔离检查，请只在确认文件来源（本仓库 Releases 页面）时使用；签名公证上线后这条命令会被删除。
+- **直接安装 DMG**：前往 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest) 下载最新的 macOS 包（1.1.0 为 `MenuBarMijia-1.1.0.dmg`，适用 Apple Silicon），将 `MenuBarMijia.app` 拖入 `/Applications`（应用程序）。由于个人开源项目未购买付费 Apple 开发者公证，首次打开可能被 Gatekeeper 拦截。**推荐做法**：在「系统设置 → 隐私与安全性」底部对这条拦截点「仍要打开」，这样只放行这一个 App，系统其余检查保持有效。也可以在终端运行 `xattr -cr /Applications/MenuBarMijia.app` 放行，但这会清除该 App 的所有扩展属性、跳过隔离检查，请只在确认文件来源（本仓库 Releases 页面）时使用；签名公证上线后这条命令会被删除。
 - **从源码编译并启动**：
   ```bash
   git clone https://github.com/jryang1997/MenuBarMijia.git
@@ -251,13 +251,13 @@ bash scripts/linux-check/run.sh # 没有 Mac 时：在 Linux 上编译并测试 
 
 仓库内置基于 **Tauri v2 (Rust + TypeScript + WebView2)** 的 Windows 11 系统托盘客户端。它不是 macOS 的移植，而是**独立的第二套实现**：小米云协议、设备合成、本地解析与 AI 请求结构各写一遍，靠 ADR-0006 约定的共享测试语料（`Tests/Fixtures/` 下的 `intent_golden.json`、`miot_golden.json`、`provider_golden.json`、`region_golden.json`、`ai_request_golden.json`）在两端的测试里分别断言同一份行为。两端能力并不等同，以本节列出的为准。
 
-`main` 与已发布包都不含本节描述的这些改动；下文说「当前源码」时指尚未发布的开发分支。当前源码里的 Windows 版支持米家云扫码直连（含登录地区选择）和演示模式，**不连接 Home Assistant**。没有菜单栏按住说话，也没有主动安全提醒；语音用 WebView 的 `SpeechRecognition`，全局热键是 `Alt+M`。
+从 1.1.0 起，Windows 版支持米家云扫码直连（含登录地区选择）和演示模式，**不连接 Home Assistant**。没有菜单栏按住说话，也没有主动安全提醒；语音用 WebView 的 `SpeechRecognition`，全局热键是 `Alt+M`。
 
 Windows 的设备控制在云端确认成功后更新卡片，失败时显示错误；批量操作会报告部分失败，撤销只恢复成功指令修改过的属性，并保留原始开关状态。撤销失败可以重试；缺少原始属性值或操作无法逆转时，不提供撤销按钮。
 
 展开灯具详情可切换设备支持的日光、月光等模式；不支持模式切换的灯具不显示模式按钮。
 
-**已发布安装包与开发中的改动**：GitHub Releases 上现有的 Windows 安装包（最近一版含 Windows 附件的是 v1.0.5）早于当前开发分支。登录地区选择（#37）与更新检查（#39）已在开发分支实现，但还没有随任何 Windows 安装包发布；凭据管理器与严格 CSP（#28）、插座与扫地机默认不参与的新版「全关」（#23）同样只在开发分支上。Windows 安装包只有在发布工作流配置了签名证书时才做 Authenticode 签名，否则以未签名形式发布，首次运行可能遇到 SmartScreen 提示。
+Windows 1.1.0 包含登录地区选择（#37）、更新检查（#39）、凭据管理器与严格 CSP（#28），以及插座与扫地机默认不参与的新版「全关」（#23）。地区列表有共享测试，海外真实账号尚未验收。Windows 安装包只有在发布工作流配置了签名证书时才做 Authenticode 签名；本次 1.1.0 为未签名包，首次运行可能遇到 SmartScreen 提示。
 
 原生打包需安装 Visual Studio 的「使用 C++ 的桌面开发」组件和 Windows SDK，并使用 MSVC Rust 工具链。在 x64 Native Tools 命令行中构建；若已有 `CC` 或 `CXX` 环境变量指向其他编译器，在该命令行内设为 `cl.exe`。
 
@@ -269,7 +269,7 @@ npm run build   # TypeScript 严格类型检查 + 前端打包
 npx tauri build # 在 Windows 上打包 .exe (NSIS) 与 .msi 安装包
 ```
 
-每次推送到 `main` 分支时，GitHub Actions 会在核心测试通过后编译 Windows 安装包，并保存为 `MenuBarMijia-Windows-x64` 构建产物；普通推送不会发布任何东西。打 `v*` 标签只会生成**草稿**（6 个构建附件），由维护者离线签名后手动触发 `finalize.yml` 才正式发布；发布后包含 macOS DMG 与其 SHA-256 校验文件，以及 Windows 安装包与各自的校验文件。各版本实际附件并不相同：最新版 [v1.0.6](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.0.6) **只有** `MenuBarMijia-1.0.6.dmg` 与 `MenuBarMijia-1.0.6.dmg.sha256`，Windows 安装包要从 [v1.0.5](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.0.5) 下载（也有 v1.0.4、v1.0.3、v1.0.1，以及文件名带 `MenuMijia-1.0.0-*` 前缀的 v1.0.0）。
+每次推送到 `main` 分支时，GitHub Actions 会在核心测试通过后编译 Windows 安装包，并保存为 `MenuBarMijia-Windows-x64` 构建产物；普通推送不会发布任何东西。打 `v*` 标签只会生成**草稿**（6 个构建附件），由维护者离线签名后手动触发 `finalize.yml` 才正式发布；1.1.0 正式发布时要求七个附件：macOS DMG、其 SHA-256 与 Ed25519 签名，以及 Windows EXE/MSI 和各自的 SHA-256。旧版 v1.0.6 只有 macOS 附件，旧 Windows 包仍可从 v1.0.5 下载。
 
 ### 发布 macOS 安装版
 
