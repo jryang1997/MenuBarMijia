@@ -119,7 +119,11 @@ struct LGWebOSTests {
         store.toggleTVMute(LGWebOSProtocol.deviceId)
         store.toggleTVScreenOff(LGWebOSProtocol.deviceId)
         store.selectTVSource(LGWebOSProtocol.deviceId, source: "HDMI 2")
-        try await Task.sleep(for: .milliseconds(40))
+        // These controls dispatch tasks; wait for delivery rather than assuming a scheduler delay.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while await mock.executedCommands.count < 4, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         let executed = await mock.executedCommands
         #expect(executed.contains(.setSwitch(entityId: LGWebOSProtocol.powerEntityId, isOn: true)))
