@@ -95,7 +95,7 @@ jobs:
           sig="${dmg}.ed25519.sig"
 
           # 先看草稿里有没有离线签名：缺它属于“还没走完第二阶段”，要和“签名不对”区分开。
-          if ! gh release view "${RELEASE_TAG}" --json assets --jq -r '.assets[].name' \
+          if ! gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' \
             | tr -d '\r' | grep -qxF "$sig"; then
             {
               echo "### ⏳ ${RELEASE_TAG} 尚未完成离线签名"
