@@ -21,7 +21,7 @@ import Foundation
 
 // 与 Sources/MijiaCore/UpdateChecker.swift 的 updateSigningPublicKeyBase64 保持一致；
 // 轮换密钥时两处一起改，否则这里会拒绝签名。
-let expectedPublicKeyBase64 = "MV2JL2zxJqfhRCxpyU2gD63WxWF6z3fY5vdO/4pvpJU="
+let expectedPublicKeyBase64 = "SZe6sCJZy/U7JCW4mMU8dVBLJ2pIoWh1EhKCNA0wQRM="
 
 enum SigningError: Error, CustomStringConvertible {
     case usage

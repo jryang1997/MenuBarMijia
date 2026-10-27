@@ -259,7 +259,7 @@ public struct UpdateChecker: Sendable {
 
     /// Ed25519 public key (32-byte raw, base64) that update packages must be signed with.
     /// The private key should stay offline; see `scripts/sign_update.swift` and ADR-0005.
-    public static let updateSigningPublicKeyBase64 = "MV2JL2zxJqfhRCxpyU2gD63WxWF6z3fY5vdO/4pvpJU="
+    public static let updateSigningPublicKeyBase64 = "SZe6sCJZy/U7JCW4mMU8dVBLJ2pIoWh1EhKCNA0wQRM="
 
     public let currentVersion: String
     private let transport: Transport
