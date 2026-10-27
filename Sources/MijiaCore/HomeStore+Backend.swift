@@ -144,24 +144,24 @@ extension HomeStore {
     private func handleProviderEvent(_ event: HomeProviderEvent) {
         switch event {
         case .statusChanged(let status):
-            self.connectionStatus = status
+            if connectionStatus != status { connectionStatus = status }
 
         case .snapshotUpdated(let snapshot):
-            hasReceivedInitialSnapshot = true
+            if !hasReceivedInitialSnapshot { hasReceivedInitialSnapshot = true }
             var nextRooms = snapshot.rooms
             if let lgDev = latestLGDevice, lgConfig.isEnabled,
                !nextRooms.contains(where: { $0.id == lgDev.roomId || $0.name == lgDev.roomName }) {
                 nextRooms.append(RoomArea(id: lgDev.roomId, name: lgDev.roomName, sortOrder: 1))
             }
-            self.rooms = nextRooms
-            self.homes = snapshot.homes
-            self.environmentReadings = snapshot.environmentReadings
+            if rooms != nextRooms { rooms = nextRooms }
+            if homes != snapshot.homes { homes = snapshot.homes }
+            if environmentReadings != snapshot.environmentReadings { environmentReadings = snapshot.environmentReadings }
             if pendingLegacyMenuBarTargetMigration,
                let first = snapshot.environmentReadings.first(where: { $0.temperature != nil }) {
                 self.menuBarTargetId = "temp:\(first.id)"
                 pendingLegacyMenuBarTargetMigration = false
             }
-            self.scenes = snapshot.scenes
+            if scenes != snapshot.scenes { scenes = snapshot.scenes }
 
             let now = ContinuousClock.now
             var merged: [SmartDevice] = []
@@ -186,8 +186,9 @@ extension HomeStore {
                     merged.insert(lgDev, at: 0)
                 }
             }
-            self.devices = merged
-            applyDeviceAliases()
+            // Compare the displayed names so aliases do not cause two observable writes per snapshot.
+            let nextDevices = devicesWithAliases(merged)
+            if devices != nextDevices { devices = nextDevices }
             seedDefaultFavoritesIfNeeded()
             energyHistory.record(devices: devices, now: Date())
 
@@ -222,6 +223,12 @@ extension HomeStore {
     }
 
     public func applyDeviceAliases(_ overrides: [String: String]? = nil) {
+        let nextDevices = devicesWithAliases(devices, overrides: overrides)
+        if devices != nextDevices { devices = nextDevices }
+    }
+
+    private func devicesWithAliases(_ input: [SmartDevice], overrides: [String: String]? = nil) -> [SmartDevice] {
+        var result = input
         let aliases: [String: String]
         if let overrides {
             aliases = overrides
@@ -235,18 +242,19 @@ extension HomeStore {
         } else {
             aliases = [:]
         }
-        for idx in devices.indices {
-            let id = devices[idx].id
-            let baseName = rawDeviceNames[id] ?? devices[idx].name
+        for idx in result.indices {
+            let id = result[idx].id
+            let baseName = rawDeviceNames[id] ?? result[idx].name
             rawDeviceNames[id] = baseName
             if let alias = aliases[id]?.trimmingCharacters(in: .whitespacesAndNewlines),
                !alias.isEmpty,
                alias != baseName {
-                devices[idx].name = alias
+                result[idx].name = alias
             } else {
-                devices[idx].name = baseName
+                result[idx].name = baseName
             }
         }
+        return result
     }
 
     // MARK: - Connection & Settings Management
