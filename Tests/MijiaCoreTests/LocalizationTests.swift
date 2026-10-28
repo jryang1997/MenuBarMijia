@@ -216,6 +216,28 @@ struct LocalizationTests {
         #expect(L10n.fill("亮度 *%（*）", with: ["60", "书房"]) == "亮度 60%（书房）")
     }
 
+    @Test("Traditional Chinese timer descriptions use the shipped resource table")
+    func traditionalTimerDescriptions() {
+        L10n.$overrideLanguage.withValue(.zhHant) {
+            #expect(DelayPhrase.describe(30) == "30 秒後")
+            #expect(DelayPhrase.describe(600) == "10 分鐘後")
+            #expect(DelayPhrase.describe(3600) == "1 小時後")
+            #expect(DelayPhrase.describe(5400) == "1 小時 30 分鐘後")
+        }
+        L10n.$overrideLanguage.withValue(.zhHans) {
+            #expect(DelayPhrase.describe(30) == "30 秒后")
+            #expect(DelayPhrase.describe(600) == "10 分钟后")
+            #expect(DelayPhrase.describe(3600) == "1 小时后")
+            #expect(DelayPhrase.describe(5400) == "1 小时 30 分钟后")
+        }
+        L10n.$overrideLanguage.withValue(.en) {
+            #expect(DelayPhrase.describe(30) == "In 30s: ")
+            #expect(DelayPhrase.describe(600) == "In 10m: ")
+            #expect(DelayPhrase.describe(3600) == "In 1h: ")
+            #expect(DelayPhrase.describe(5400) == "In 1h 30m: ")
+        }
+    }
+
     // MARK: - Temperature units
 
     @Test(

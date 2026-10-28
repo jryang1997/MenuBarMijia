@@ -244,59 +244,62 @@ public enum IntentReply {
             let names = targetsByOp[String(describing: op)] ?? []
             let sep = isEn ? ", " : "、"
             let joined = names.count > 3
-                ? names.prefix(3).joined(separator: sep) + (isEn ? " (+\(names.count - 3) more)" : " 等 \(names.count) 台")
+                ? names.prefix(3).joined(separator: sep) + L10n.format(
+                    " 等 %@ 台", " (+%@ more)", String(isEn ? names.count - 3 : names.count)
+                )
                 : names.joined(separator: sep)
-            if isEn {
-                switch op {
-                case .power(true): return "Turned on \(joined)"
-                case .power(false): return "Turned off \(joined)"
-                case .brightness(let b): return "Set \(joined) brightness to \(b)%"
-                case .colorTemperature(let k): return "Set \(joined) color temp to \(k)K"
-                case .lightEffect(let e): return "Switched \(joined) to \(SmartDevice.localizeEffect(e)) mode"
-                case .hvacMode(let m): return "Switched \(joined) to \(SmartDevice.localizeHVACMode(m))"
-                case .targetTemperature(let t): return "Set \(joined) to \(formatTemperature(t))°C"
-                case .activateScene: return "Activated scene \"\(joined)\""
-                case .fanSpeed(let v): return "Set \(joined) fan speed to \(fanSpeedLabel(v))"
-                case .oscillation(let on): return "\(on ? "Enabled" : "Disabled") oscillation on \(joined)"
-                case .brightnessStep(let d): return "\(d >= 0 ? "Increased" : "Decreased") \(joined) brightness by \(abs(d))%"
-                case .temperatureStep(let d): return "\(d >= 0 ? "Increased" : "Decreased") \(joined) temp by \(formatTemperature(abs(d)))°C"
-                }
-            }
             switch op {
-            case .power(true): return "打开\(joined)"
-            case .power(false): return "关闭\(joined)"
-            case .brightness(let b): return "\(joined)亮度调至 \(b)%"
-            case .colorTemperature(let k): return "\(joined)色温调至 \(k)K"
-            case .lightEffect(let e): return "\(joined)切换为\(SmartDevice.localizeEffect(e))模式"
-            case .hvacMode(let m): return "\(joined)切换为\(SmartDevice.localizeHVACMode(m))"
-            case .targetTemperature(let t): return "\(joined)设为 \(formatTemperature(t))°C"
-            case .activateScene: return "执行场景「\(joined)」"
+            case .power(true): return L10n.format("打开%@", "Turned on %@", joined)
+            case .power(false): return L10n.format("关闭%@", "Turned off %@", joined)
+            case .brightness(let b): return L10n.format("%@亮度调至 %@%", "Set %@ brightness to %@%", joined, String(b))
+            case .colorTemperature(let k): return L10n.format("%@色温调至 %@K", "Set %@ color temp to %@K", joined, String(k))
+            case .lightEffect(let e):
+                return L10n.format("%@切换为%@模式", "Switched %@ to %@ mode", joined, SmartDevice.localizeEffect(e))
+            case .hvacMode(let m):
+                return L10n.format("%@切换为%@", "Switched %@ to %@", joined, SmartDevice.localizeHVACMode(m))
+            case .targetTemperature(let t):
+                let temperature = formatTemperature(L10n.temperatureNumber(t)) + L10n.temperatureSymbol
+                return L10n.format("%@设为 %@", "Set %@ to %@", joined, temperature)
+            case .activateScene: return L10n.format("执行场景「%@」", "Activated scene \"%@\"", joined)
             case .fanSpeed(let v):
                 let label = fanSpeedLabel(v)
-                return "\(joined)风速调为\(label.first?.isNumber == true ? " " : "")\(label)"
-            case .oscillation(let on): return "\(joined)\(on ? "开启" : "关闭")摇头"
-            case .brightnessStep(let d): return "\(joined)亮度\(d >= 0 ? "调高" : "调低") \(abs(d))%"
-            case .temperatureStep(let d): return "\(joined)温度\(d >= 0 ? "调高" : "调低") \(formatTemperature(abs(d)))°C"
+                let spaced = !isEn && label.first?.isNumber == true ? " " + label : label
+                return L10n.format("%@风速调为%@", "Set %@ fan speed to %@", joined, spaced)
+            case .oscillation(let on):
+                return on
+                    ? L10n.format("%@开启摇头", "Enabled oscillation on %@", joined)
+                    : L10n.format("%@关闭摇头", "Disabled oscillation on %@", joined)
+            case .brightnessStep(let d):
+                return d >= 0
+                    ? L10n.format("%@亮度调高 %@%", "Increased %@ brightness by %@%", joined, String(abs(d)))
+                    : L10n.format("%@亮度调低 %@%", "Decreased %@ brightness by %@%", joined, String(abs(d)))
+            case .temperatureStep(let d):
+                let delta = L10n.temperatureUnit == .fahrenheit ? abs(d) * 9 / 5 : abs(d)
+                let temperature = formatTemperature(delta) + L10n.temperatureSymbol
+                return d >= 0
+                    ? L10n.format("%@温度调高 %@", "Increased %@ temp by %@", joined, temperature)
+                    : L10n.format("%@温度调低 %@", "Decreased %@ temp by %@", joined, temperature)
             }
         }
         if clauses.isEmpty { return "" }
-        return isEn ? clauses.joined(separator: "; ") : "已" + clauses.joined(separator: "，")
+        return isEn ? clauses.joined(separator: "; ") : L10n.tr("已", "") + clauses.joined(separator: "，")
     }
 
     /// "Level3" → "3 档"，"high" → "高档"；其余原样返回。
     public static func fanSpeedLabel(_ raw: String) -> String {
         let lowered = raw.lowercased()
-        if L10n.isEnglish {
-            if lowered.hasPrefix("level"), let n = Int(lowered.dropFirst(5)) { return "Level \(n)" }
-            let enNames = [
-                "low": "Low", "medium": "Medium", "middle": "Medium", "mid": "Medium",
-                "high": "High", "auto": "Auto", "silent": "Silent", "sleep": "Sleep"
-            ]
-            return enNames[lowered] ?? raw
+        if lowered.hasPrefix("level"), let n = Int(lowered.dropFirst(5)) {
+            return L10n.format("%@ 档", "Level %@", String(n))
         }
-        if lowered.hasPrefix("level"), let n = Int(lowered.dropFirst(5)) { return "\(n) 档" }
-        let names = ["low": "低档", "medium": "中档", "middle": "中档", "mid": "中档", "high": "高档", "auto": "自动", "silent": "静音", "sleep": "睡眠"]
-        return names[lowered] ?? raw
+        switch lowered {
+        case "low": return L10n.tr("低档", "Low")
+        case "medium", "middle", "mid": return L10n.tr("中档", "Medium")
+        case "high": return L10n.tr("高档", "High")
+        case "auto": return L10n.tr("自动", "Auto")
+        case "silent": return L10n.tr("静音", "Silent")
+        case "sleep": return L10n.tr("睡眠", "Sleep")
+        default: return raw
+        }
     }
 
     static func formatTemperature(_ t: Double) -> String {

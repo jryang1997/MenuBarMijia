@@ -430,38 +430,31 @@ public struct UserHabitMemory: Codable, Equatable, Sendable {
             return scene.name
         }
         guard let dev = devices.first(where: { $0.id == intent.targetId }) else { return nil }
-        if L10n.isEnglish {
-            switch intent.operation {
-            case .power(true): return "Turn on \(dev.name)"
-            case .power(false): return "Turn off \(dev.name)"
-            case .lightEffect(let effect):
-                let label = effect.lowercased() == "night" ? "Moonlight" : (effect.lowercased() == "day" ? "Daylight" : effect)
-                return "\(dev.name) · \(label)"
-            case .brightness(let pct): return "\(dev.name) · \(pct)%"
-            case .colorTemperature(let k): return "\(dev.name) · \(k)K"
-            case .hvacMode(let mode): return "\(dev.name) · \(SmartDevice.localizeHVACMode(mode))"
-            case .targetTemperature(let t): return "\(dev.name) · \(Int(t.rounded()))°C"
-            case .activateScene: return nil
-            case .fanSpeed(let v): return "\(dev.name) · Fan \(IntentReply.fanSpeedLabel(v))"
-            case .oscillation(let on): return "\(dev.name) · \(on ? "Swing On" : "Swing Off")"
-            case .brightnessStep, .temperatureStep: return nil
-            }
-        }
         switch intent.operation {
-        case .power(true): return "打开\(dev.name)"
-        case .power(false): return "关闭\(dev.name)"
+        case .power(true): return L10n.format("打开%@", "Turn on %@", dev.name)
+        case .power(false): return L10n.format("关闭%@", "Turn off %@", dev.name)
         case .lightEffect(let effect):
-            let label = effect.lowercased() == "night" ? "月光模式" : (effect.lowercased() == "day" ? "日光模式" : effect)
-            return "\(dev.name)·\(label)"
-        case .brightness(let pct): return "\(dev.name)·亮度\(pct)%"
-        case .colorTemperature(let k): return "\(dev.name)·色温\(k)K"
+            let label: String
+            switch effect.lowercased() {
+            case "night": label = L10n.tr("月光模式", "Moonlight")
+            case "day": label = L10n.tr("日光模式", "Daylight")
+            default: label = effect
+            }
+            return L10n.format("%@·%@", "%@ · %@", dev.name, label)
+        case .brightness(let pct): return L10n.format("%@·亮度%@%", "%@ · %@%", dev.name, String(pct))
+        case .colorTemperature(let k): return L10n.format("%@·色温%@K", "%@ · %@K", dev.name, String(k))
         case .hvacMode(let mode):
-            let cn = ["cool": "制冷", "heat": "制热", "dry": "除湿", "fan_only": "送风", "auto": "自动", "off": "关闭"][mode] ?? mode
-            return "\(dev.name)·\(cn)"
-        case .targetTemperature(let t): return "\(dev.name)·\(Int(t.rounded()))°C"
+            return L10n.format("%@·%@", "%@ · %@", dev.name, SmartDevice.localizeHVACMode(mode))
+        case .targetTemperature(let t):
+            let temperature = IntentReply.formatTemperature(L10n.temperatureNumber(t)) + L10n.temperatureSymbol
+            return L10n.format("%@·%@", "%@ · %@", dev.name, temperature)
         case .activateScene: return nil
-        case .fanSpeed(let v): return "\(dev.name)·风速\(IntentReply.fanSpeedLabel(v))"
-        case .oscillation(let on): return "\(dev.name)·\(on ? "摇头" : "停止摇头")"
+        case .fanSpeed(let v):
+            return L10n.format("%@·风速%@", "%@ · Fan %@", dev.name, IntentReply.fanSpeedLabel(v))
+        case .oscillation(let on):
+            return on
+                ? L10n.format("%@·摇头", "%@ · Swing On", dev.name)
+                : L10n.format("%@·停止摇头", "%@ · Swing Off", dev.name)
         case .brightnessStep, .temperatureStep: return nil
         }
     }
