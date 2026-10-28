@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import Testing
 @testable import MijiaCore
 
@@ -74,6 +75,80 @@ struct KeychainCredentialTests {
         KeychainHelper.migratePlaintextSecret(defaults: defaults, plaintextKey: plaintextKey, account: blankAccount)
         #expect(defaults.string(forKey: plaintextKey) == nil)
         #expect(KeychainHelper.loadSecret(account: blankAccount).isEmpty)
+    }
+
+    @Test("Legacy plaintext cannot replace an existing Keychain credential")
+    func migrationPreservesExistingCredential() throws {
+        let suite = "test.keychain-existing.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let account = scratchAccount("existing-migration")
+        let plaintextKey = "legacy-secret"
+        defer {
+            KeychainHelper.saveSecret("", account: account)
+            defaults.removePersistentDomain(forName: suite)
+        }
+
+        try #require(KeychainHelper.saveSecret("current-secure-value", account: account))
+        defaults.set("stale-plaintext-value", forKey: plaintextKey)
+        KeychainHelper.migratePlaintextSecret(defaults: defaults, plaintextKey: plaintextKey, account: account)
+
+        #expect(KeychainHelper.readKeychainSecret(account: account) == "current-secure-value")
+        #expect(defaults.object(forKey: plaintextKey) == nil)
+    }
+
+    @Test("Migration cannot overwrite a credential saved concurrently")
+    func migrationPreservesConcurrentLogin() throws {
+        let account = scratchAccount("concurrent-migration")
+        defer { KeychainHelper.saveSecret("", account: account) }
+
+        let migrated = KeychainHelper.insertMigratedKeychainData(Data("legacy-value".utf8), account: account, addItem: { query in
+            #expect(KeychainHelper.saveSecret("new-login", account: account))
+            return SecItemAdd(query, nil)
+        })
+        #expect(migrated)
+        #expect(KeychainHelper.readKeychainSecret(account: account) == "new-login")
+    }
+
+    @Test("A failed migration cannot replace or delete a protected credential")
+    func migrationFailurePreservesCredential() throws {
+        let account = scratchAccount("denied-migration")
+        defer { KeychainHelper.saveSecret("", account: account) }
+        try #require(KeychainHelper.saveSecret("protected-value", account: account))
+
+        #expect(!KeychainHelper.insertMigratedKeychainData(
+            Data("legacy-value".utf8), account: account,
+            addItem: { _ in errSecInteractionNotAllowed }
+        ))
+        #expect(KeychainHelper.readKeychainSecret(account: account) == "protected-value")
+    }
+
+    @Test("Legacy session migration preserves an existing login or inserts a sanitized session")
+    func sessionMigrationPreservesExistingLogin() throws {
+        let suite = "test.session-existing.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        let account = scratchAccount("session-migration")
+        defer {
+            KeychainHelper.saveSecret("", account: account)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let current = MiSession(userId: "current", cUserId: "c", ssecurity: "secure", serviceToken: "current-token")
+        let currentData = try JSONEncoder().encode(current)
+        let legacy = Data(#"{"userId":"old","cUserId":"c","ssecurity":"legacy","serviceToken":"old-token","passToken":"discard-me","region":"cn"}"#.utf8)
+        try #require(KeychainHelper.writeKeychainData(currentData, account: account))
+        defaults.set(legacy, forKey: MiSessionStore.fallbackDefaultsKey)
+
+        KeychainHelper.migratePlaintextSession(defaults: defaults, account: account)
+        #expect(KeychainHelper.readKeychainData(account: account) == currentData)
+        #expect(defaults.object(forKey: MiSessionStore.fallbackDefaultsKey) == nil)
+
+        KeychainHelper.deleteKeychainItem(account: account)
+        defaults.set(legacy, forKey: MiSessionStore.fallbackDefaultsKey)
+        KeychainHelper.migratePlaintextSession(defaults: defaults, account: account)
+        let migrated = try #require(KeychainHelper.readKeychainData(account: account))
+        let object = try #require(try JSONSerialization.jsonObject(with: migrated) as? [String: Any])
+        #expect(object["serviceToken"] as? String == "old-token")
+        #expect(object["passToken"] == nil)
+        #expect(defaults.object(forKey: MiSessionStore.fallbackDefaultsKey) == nil)
     }
 
     @Test("Startup migration reads exactly the plaintext keys that ≤1.0.6 wrote")
