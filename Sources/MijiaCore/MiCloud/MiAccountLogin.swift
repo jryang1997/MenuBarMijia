@@ -244,11 +244,8 @@ public enum MiSessionStore {
             defaults.set(data, forKey: fallbackDefaultsKey)
             return true
         }
-        let written = KeychainHelper.writeKeychainData(
-            data,
-            account: keychainAccount,
-            accessibility: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
-        )
+        // The vault item itself is `AfterFirstUnlockThisDeviceOnly`, so the session stays off backups.
+        let written = KeychainHelper.writeKeychainData(data, account: keychainAccount)
         guard written else { return false }
         // The plaintext mirror is gone (#16): the Keychain is the only store.
         defaults.removeObject(forKey: fallbackDefaultsKey)

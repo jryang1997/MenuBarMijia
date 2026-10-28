@@ -9,7 +9,10 @@ struct MenuBarMijiaApp: App {
     @NSApplicationDelegateAdaptor(MenuBarMijiaAppDelegate.self) private var appDelegate
 
     init() {
+        // Creating the store reads the Keychain; explain the post-upgrade prompt before macOS shows it (#16).
+        KeychainUpgradeNotice.presentIfNeeded()
         let sharedStore = HomeStore.shared
+        KeychainUpgradeNotice.recordIfLoaded()
         // The menu-bar item, its label, tooltip, long press and panel all live in the AppKit
         // controller now (#56), so there is no `MenuBarExtra` scene left to host.
         HotkeyAndNotificationManager.shared.start(with: sharedStore)

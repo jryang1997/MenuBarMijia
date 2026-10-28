@@ -56,68 +56,34 @@ public enum KeychainHelper {
 
     // MARK: - Keychain Primitives
 
-    static func readKeychainSecret(account: String) -> String? {
-        guard let data = readKeychainData(account: account),
+    /// Every credential is one entry of `CredentialVault` (a single Keychain item, read once per process), so
+    /// these keep their per-account shape while macOS only ever sees one item (#16).
+    static func readKeychainSecret(account: String, vault: CredentialVault = .shared) -> String? {
+        guard let data = readKeychainData(account: account, vault: vault),
               let text = String(data: data, encoding: .utf8) else { return nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    static func readKeychainData(account: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
-        return item as? Data
+    static func readKeychainData(account: String, vault: CredentialVault = .shared) -> Data? {
+        vault.data(for: account)
     }
 
     /// Saving an empty value deletes the item.
     @discardableResult
-    static func writeKeychainSecret(_ value: String, account: String) -> Bool {
+    static func writeKeychainSecret(_ value: String, account: String, vault: CredentialVault = .shared) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return writeKeychainData(trimmed.isEmpty ? nil : trimmed.data(using: .utf8), account: account)
+        return writeKeychainData(trimmed.isEmpty ? nil : trimmed.data(using: .utf8), account: account, vault: vault)
     }
 
-    /// Passing `nil` deletes the item.
+    /// Passing `nil` deletes the item. A refused write keeps the previous value.
     @discardableResult
-    static func writeKeychainData(
-        _ data: Data?, account: String, accessibility: String? = nil,
-        updateItem: (CFDictionary, CFDictionary) -> OSStatus = SecItemUpdate,
-        addItem: (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
-    ) -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        guard let data else {
-            let status = SecItemDelete(query as CFDictionary)
-            return status == errSecSuccess || status == errSecItemNotFound
-        }
-        var attributes: [String: Any] = [kSecValueData as String: data]
-        if let accessibility {
-            attributes[kSecAttrAccessible as String] = accessibility
-        }
-        let status = updateItem(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecSuccess { return true }
-        guard status == errSecItemNotFound else { return false }
-        let addQuery = query.merging(attributes) { _, newValue in newValue }
-        return addItem(addQuery as CFDictionary) == errSecSuccess
+    static func writeKeychainData(_ data: Data?, account: String, vault: CredentialVault = .shared) -> Bool {
+        vault.set(data, for: account)
     }
 
-    static func deleteKeychainItem(account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
+    static func deleteKeychainItem(account: String, vault: CredentialVault = .shared) {
+        vault.set(nil, for: account)
     }
 
     // MARK: - Plaintext Migration (#16, #27)
@@ -141,44 +107,23 @@ public enum KeychainHelper {
     }
 
     /// Legacy plaintext must never replace a credential already protected by Keychain. Keep the plaintext
-    /// for retry when neither insertion nor reading an existing item succeeds.
-    static func migratePlaintextSecret(defaults: UserDefaults, plaintextKey: String, account: String) {
+    /// for retry when the vault cannot be read or written.
+    static func migratePlaintextSecret(
+        defaults: UserDefaults, plaintextKey: String, account: String, vault: CredentialVault = .shared
+    ) {
         guard let raw = defaults.string(forKey: plaintextKey) else { return }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.isEmpty || insertMigratedKeychainData(Data(value.utf8), account: account) else { return }
+        guard value.isEmpty || vault.insertIfMissing(Data(value.utf8), for: account) else { return }
         defaults.removeObject(forKey: plaintextKey)
     }
 
-    /// Add atomically: a read-then-update could overwrite a login saved between those operations.
-    @discardableResult
-    static func insertMigratedKeychainData(
-        _ data: Data, account: String, accessibility: String? = nil,
-        addItem: (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
-    ) -> Bool {
-        var query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-        if let accessibility {
-            query[kSecAttrAccessible as String] = accessibility
-        }
-        let status = addItem(query as CFDictionary)
-        if status == errSecSuccess { return true }
-        return status == errSecDuplicateItem && readKeychainData(account: account) != nil
-    }
-
-    static func migratePlaintextSession(defaults: UserDefaults, account: String = MiSessionStore.keychainAccount) {
+    static func migratePlaintextSession(
+        defaults: UserDefaults, account: String = MiSessionStore.keychainAccount, vault: CredentialVault = .shared
+    ) {
         guard let legacy = defaults.data(forKey: MiSessionStore.fallbackDefaultsKey) else { return }
         // Re-encoding through `MiSession` drops the `passToken` that ≤1.0.6 also persisted (#27, ADR-0004).
         if let data = MiSessionStore.migratedData(fromLegacyDefaults: legacy) {
-            let written = insertMigratedKeychainData(
-                data,
-                account: account,
-                accessibility: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
-            )
-            guard written else { return }
+            guard vault.insertIfMissing(data, for: account) else { return }
         }
         defaults.removeObject(forKey: MiSessionStore.fallbackDefaultsKey)
     }
