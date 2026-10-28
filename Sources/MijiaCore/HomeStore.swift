@@ -219,6 +219,7 @@ public final class HomeStore {
     public internal(set) var isDiscoveringHA: Bool = false
 
     var provider: any HomeProvider
+    var controlContextID = UUID()
     var lgWebOSClient: LGWebOSClient?
     let isTestEnvironment: Bool
     var latestLGDevice: SmartDevice?
