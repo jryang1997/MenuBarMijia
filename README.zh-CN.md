@@ -19,7 +19,9 @@
 > 本项目是个人开源作品，与小米、米家、美的无关，也未获得其授权或认可。「小米」「米家」「美的」等是各自权利人的商标，本文仅用于说明兼容对象。
 
 <p align="center">
+  <a href="https://github.com/jryang1997/MenuBarMijia/releases/latest"><img src="https://img.shields.io/github/v/release/jryang1997/MenuBarMijia?color=0A84FF&label=release" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Windows_11-Tauri_v2-0078D4?logo=windows11&logoColor=white" alt="Windows 11 Tauri v2">
   <img src="https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white" alt="Swift 6">
   <img src="https://img.shields.io/badge/Jev-System_One-结构化并发决策-7C3AED" alt="Jev System One">
   <img src="https://img.shields.io/badge/连接方式-米家扫码直连_%7C_Home_Assistant-30D158" alt="双后端支持">
@@ -27,10 +29,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.0">下载 v1.1.0</a> ·
+  <a href="https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.1">下载 v1.1.1</a> ·
   <a href="#快速开始">安装与连接</a> ·
   <a href="CHANGELOG.md">完整更新记录</a>
 </p>
+
+```bash
+brew install --cask jryang1997/tap/menubarmijia
+```
 
 <p align="center">
   <img src="docs/assets/v1.1.0/panel.png" width="440" alt="1.1.0 macOS 控制面板实录，演示家庭中的设备卡片、房间与快捷操作">
@@ -54,10 +60,11 @@
 | 想锁屏关书房灯、回来再开 | 在设置里指定触发条件与设备，或把控制动作接进 macOS「快捷指令」。规则默认空白，由你决定自动做什么。 |
 | 希望面板按自己的习惯摆 | 九套皮肤、四档高度、拖拽排序、自定义折叠分组和不同大小卡片，空调可直接显示整行温控。 |
 
-## 1.1.0 这次值得升级的地方
+## 1.1.1 与 1.1.0 这次值得升级的地方
 
 | 新变化 | 实际影响 |
 | --- | --- |
+| 1.1.1 体验与安全加固 | macOS 凭据合并入单一条目（`CredentialVault`），跨版本升级最多询问一次钥匙串；撤销按属性与家庭隔离；离线插座不写入缓存功率；点击面板外部自动收起；打通 Homebrew Tap 一行命令安装。 |
 | 拼音搜索与键盘选择 | 输入 `sftd` 找到演示家庭的「书房台灯」，不必切中文输入法。支持名字和房间搜索。 |
 | 系统快捷指令与 URL 控制 | 提供「切换设备」「执行场景」「一句话控制」「查询房间温湿度」四个动作。URL 控制默认先确认。 |
 | Mac 状态自动化 | 支持离开、回来、外接屏连接与断开；同一触发一分钟内去重，执行后可撤销。 |
@@ -238,7 +245,12 @@ AI 把握达到 80% 的动作才会自动执行，低于阈值或未提供把握
 
 ### 1. 下载安装（或从源码编译）
 
-- **直接安装 DMG**：前往 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest) 下载最新的 macOS 包（1.1.0 为 `MenuBarMijia-1.1.0.dmg`，适用 Apple Silicon），将 `MenuBarMijia.app` 拖入 `/Applications`（应用程序）。由于个人开源项目未购买付费 Apple 开发者公证，首次打开可能被 Gatekeeper 拦截。**推荐做法**：在「系统设置 → 隐私与安全性」底部对这条拦截点「仍要打开」，这样只放行这一个 App，系统其余检查保持有效。也可以在终端运行 `xattr -cr /Applications/MenuBarMijia.app` 放行，但这会清除该 App 的所有扩展属性、跳过隔离检查，请只在确认文件来源（本仓库 Releases 页面）时使用；签名公证上线后这条命令会被删除。
+- **Homebrew 一行安装（macOS）**：
+  ```bash
+  brew install --cask jryang1997/tap/menubarmijia
+  ```
+  Homebrew 7+ 首次从第三方 tap 安装 cask 时若提示信任检查，可先执行 `brew trust --cask jryang1997/tap/menubarmijia`。该 cask 同样下载 Releases 页面经过 SHA-256 校验的 DMG，不会替你跳过系统隔离检查。
+- **直接安装 DMG / Windows 安装包**：前往 [GitHub Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest) 下载最新的安装包（1.1.1 为 macOS `MenuBarMijia-1.1.1.dmg`，适用 Apple Silicon；Windows 为 `MenuBarMijia-1.1.1-windows-x64-setup.exe` / `.msi`），macOS 将 `MenuBarMijia.app` 拖入 `/Applications`（应用程序）。由于个人开源项目未购买付费 Apple 开发者公证，首次打开可能被 Gatekeeper 拦截。**推荐做法**：在「系统设置 → 隐私与安全性」底部对这条拦截点「仍要打开」，这样只放行这一个 App，系统其余检查保持有效。也可以在终端运行 `xattr -cr /Applications/MenuBarMijia.app` 放行，但这会清除该 App 的所有扩展属性、跳过隔离检查，请只在确认文件来源（本仓库 Releases 页面）时使用；签名公证上线后这条命令会被删除。
 - **从源码编译并启动**：
   ```bash
   git clone https://github.com/jryang1997/MenuBarMijia.git
@@ -405,3 +417,5 @@ docs/                                   ADR、规格文档与 README 实机截�
 ## License
 
 [MIT](LICENSE) © jryang1997 (一群小羊说)
+
+如果这个小工具让你在电脑前少掏了几次手机，欢迎点个 ⭐ Star 支持后续迭代。

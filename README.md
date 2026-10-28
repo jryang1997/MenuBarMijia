@@ -27,10 +27,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.0">Download v1.1.0</a> ·
+  <a href="https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.1">Download v1.1.1</a> ·
   <a href="#install">Install and connect</a> ·
   <a href="CHANGELOG.md">Changelog</a>
 </p>
+
+```bash
+brew install --cask jryang1997/tap/menubarmijia
+```
 
 <p align="center">
   <img src="docs/assets/v1.1.0/panel.png" width="440" alt="MenuBarMijia 1.1.0 running on macOS with the built-in demo home">
@@ -54,8 +58,9 @@ This is a personal open-source project, not affiliated with, authorized by, or e
 | Turn off study lights when leaving the Mac | Create an Away rule or combine the app's actions with other apps in macOS Shortcuts. No automation rules are enabled by default. |
 | Arrange controls your way | Choose nine skins, four heights, custom groups, card sizes, drag ordering, and inline climate controls. |
 
-## What's new in 1.1.0
+## What's new in 1.1.1 & 1.1.0
 
+- **1.1.1 highlights**: Single-item Keychain vault (`CredentialVault`) so macOS updates prompt once with a clear explanation; property-scoped undo isolated per home; offline plugs skipped when recording energy; clicking outside dismisses the panel; notification status refreshes when returning from System Settings; and Homebrew tap auto-sync (`brew install --cask jryang1997/tap/menubarmijia`).
 - Search by name, room, or Pinyin initials, with keyboard selection and control.
 - Four macOS Shortcuts actions: toggle a device, run a scene, control with a sentence, and query room temperature and humidity. URL commands ask for confirmation by default.
 - Mac automation triggers for Away, Back, and external display connection or disconnection. Repeated events are deduplicated for one minute; actions support undo.
@@ -102,11 +107,19 @@ The Swift package has no third-party Swift dependencies and uses Swift 6 strict 
 
 ## Install
 
+### Homebrew (macOS)
+
+```bash
+brew install --cask jryang1997/tap/menubarmijia
+```
+
+On Homebrew 7+, if prompted to trust the third-party tap on first install, run `brew trust --cask jryang1997/tap/menubarmijia` first. The cask installs the same release DMG verified by SHA-256 and does not bypass Gatekeeper quarantine.
+
 ### GitHub Releases
 
 Releases: <https://github.com/jryang1997/MenuBarMijia/releases>
 
-[v1.1.0](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.0) packages are `MenuBarMijia-1.1.0.dmg` for macOS 14+ on Apple Silicon, and `MenuBarMijia-1.1.0-windows-x64-setup.exe` / `.msi` for Windows x64. Download the published packages from [Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest); each installer has a SHA-256 file and the DMG also has an Ed25519 update signature.
+[v1.1.1](https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.1) packages are `MenuBarMijia-1.1.1.dmg` for macOS 14+ on Apple Silicon, and `MenuBarMijia-1.1.1-windows-x64-setup.exe` / `.msi` for Windows x64. Download the published packages from [Releases](https://github.com/jryang1997/MenuBarMijia/releases/latest); each installer has a SHA-256 file and the DMG also has an Ed25519 update signature.
 
 The macOS release uses a fixed self-signed certificate and is not Apple-notarized. On first launch, macOS may block it. The safer fix is **System Settings → Privacy & Security → Open Anyway**, which clears the block for this one app only. Running `xattr -cr /Applications/MenuBarMijia.app` also works, but it strips every extended attribute from the bundle and skips the quarantine check entirely, so use it only if you downloaded the file from this repository's Releases page. The command will be removed once Apple signing and notarization are in place.
 
@@ -308,3 +321,5 @@ Thanks to everyone who has contributed features, fixes, and feedback:
 ## License
 
 [MIT](LICENSE) © jryang1997 (一群小羊说). The MIT license covers this project’s own source.
+
+If MenuBarMijia saves you a few trips to your phone, a ⭐ Star on GitHub is always appreciated.
