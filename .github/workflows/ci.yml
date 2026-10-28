@@ -21,6 +21,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  nas-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test NAS deployment safety
+        run: bash scripts/test_nas_setup.sh
+
   linux-core:
     # 验证密钥扫描、编码规范与 MijiaCore 全量单测（Ubuntu + Swift 6.1）
     runs-on: ubuntu-latest
