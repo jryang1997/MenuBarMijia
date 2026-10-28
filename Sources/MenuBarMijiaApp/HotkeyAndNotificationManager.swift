@@ -14,6 +14,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
     private var localKeyMonitor: Any?
     private var localFlagsMonitor: Any?
     private var windowBecomeKeyObserver: NSObjectProtocol?
+    private var applicationBecomeActiveObserver: NSObjectProtocol?
     private var safetyTimerTask: Task<Void, Never>?
     private var pendingAlertsById: [String: SafetyAlert] = [:]
 
@@ -24,6 +25,13 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
 
     private override init() {
         super.init()
+        applicationBecomeActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshNotificationPermission()
+            }
+        }
     }
 
     public func start(with store: HomeStore) {
