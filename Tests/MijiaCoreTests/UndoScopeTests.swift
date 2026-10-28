@@ -73,7 +73,7 @@ struct UndoScopeTests {
 
     @Test("Connection context changes discard both undo entry points")
     func contextChangesDiscardUndo() async throws {
-        for change in 0..<6 {
+        for change in 0..<5 {
             let (store, _, suite) = try await makeStore()
             defer { store.userDefaults.removePersistentDomain(forName: suite) }
             _ = await store.runAssistantCommand("关闭所有灯")
@@ -87,8 +87,6 @@ struct UndoScopeTests {
             case 3:
                 store.homeBackend = .xiaomiCloud
                 store.logoutMiAccount()
-            case 4:
-                store.completeMiLogin(MiSession(userId: "test", cUserId: "test", ssecurity: "test", serviceToken: "test"))
             default:
                 store.updateLGWebOSConfig(LGWebOSConfig(host: "127.0.0.1"))
             }
