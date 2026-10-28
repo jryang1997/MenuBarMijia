@@ -140,22 +140,42 @@ public enum KeychainHelper {
         migratePlaintextSession(defaults: defaults)
     }
 
-    /// A plaintext copy is dropped only after the Keychain accepted the value, so a Keychain failure never loses
-    /// the credential (the next launch retries). Internal so tests can migrate a scratch key/account pair.
+    /// Legacy plaintext must never replace a credential already protected by Keychain. Keep the plaintext
+    /// for retry when neither insertion nor reading an existing item succeeds.
     static func migratePlaintextSecret(defaults: UserDefaults, plaintextKey: String, account: String) {
         guard let raw = defaults.string(forKey: plaintextKey) else { return }
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.isEmpty || writeKeychainSecret(value, account: account) else { return }
+        guard value.isEmpty || insertMigratedKeychainData(Data(value.utf8), account: account) else { return }
         defaults.removeObject(forKey: plaintextKey)
     }
 
-    private static func migratePlaintextSession(defaults: UserDefaults) {
+    /// Add atomically: a read-then-update could overwrite a login saved between those operations.
+    @discardableResult
+    static func insertMigratedKeychainData(
+        _ data: Data, account: String, accessibility: String? = nil,
+        addItem: (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
+    ) -> Bool {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data
+        ]
+        if let accessibility {
+            query[kSecAttrAccessible as String] = accessibility
+        }
+        let status = addItem(query as CFDictionary)
+        if status == errSecSuccess { return true }
+        return status == errSecDuplicateItem && readKeychainData(account: account) != nil
+    }
+
+    static func migratePlaintextSession(defaults: UserDefaults, account: String = MiSessionStore.keychainAccount) {
         guard let legacy = defaults.data(forKey: MiSessionStore.fallbackDefaultsKey) else { return }
         // Re-encoding through `MiSession` drops the `passToken` that ≤1.0.6 also persisted (#27, ADR-0004).
         if let data = MiSessionStore.migratedData(fromLegacyDefaults: legacy) {
-            let written = writeKeychainData(
+            let written = insertMigratedKeychainData(
                 data,
-                account: MiSessionStore.keychainAccount,
+                account: account,
                 accessibility: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
             )
             guard written else { return }
