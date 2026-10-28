@@ -570,7 +570,7 @@ export class MenuMijiaWindowsApp {
   private settings: PersistedSettings = this.loadedSettings.settings;
   private readonly credentialVault = new CredentialVault();
   /** Serialized host list last sent to Rust; avoids re-sending it on every periodic settings save. */
-  private lastAllowedHosts: string | null = null;
+  private lastAllowedOrigins: string | null = null;
   // Assigned in the constructor, after the interface language is resolved: the demo home is
   // generated per language (#52), so a field initializer would freeze the module default.
   private devices: SmartDevice[];
@@ -634,7 +634,7 @@ export class MenuMijiaWindowsApp {
         : demoDevices();
     this.scenes = this.settings.connectionMode === "xiaomiCloud" ? [] : demoScenes();
     this.initializeCredentials();
-    this.syncAllowedHosts();
+    this.syncAllowedOrigins();
 
     if (!this.settings.hasCompletedOnboarding && !this.settings.miSession) {
       this.activeSheet = "onboarding";
@@ -690,7 +690,7 @@ export class MenuMijiaWindowsApp {
         this.settings.miCloudRegion = normalizeMiCloudRegion(this.settings.miSession.region);
         if (this.activeSheet === "onboarding") this.activeSheet = "none";
       }
-      this.syncAllowedHosts();
+      this.syncAllowedOrigins();
       writeSettingsForStorage(this.settings);
       if (this.settings.connectionMode === "xiaomiCloud" && this.settings.miSession) {
         void this.refreshXiaomiDevices(true);
@@ -711,7 +711,7 @@ export class MenuMijiaWindowsApp {
 
   private saveSettings(): void {
     writeSettingsForStorage(this.settings);
-    this.syncAllowedHosts();
+    this.syncAllowedOrigins();
     void this.persistCredentials();
   }
 
@@ -733,24 +733,21 @@ export class MenuMijiaWindowsApp {
     applyTemperatureUnit(locale, this.settings.temperatureUnit);
   }
 
-  /**
-   * Tells Rust which user-configured hosts `native_http` may reach. Xiaomi's own API
-   * hosts are built into the Rust whitelist; this list adds the assistant endpoint and
-   * Home Assistant. Residual risk: injected frontend code could extend the list, but
-   * the CSP blocks injection and credentials are no longer read from persistent
-   * WebView storage (only held in memory while the app runs).
-   */
-  private syncAllowedHosts(): void {
-    const hosts: string[] = [];
+  /** This frontend-controlled list constrains requests; it does not authorize settings changes. */
+  private syncAllowedOrigins(): void {
+    const origins: string[] = [];
     for (const url of [this.settings.assistantBaseURL, this.settings.haBaseURL]) {
       const endpoint = parseAssistantEndpoint(url);
-      if (endpoint) hosts.push(endpoint.host);
+      if (!endpoint) continue;
+      const host = endpoint.host.includes(":") ? `[${endpoint.host}]` : endpoint.host;
+      const port = endpoint.port === null ? "" : `:${endpoint.port}`;
+      origins.push(`${endpoint.scheme}://${host}${port}`);
     }
-    hosts.sort();
-    const serialized = hosts.join("\n");
-    if (serialized === this.lastAllowedHosts) return;
-    this.lastAllowedHosts = serialized;
-    invokeTauriVoid("set_allowed_hosts", { hosts });
+    origins.sort();
+    const serialized = origins.join("\n");
+    if (serialized === this.lastAllowedOrigins) return;
+    this.lastAllowedOrigins = serialized;
+    invokeTauriVoid("set_allowed_origins", { origins });
   }
 
   /** Restores the last known release so an update found yesterday still shows after a restart. */
