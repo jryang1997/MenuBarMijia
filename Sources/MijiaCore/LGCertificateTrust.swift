@@ -97,27 +97,16 @@ final class LGCertificateTrust: @unchecked Sendable {
             guard let value = stored as? String, !value.isEmpty else { throw Failure.unavailable }
             return value
         }
-        #if os(macOS)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: KeychainHelper.service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8), !value.isEmpty else {
+        // A pin that cannot be read fails closed; only a pin that is known to be absent reads as nil.
+        switch CredentialVault.shared.lookup(account) {
+        case .missing:
+            return nil
+        case .unavailable:
             throw Failure.unavailable
+        case .value(let data):
+            guard let value = String(data: data, encoding: .utf8), !value.isEmpty else { throw Failure.unavailable }
+            return value
         }
-        return value
-        #else
-        throw Failure.unavailable
-        #endif
     }
 
     private func save(_ value: String, account: String) -> Bool {
