@@ -23,6 +23,15 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
   const values = new Map<number, unknown>([[1, true], [2, 50], [3, 4100]]);
   const writes: Array<{ piid: number; value: unknown; accepted: boolean }> = [];
   const rejectedValues = new Map<number, unknown>([[2, 80]]);
+  let completedReads = 0;
+  let readGate: {
+    readonly promise: Promise<void>;
+    readonly started: Promise<void>;
+    readonly finished: Promise<void>;
+    readonly release: () => void;
+    readonly resolveStarted: () => void;
+    readonly resolveFinished: () => void;
+  } | null = null;
   const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<HttpResponse | undefined> => {
     if (name !== "native_http") return;
     assert.equal(typeof args.url, "string");
@@ -40,6 +49,16 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
       assert.ok(nonce && encrypted);
       const payload: unknown = JSON.parse(MiCloudCrypto.decryptResponse(encrypted, MiCloudCrypto.signedNonce(security, nonce)));
       assert.ok(payload !== null && typeof payload === "object" && "params" in payload && Array.isArray(payload.params));
+      let sourceValues: ReadonlyMap<number, unknown> = values;
+      let completedGate: typeof readGate = null;
+      if (!url.includes("/set") && readGate) {
+        const gate = readGate;
+        completedGate = gate;
+        readGate = null;
+        sourceValues = new Map(values);
+        gate.resolveStarted();
+        await gate.promise;
+      }
       result = payload.params.map((entry: unknown) => {
         assert.ok(entry !== null && typeof entry === "object" && "piid" in entry && typeof entry.piid === "number");
         const piid = entry.piid;
@@ -50,8 +69,10 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
           if (accepted) values.set(piid, entry.value);
           return { did: "fixture-light", siid: 2, piid, code: accepted ? 0 : -704042011 };
         }
-        return { did: "fixture-light", siid: 2, piid, code: 0, value: values.get(piid) };
+        return { did: "fixture-light", siid: 2, piid, code: 0, value: sourceValues.get(piid) };
       });
+      completedReads += 1;
+      completedGate?.resolveFinished();
     }
     return { status: 200, headers: {}, body: JSON.stringify({ code: 0, result }) };
   };
@@ -67,6 +88,18 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
   return {
     values,
     writes,
+    completedReads: () => completedReads,
+    /** Captures the next property read's values, then waits until the test releases the response. */
+    holdNextRead: () => {
+      let release!: () => void;
+      let resolveStarted!: () => void;
+      let resolveFinished!: () => void;
+      const promise = new Promise<void>((resolve) => { release = resolve; });
+      const started = new Promise<void>((resolve) => { resolveStarted = resolve; });
+      const finished = new Promise<void>((resolve) => { resolveFinished = resolve; });
+      readGate = { promise, release, started, finished, resolveStarted, resolveFinished };
+      return { started, finished, release };
+    },
     allowBrightness: () => { rejectedValues.delete(2); },
     reject: (piid: number, value: unknown) => { rejectedValues.set(piid, value); },
     allow: (piid: number) => { rejectedValues.delete(piid); },

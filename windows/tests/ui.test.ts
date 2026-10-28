@@ -51,6 +51,30 @@ async function command(text: string): Promise<void> {
   await click("#btn-send");
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) assert.fail("Timed out waiting for UI state");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  message: string,
+  timeoutMs = 2_000,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 beforeEach(() => {
   dom = new Window({ url: "http://localhost/" });
   installWindow(dom);
@@ -94,6 +118,39 @@ describe("Service endpoint submission", () => {
 });
 
 describe("Windows device control and undo", () => {
+  it("keeps focus in the command input after a local command completes", async () => {
+    startDemo();
+    const input = element("#command-input") as HTMLInputElement;
+    input.value = "客厅吸顶灯月光模式";
+    input.focus();
+
+    await click("#btn-send");
+    await waitFor(() => tile("light.living_ceiling").includes("月光"));
+
+    assert.ok(
+      document.activeElement === element("#command-input"),
+      "command input lost keyboard focus after a local command",
+    );
+  });
+
+  it("clears a submitted command after undo instead of restoring it into the input", async () => {
+    startDemo();
+    await click('[data-toggle-device="light.living_ceiling"]');
+    const input = element("#command-input") as HTMLInputElement;
+    input.value = "撤销";
+    input.focus();
+
+    await click("#btn-send");
+
+    assert.match(tile("light.living_ceiling"), /已开启/);
+    assert.equal(input.value, "");
+    assert.equal(document.querySelector<HTMLInputElement>("#command-input")?.value, "");
+    assert.ok(
+      document.activeElement === document.querySelector("#command-input"),
+      "command input lost keyboard focus after submission",
+    );
+  });
+
   it("restores an originally off light without turning it on through brightness", async () => {
     startDemo();
     await click('[data-toggle-device="light.living_ceiling"]');
@@ -212,6 +269,206 @@ describe("Windows device control and undo", () => {
     assert.equal(cloud.values.get(1), false);
     assert.equal(cloud.values.get(3), 4100);
     assert.match(document.body.textContent ?? "", /已撤销/);
+  });
+});
+
+describe("Silent Xiaomi cloud refresh (#81)", { concurrency: false }, () => {
+  async function readyCloudApp(): Promise<{
+    cloud: ReturnType<typeof cloudFixture>;
+    triggerRefresh(): void;
+    runTimerTick(): void;
+  }> {
+    const cloud = cloudFixture([]);
+    let timerTick: (() => void) | null = null;
+    const timerWindow = window as unknown as {
+      setInterval: (handler: () => void, timeout?: number) => number;
+    };
+    const originalSetInterval = timerWindow.setInterval;
+    timerWindow.setInterval = (handler) => {
+      timerTick = handler;
+      return 1;
+    };
+    new MenuMijiaWindowsApp(element("#app"));
+    timerWindow.setInterval = originalSetInterval;
+    assert.ok(timerTick, "app did not install its timer loop");
+    for (let i = 0; i < 3; i++) await setImmediate();
+    await waitFor(
+      () => !document.querySelector("#btn-refresh")?.classList.contains("is-spinning"),
+    );
+    assert.match(tile("fixture-light"), /50%/);
+    const runTimerTick = () => (timerTick as () => void)();
+    let refreshOffset = 0;
+    return {
+      cloud,
+      runTimerTick,
+      triggerRefresh: () => {
+        refreshOffset += 7_000;
+        const realNow = Date.now;
+        Date.now = () => realNow() + refreshOffset;
+        try {
+          runTimerTick();
+        } finally {
+          Date.now = realNow;
+        }
+      },
+    };
+  }
+
+  it("keeps the current DOM when polling returns the same snapshot", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    const input = element("#command-input") as HTMLInputElement;
+    const popover = element(".cc-popover");
+    input.value = "未发送的草稿";
+    input.focus();
+    const heldRead = cloud.holdNextRead();
+
+    triggerRefresh();
+    await withTimeout(heldRead.started, "Cloud refresh did not reach the no-op gate");
+    heldRead.release();
+    await withTimeout(heldRead.finished, "Cloud response did not finish");
+    await setImmediate();
+
+    assert.equal(element(".cc-popover"), popover);
+    assert.equal(element("#command-input"), input);
+    assert.equal(document.activeElement, input);
+    assert.equal(input.value, "未发送的草稿");
+  });
+
+  it("patches a real state change without disturbing the command draft", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    const input = element("#command-input") as HTMLInputElement;
+    const inputNode = input;
+    input.value = "未发送的草稿";
+    input.focus();
+    cloud.values.set(2, 90);
+
+    triggerRefresh();
+    await waitFor(() => tile("fixture-light").includes("90%"));
+    assert.match(tile("fixture-light"), /90%/);
+    assert.ok(element("#command-input") === inputNode, "command input was replaced");
+    assert.ok(document.activeElement === inputNode, "command focus moved");
+    assert.equal(input.value, "未发送的草稿");
+  });
+
+  it("discards a stale cloud snapshot after a newer command has completed", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    const heldRead = cloud.holdNextRead();
+    triggerRefresh();
+    await withTimeout(heldRead.started, "Cloud refresh did not reach the stale response gate");
+    await click('[data-toggle-device="fixture-light"]');
+    await waitFor(() => cloud.writes.filter((write) => write.piid === 1).length === 1);
+    assert.match(tile("fixture-light"), /已关闭/);
+
+    heldRead.release();
+    await withTimeout(heldRead.finished, "Stale cloud response did not finish");
+    await setImmediate();
+    assert.match(tile("fixture-light"), /已关闭/);
+
+    await click('[data-toggle-device="fixture-light"]');
+    await waitFor(() => cloud.writes.filter((write) => write.piid === 1).length === 2);
+    assert.match(tile("fixture-light"), /已开启/);
+    assert.deepEqual(
+      cloud.writes.filter((write) => write.piid === 1).map((write) => write.value),
+      [false, true],
+    );
+  });
+
+  it("patches dynamic values without replacing the focused device control", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    const toggle = element('[data-toggle-device="fixture-light"]');
+    const tileNode = element('[data-tile-id="fixture-light"]');
+    toggle.focus();
+    const heldRead = cloud.holdNextRead();
+    cloud.values.set(2, 90);
+    triggerRefresh();
+    await withTimeout(heldRead.started, "Cloud refresh did not reach the focused-control gate");
+    heldRead.release();
+    await withTimeout(heldRead.finished, "Cloud response did not finish");
+    await waitFor(() => tile("fixture-light").includes("90%"));
+
+    assert.match(tile("fixture-light"), /90%/);
+    assert.ok(element('[data-toggle-device="fixture-light"]') === toggle, "device control was replaced");
+    assert.ok(element('[data-tile-id="fixture-light"]') === tileNode, "device tile was replaced");
+    assert.ok(document.activeElement === toggle, "keyboard focus moved");
+  });
+
+  it("keeps keyboard focus on an id-less device control across a structural refresh", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    element('[data-toggle-device="fixture-light"]').focus();
+    cloud.values.set(1, false);
+
+    triggerRefresh();
+    await waitFor(() => tile("fixture-light").includes("已关闭"));
+
+    assert.match(tile("fixture-light"), /已关闭/);
+    assert.ok(
+      document.activeElement === element('[data-toggle-device="fixture-light"]'),
+      "device control lost keyboard focus",
+    );
+  });
+
+  it("does not let an open detail drawer block structural updates forever", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    await click('[data-expand-device="fixture-light"]');
+    assert.ok(document.querySelector(".cc-tile-drawer"), "detail drawer did not open");
+    cloud.values.set(1, false);
+
+    triggerRefresh();
+    await waitFor(() => tile("fixture-light").includes("已关闭"));
+
+    assert.match(tile("fixture-light"), /已关闭/);
+    assert.ok(document.querySelector(".cc-tile-drawer"), "detail drawer closed after refresh");
+  });
+
+  it("updates and restores focus when a detail slider is focused", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    await click('[data-expand-device="fixture-light"]');
+    const slider = element('[data-brightness="fixture-light"]');
+    slider.focus();
+    cloud.values.set(1, false);
+    cloud.values.set(2, 90);
+
+    triggerRefresh();
+    await waitFor(() => tile("fixture-light").includes("已关闭"));
+
+    assert.match(tile("fixture-light"), /已关闭/);
+    assert.ok(document.querySelector(".cc-tile-drawer"), "detail drawer closed after refresh");
+    const restored = element('[data-brightness="fixture-light"]') as HTMLInputElement;
+    assert.ok(document.activeElement === restored, "focused detail slider was not restored");
+    assert.equal(restored.value, "90");
+  });
+
+  it("updates a focused range value when polling patches in place", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp();
+    await click('[data-expand-device="fixture-light"]');
+    const slider = element('[data-brightness="fixture-light"]') as HTMLInputElement;
+    slider.focus();
+    slider.value = "60";
+    cloud.values.set(2, 90);
+
+    triggerRefresh();
+    await waitFor(() => tile("fixture-light").includes("90%"));
+
+    const patched = element('[data-brightness="fixture-light"]') as HTMLInputElement;
+    assert.ok(patched === slider, "focused slider was replaced by the value-only patch");
+    assert.equal(patched.value, "90");
+    assert.ok(document.activeElement === patched, "focused slider lost focus");
+  });
+
+  it("waits to patch the panel while a pointer interaction is in progress", async () => {
+    const { cloud, triggerRefresh, runTimerTick } = await readyCloudApp();
+    const toggle = element('[data-toggle-device="fixture-light"]');
+    toggle.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    cloud.values.set(2, 90);
+    const reads = cloud.completedReads();
+
+    triggerRefresh();
+    await waitFor(() => cloud.completedReads() > reads);
+    assert.match(tile("fixture-light"), /50%/);
+
+    window.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    runTimerTick();
+    await waitFor(() => tile("fixture-light").includes("90%"));
   });
 });
 

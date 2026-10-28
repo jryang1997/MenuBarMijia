@@ -564,6 +564,60 @@ function stripCredentialFieldsFromStoredCopies(): void {
   }
 }
 
+function parseSingleElement(html: string): Element | null {
+  const template = document.createElement("template");
+  template.innerHTML = html.trim();
+  return template.content.firstElementChild;
+}
+
+function hasMatchingDomShape(current: Node, desired: Node): boolean {
+  if (current.nodeType !== desired.nodeType) return false;
+  if (current.nodeType === 3) return true;
+  if (current.nodeType !== 1) return current.isEqualNode(desired);
+  const currentElement = current as Element;
+  const desiredElement = desired as Element;
+  if (currentElement.tagName !== desiredElement.tagName) return false;
+  const currentChildren = Array.from(current.childNodes);
+  const desiredChildren = Array.from(desired.childNodes);
+  if (currentChildren.length !== desiredChildren.length) return false;
+  return currentChildren.every((child, index) => hasMatchingDomShape(child, desiredChildren[index]!));
+}
+
+/** Updates an unchanged DOM tree in place so focused controls and their listeners survive. */
+function morphMatchingDom(current: Node, desired: Node): void {
+  if (current.nodeType === 3) {
+    if (current.nodeValue !== desired.nodeValue) current.nodeValue = desired.nodeValue;
+    return;
+  }
+  if (current.nodeType !== 1) return;
+  const currentElement = current as Element;
+  const desiredElement = desired as Element;
+  for (const attr of Array.from(currentElement.attributes)) {
+    if (!desiredElement.hasAttribute(attr.name)) currentElement.removeAttribute(attr.name);
+  }
+  for (const attr of Array.from(desiredElement.attributes)) {
+    if (currentElement.getAttribute(attr.name) !== attr.value) {
+      currentElement.setAttribute(attr.name, attr.value);
+    }
+  }
+  if (currentElement.tagName === "INPUT") {
+    const currentInput = currentElement as HTMLInputElement;
+    const desiredInput = desiredElement as HTMLInputElement;
+    currentInput.value = desiredInput.value;
+    currentInput.checked = desiredInput.checked;
+  }
+  const currentChildren = Array.from(current.childNodes);
+  const desiredChildren = Array.from(desired.childNodes);
+  currentChildren.forEach((child, index) => morphMatchingDom(child, desiredChildren[index]!));
+}
+
+function inputKeepsDraft(input: HTMLInputElement | HTMLTextAreaElement): boolean {
+  if (input.tagName === "TEXTAREA") return true;
+  return !["button", "checkbox", "color", "file", "radio", "range", "reset", "submit"].includes(
+    (input as HTMLInputElement).type,
+  );
+}
+
 export class MenuMijiaWindowsApp {
   private readonly loadedSettings: LoadedSettings = loadSettings();
   private settings: PersistedSettings = this.loadedSettings.settings;
@@ -588,6 +642,11 @@ export class MenuMijiaWindowsApp {
   private isSyncingCloud = false;
   /** When the last Xiaomi cloud refresh started; paces background refreshes (#26). */
   private lastCloudRefreshAt: number | null = null;
+  /** Bumped whenever a local command succeeds, so an older in-flight snapshot cannot replace it. */
+  private localControlRevision = 0;
+  /** A silent cloud result that is waiting for the user to finish interacting. */
+  private pendingCloudRender = false;
+  private pointerIsDown = false;
   private isListeningVoice = false;
   private scheduledCommands: ScheduledCommand[] = [];
   /** Timers that came due while the PC slept; they only run when the user taps 立即执行 (#22). */
@@ -843,6 +902,10 @@ export class MenuMijiaWindowsApp {
 
   private startTimerLoop(): void {
     window.setInterval(() => {
+      if (this.pendingCloudRender && !this.hasBlockingPanelInteraction()) {
+        this.render();
+      }
+
       const now = Date.now();
       let changed = false;
 
@@ -868,7 +931,7 @@ export class MenuMijiaWindowsApp {
         this.render();
       }
 
-      // Cloud refresh: every 12 s with the panel open, every 60 s while it sits in the tray (#26).
+      // Cloud refresh: every 6 s with the panel open, every 60 s while it sits in the tray (#26).
       if (
         this.settings.connectionMode === "xiaomiCloud" &&
         this.settings.miSession &&
@@ -885,6 +948,29 @@ export class MenuMijiaWindowsApp {
   /** The tray popover hides when it loses focus, so focus means it is on screen. */
   private isPanelVisible(): boolean {
     return document.visibilityState !== "hidden" && document.hasFocus();
+  }
+
+  /** Background refreshes must not rebuild the panel while the user is mid-action. */
+  private hasBlockingPanelInteraction(): boolean {
+    return (
+      this.activeSheet !== "none" ||
+      this.pointerIsDown ||
+      this.isListeningVoice ||
+      this.draggingId !== null ||
+      this.isEditingLayout ||
+      this.isHomeMenuOpen ||
+      this.ctxMenu !== null ||
+      this.prompt !== null
+    );
+  }
+
+  /** Applies a background result only when it cannot clear focus or cancel a pointer gesture. */
+  private queueBackgroundRender(): void {
+    if (this.hasBlockingPanelInteraction()) {
+      this.pendingCloudRender = true;
+      return;
+    }
+    this.render();
   }
 
   private get rooms(): string[] {
@@ -936,6 +1022,10 @@ export class MenuMijiaWindowsApp {
   private async refreshXiaomiDevices(silent = false): Promise<void> {
     if (!this.settings.miSession || this.settings.connectionMode !== "xiaomiCloud" || this.isSyncingCloud) return;
     const session = this.settings.miSession;
+    const previousPresentation = this.cloudPresentationFingerprint();
+    const previousStructure = this.cloudPanelStructureFingerprint();
+    const stateRevisionAtStart = this.localControlRevision;
+    let presentationChanged = false;
     this.isSyncingCloud = true;
     this.lastCloudRefreshAt = Date.now();
     if (!silent) {
@@ -948,9 +1038,10 @@ export class MenuMijiaWindowsApp {
         client.deviceList(),
         client.homeRooms().catch(() => []),
       ]);
-      this.homes = homeOptions(allRooms);
+      const nextHomes = homeOptions(allRooms);
+      if (this.cloudSnapshotIsStale(session, stateRevisionAtStart)) return;
+      this.homes = nextHomes;
       const { devices: rawDevices, rooms } = this.filterBySelectedHome(allDevices, allRooms);
-      if (this.settings.connectionMode !== "xiaomiCloud" || this.settings.miSession !== session) return;
 
       // Stage 1: Instant synthesis with cached/fallback specs so user sees their real devices immediately
       const stage1Specs = this.specResolver.exportCachedSpecs();
@@ -962,6 +1053,7 @@ export class MenuMijiaWindowsApp {
       );
       if (stage1Home.devices.length > 0 && this.devices.length === 0) {
         this.devices = stage1Home.devices;
+        presentationChanged = true;
         this.render();
       }
 
@@ -981,15 +1073,22 @@ export class MenuMijiaWindowsApp {
           : new Map<string, unknown>();
 
       const home = MiotSynthesizer.synthesize(rawDevices, rooms, specs, values);
-      if (this.settings.connectionMode !== "xiaomiCloud" || this.settings.miSession !== session) return;
+      if (this.cloudSnapshotIsStale(session, stateRevisionAtStart)) return;
       this.devices = home.devices;
       this.environmentReadings = [...home.environmentReadings];
+      presentationChanged =
+        presentationChanged || this.cloudPresentationFingerprint() !== previousPresentation;
 
       this.settings.cachedXiaomiDevices = home.devices;
-      this.settings.cachedModelTypes = this.specResolver.exportKnownModelTypes(
+      const knownModelTypes = this.specResolver.exportKnownModelTypes(
         rawDevices.map((d) => d.model),
       );
-      this.saveSettings();
+      const cacheChanged =
+        JSON.stringify(knownModelTypes) !== JSON.stringify(this.settings.cachedModelTypes);
+      this.settings.cachedModelTypes = knownModelTypes;
+      if (presentationChanged || cacheChanged) {
+        this.saveSettings();
+      }
 
       if (!silent) {
         this.replyBanner = {
@@ -1011,8 +1110,138 @@ export class MenuMijiaWindowsApp {
       }
     } finally {
       this.isSyncingCloud = false;
-      this.render();
+      if (!silent) {
+        this.render();
+      } else if (presentationChanged) {
+        if (
+          this.cloudPanelStructureFingerprint() !== previousStructure ||
+          !this.patchCloudPresentation()
+        ) {
+          this.queueBackgroundRender();
+        }
+      }
     }
+  }
+
+  /** Cloud state that affects the rendered panel; polling a matching snapshot is a visual no-op. */
+  private cloudPresentationFingerprint(): string {
+    return JSON.stringify({
+      homes: this.homes,
+      devices: this.devices,
+      environmentReadings: this.environmentReadings,
+    });
+  }
+
+  private cloudSnapshotIsStale(session: MiSession, revision: number): boolean {
+    return (
+      this.settings.connectionMode !== "xiaomiCloud" ||
+      this.settings.miSession !== session ||
+      this.localControlRevision !== revision
+    );
+  }
+
+  /** Structure the existing DOM only when its interactive nodes and capabilities are unchanged. */
+  private cloudPanelStructureFingerprint(): string {
+    return JSON.stringify({
+      homes: this.homes,
+      allOffTargets: this.allOffTargets.map((device) => device.id),
+      devices: this.devices.map((device) => {
+        const kind = device.kind;
+        const capabilities =
+          kind.kind === "light"
+            ? [kind.availableEffects, kind.minKelvin, kind.maxKelvin]
+            : kind.kind === "climate"
+              ? [kind.availableModes, kind.availableFanModes, kind.minTemp, kind.maxTemp, kind.step]
+              : kind.kind === "fan"
+                ? [kind.availablePresetModes]
+                : kind.kind === "vacuum"
+                  ? [kind.availableModes]
+                  : [];
+        return {
+          id: device.id,
+          name: device.name,
+          roomId: device.roomId,
+          roomName: device.roomName,
+          model: device.model,
+          category: kind.kind,
+          capabilities,
+          sensorShape:
+            kind.kind === "sensor"
+              ? [kind.temperature !== null, kind.humidity !== null, kind.battery !== null]
+              : null,
+        };
+      }),
+    });
+  }
+
+  /** Applies value-only cloud changes in place; anything structural falls back to a full render. */
+  private patchCloudPresentation(): boolean {
+    if (
+      this.isEditingLayout ||
+      this.activeSheet !== "none" ||
+      this.pointerIsDown ||
+      this.draggingId !== null
+    ) {
+      return false;
+    }
+
+    const isAll = this.selectedRoom === "全部";
+    const ordered = withAliases(this.layout, applyOrder(this.layout.order, this.filteredDevices));
+    const sections = pageSections(this.layout, ordered, isAll);
+    const bento = this.skin === "bento" && this.settings.isCompactGridMode;
+    const tilePatches: Array<{ current: HTMLElement; desired: Element }> = [];
+    let index = 0;
+    for (const section of sections) {
+      if (this.layout.collapsed.includes(scopedKey(this.pageKey, section.id))) continue;
+      const spanMap = spans(
+        section.devices,
+        (device) => (this.expandedDeviceId === device.id ? "full" : this.tileSize(device)),
+        bento,
+      );
+      for (const device of section.devices) {
+        const current = Array.from(
+          this.root.querySelectorAll<HTMLElement>("[data-tile-id]"),
+        ).find((element) => element.dataset.tileId === device.id);
+        const desired = parseSingleElement(
+          this.renderDeviceTile(device, spanMap.get(device.id) ?? 6, index++),
+        );
+        if (!current || !desired || !hasMatchingDomShape(current, desired)) return false;
+        tilePatches.push({ current, desired });
+      }
+    }
+    for (const patch of tilePatches) morphMatchingDom(patch.current, patch.desired);
+
+    const envHTML = this.renderEnvironmentStrip();
+    const currentEnv = this.root.querySelector<HTMLElement>(".cc-env-strip");
+    if (currentEnv) {
+      const desiredEnv = parseSingleElement(envHTML);
+      if (!desiredEnv) {
+        currentEnv.remove();
+      } else if (hasMatchingDomShape(currentEnv, desiredEnv)) {
+        morphMatchingDom(currentEnv, desiredEnv);
+      } else {
+        currentEnv.replaceWith(desiredEnv);
+      }
+    } else if (envHTML) {
+      this.root.querySelector(".cc-header-top")?.insertAdjacentHTML("afterend", envHTML);
+    }
+
+    const subtitle = this.root.querySelector<HTMLElement>(".cc-subtitle");
+    if (subtitle) subtitle.textContent = this.statusSummaryText;
+    this.root
+      .querySelector<HTMLElement>(".cc-home-badge")
+      ?.classList.toggle("is-active", this.activeDeviceCount > 0);
+    const footerLabel = this.root.querySelector<HTMLElement>(".cc-footer-label");
+    if (footerLabel) {
+      footerLabel.textContent =
+        this.settings.connectionMode === "xiaomiCloud" && this.settings.miSession
+          ? t("米家账号 {user} · {count} 台设备", {
+              user: maskedMiUserId(this.settings.miSession.userId),
+              count: this.devices.length,
+            })
+          : t("演示模式 · 未连接米家云");
+    }
+    return true;
   }
 
   /** Narrows cloud records and rooms to the selected Mi Home; split keys bring their parent panel along. */
@@ -1395,6 +1624,7 @@ export class MenuMijiaWindowsApp {
       this.render();
       return false;
     }
+    this.localControlRevision += 1;
     for (const dev of this.devices) {
       const k = dev.kind;
       switch (command.kind) {
@@ -1542,7 +1772,7 @@ export class MenuMijiaWindowsApp {
       const first = event.results[0]?.[0]?.transcript;
       if (first) {
         const inputEl = this.root.querySelector<HTMLInputElement>("#command-input");
-        if (inputEl) inputEl.value = first;
+        if (inputEl) inputEl.value = "";
         void this.handleNaturalCommand(first);
       }
     };
@@ -1656,17 +1886,65 @@ export class MenuMijiaWindowsApp {
    * new one (FLIP), so reorders, resizes and group moves animate instead of jumping.
    */
   private render(): void {
+    const focused = document.activeElement as HTMLElement | null;
+    const focusedInput =
+      focused && (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA")
+        ? (focused as HTMLInputElement | HTMLTextAreaElement)
+        : null;
+    const keepsFocusedDraft = focusedInput ? inputKeepsDraft(focusedInput) : false;
+    const focusAttributes = focused
+      ? Array.from(focused.attributes)
+          .filter((attr) => attr.name === "id" || attr.name.startsWith("data-"))
+          .map((attr) => ({ name: attr.name, value: attr.value }))
+      : [];
+    const focusSnapshot =
+      focused && focusAttributes.length > 0
+        ? {
+            tagName: focused.tagName,
+            attributes: focusAttributes,
+            value: keepsFocusedDraft ? focusedInput?.value ?? null : null,
+            selectionStart: keepsFocusedDraft ? focusedInput?.selectionStart ?? null : null,
+            selectionEnd: keepsFocusedDraft ? focusedInput?.selectionEnd ?? null : null,
+          }
+        : null;
     const tiles = Array.from(this.root.querySelectorAll<HTMLElement>("[data-tile-id]"));
     const before = new Map(tiles.map((el) => [el.dataset.tileId as string, el.getBoundingClientRect()]));
     const scrollTop = this.root.querySelector(".cc-scroll-area")?.scrollTop ?? 0;
     const roomLeft = this.root.querySelector(".cc-room-scroll")?.scrollLeft ?? 0;
 
+    this.pendingCloudRender = false;
     this.renderNow();
 
     const area = this.root.querySelector(".cc-scroll-area");
     if (area) area.scrollTop = scrollTop;
     const strip = this.root.querySelector<HTMLElement>(".cc-room-scroll");
     if (strip) strip.scrollLeft = roomLeft;
+
+    if (focusSnapshot) {
+      const matches = Array.from(
+        this.root.querySelectorAll<HTMLElement>(focusSnapshot.tagName.toLowerCase()),
+      ).filter((element) =>
+        focusSnapshot.attributes.every(
+          (attribute) => element.getAttribute(attribute.name) === attribute.value,
+        ),
+      );
+      const replacement = matches.length === 1 ? matches[0] : undefined;
+      if (replacement) {
+        if (focusSnapshot.value !== null && "value" in replacement) {
+          (replacement as HTMLInputElement).value = focusSnapshot.value;
+        }
+        replacement.focus({ preventScroll: true });
+        if (
+          focusSnapshot.selectionStart !== null &&
+          "setSelectionRange" in replacement
+        ) {
+          (replacement as HTMLInputElement).setSelectionRange(
+            focusSnapshot.selectionStart,
+            focusSnapshot.selectionEnd ?? focusSnapshot.selectionStart,
+          );
+        }
+      }
+    }
 
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (!reduce && before.size > 0) {
@@ -1695,9 +1973,6 @@ export class MenuMijiaWindowsApp {
       this.lastUndoAction && this.lastUndoAction.expiresAtMs > Date.now()
         ? this.lastUndoAction
         : null;
-    const envChips = this.computedEnvironmentReadings;
-    const watts = this.totalPowerWatts;
-
     this.root.innerHTML = `
       <div class="cc-popover skin-${this.skin} ${this.skin === "classic" ? "" : "is-skinned"} ${this.isEditingLayout ? "is-editing" : ""}">
         <header class="cc-header">
@@ -1765,36 +2040,7 @@ export class MenuMijiaWindowsApp {
             </div>
           </div>
 
-          ${
-            envChips.length > 0 || watts >= 1
-              ? `
-            <div class="cc-env-strip">
-              ${envChips
-                .map(
-                  (env) => `
-                <div class="cc-env-chip">
-                  <span class="cc-env-icon">${SF_ICONS.sensorFill}</span>
-                  <span class="cc-env-label">${this.escapeHtml(env.label)}</span>
-                  ${env.temperature !== null ? `<strong class="cc-env-val">${formatTemperature(env.temperature, undefined, 1)}</strong>` : ""}
-                  ${env.humidity !== null ? `<span class="cc-env-hum">· ${Math.round(env.humidity)}%</span>` : ""}
-                </div>
-              `,
-                )
-                .join("")}
-              ${
-                watts >= 1
-                  ? `
-                <div class="cc-env-chip is-power">
-                  <span class="cc-env-icon">${SF_ICONS.boltFill}</span>
-                  <strong class="cc-env-val">${Math.round(watts)}W</strong>
-                </div>
-              `
-                  : ""
-              }
-            </div>
-          `
-              : ""
-          }
+          ${this.renderEnvironmentStrip()}
         </header>
 
         ${
@@ -2017,6 +2263,38 @@ export class MenuMijiaWindowsApp {
     `;
 
     this.bindEvents();
+  }
+
+  private renderEnvironmentStrip(): string {
+    const envChips = this.computedEnvironmentReadings;
+    const watts = this.totalPowerWatts;
+    if (envChips.length === 0 && watts < 1) return "";
+    return `
+      <div class="cc-env-strip">
+        ${envChips
+          .map(
+            (env) => `
+          <div class="cc-env-chip">
+            <span class="cc-env-icon">${SF_ICONS.sensorFill}</span>
+            <span class="cc-env-label">${this.escapeHtml(env.label)}</span>
+            ${env.temperature !== null ? `<strong class="cc-env-val">${formatTemperature(env.temperature, undefined, 1)}</strong>` : ""}
+            ${env.humidity !== null ? `<span class="cc-env-hum">· ${Math.round(env.humidity)}%</span>` : ""}
+          </div>
+        `,
+          )
+          .join("")}
+        ${
+          watts >= 1
+            ? `
+          <div class="cc-env-chip is-power">
+            <span class="cc-env-icon">${SF_ICONS.boltFill}</span>
+            <strong class="cc-env-val">${Math.round(watts)}W</strong>
+          </div>
+        `
+            : ""
+        }
+      </div>
+    `;
   }
 
   private renderDeviceGrid(): string {
@@ -2766,14 +3044,26 @@ export class MenuMijiaWindowsApp {
     const inputEl = this.root.querySelector<HTMLInputElement>("#command-input");
     const sendBtn = this.root.querySelector<HTMLButtonElement>("#btn-send");
     const micBtn = this.root.querySelector<HTMLButtonElement>("#btn-mic");
+    const submitCommandInput = () => {
+      if (!inputEl) return;
+      const value = inputEl.value;
+      const restoreFocus = document.activeElement === inputEl;
+      inputEl.value = "";
+      void this.handleNaturalCommand(value).finally(() => {
+        if (!restoreFocus) return;
+        const active = document.activeElement;
+        if (active !== null && active !== inputEl && active !== document.body) return;
+        this.root.querySelector<HTMLInputElement>("#command-input")?.focus({ preventScroll: true });
+      });
+    };
 
     inputEl?.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
-        void this.handleNaturalCommand(inputEl.value);
+        submitCommandInput();
       }
     });
     sendBtn?.addEventListener("click", () => {
-      if (inputEl) void this.handleNaturalCommand(inputEl.value);
+      submitCommandInput();
     });
     micBtn?.addEventListener("click", () => {
       this.toggleVoiceInput();
@@ -3543,6 +3833,27 @@ export class MenuMijiaWindowsApp {
       this.lastSwap = null;
       this.suppressNextClick = true;
     };
+
+    this.root.addEventListener(
+      "pointerdown",
+      () => {
+        this.pointerIsDown = true;
+      },
+      { capture: true },
+    );
+    window.addEventListener(
+      "pointerup",
+      () => {
+        this.pointerIsDown = false;
+      },
+      { capture: true },
+    );
+    window.addEventListener("pointercancel", () => {
+      this.pointerIsDown = false;
+    });
+    window.addEventListener("blur", () => {
+      this.pointerIsDown = false;
+    });
 
     this.root.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
