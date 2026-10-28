@@ -806,7 +806,7 @@ extension HomeStore {
         }
     }
 
-    private func setAssistantState(_ state: AssistantState) {
+    func setAssistantState(_ state: AssistantState) {
         assistantState = state
         assistantResetTask?.cancel()
         switch state {

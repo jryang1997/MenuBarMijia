@@ -7,6 +7,9 @@ extension HomeStore {
         undoTimerTask?.cancel()
         undoBanner = nil
         lastAssistantUndo = nil
+        setAssistantState(.idle)
+        pendingCloudConsent = nil
+        assistantSuggestions = []
         optimisticLockUntil.removeAll()
         for task in debounceTasks.values { task.cancel() }
         debounceTasks.removeAll()

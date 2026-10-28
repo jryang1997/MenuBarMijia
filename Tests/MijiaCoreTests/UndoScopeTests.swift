@@ -164,11 +164,20 @@ struct UndoScopeTests {
         await provider.pauseNext()
         let request = Task { await store.runAssistantCommand("关闭所有灯") }
         try await wait { await provider.isPaused }
+        #expect(store.assistantState == .thinking)
         store.switchBackend(.demo)
+        #expect(store.assistantState == .idle)
+        try await store.waitForInitialSnapshot()
+        let newPlan = try #require(await store.runAssistantCommand("关闭所有灯"))
+        let newState = store.assistantState
+        let newUndoID = store.undoBanner?.id
+        let newActionAt = store.lastAssistantActionAt
+        #expect(newState == .done(newPlan.reply))
         await provider.release()
         _ = await request.value
-        #expect(store.undoBanner == nil)
-        #expect(store.lastAssistantActionAt == nil)
+        #expect(store.assistantState == newState)
+        #expect(store.undoBanner?.id == newUndoID)
+        #expect(store.lastAssistantActionAt == newActionAt)
     }
 
     @Test("A model response resolved for the previous home cannot control the selected home")
@@ -183,11 +192,25 @@ struct UndoScopeTests {
         })
         let request = Task { await store.runAssistantCommand("please prepare this home for a break") }
         try await wait { await provider.isPaused }
+        #expect(store.assistantState == .thinking)
+        store.pendingCloudConsent = PendingCloudConsent(utterance: "打开a", endpoint: "example.invalid", providerTitle: "test")
+        store.assistantSuggestions = [AssistantSuggestion(
+            id: "old-home", title: "old action", confidencePercent: 99,
+            intents: [DeviceIntent(targetId: "a", operation: .power(false))]
+        )]
         store.selectMiHome("test-new-home")
+        #expect(store.assistantState == .idle)
+        #expect(store.pendingCloudConsent == nil)
+        #expect(store.assistantSuggestions.isEmpty)
+        let newPlan = try #require(await store.runAssistantCommand("打开a"))
+        let newState = store.assistantState
+        let newActionAt = store.lastAssistantActionAt
+        #expect(newState == .done(newPlan.reply))
         await provider.release()
         _ = await request.value
-        #expect((await provider.commands).isEmpty)
-        #expect(store.lastAssistantActionAt == nil)
+        #expect(await provider.commands == [.setLightPower(entityId: "light.a", isOn: true)])
+        #expect(store.assistantState == newState)
+        #expect(store.lastAssistantActionAt == newActionAt)
     }
 }
 
