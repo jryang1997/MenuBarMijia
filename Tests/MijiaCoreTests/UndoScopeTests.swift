@@ -1,8 +1,10 @@
 import Foundation
 import Testing
+import Observation
 @testable import MijiaCore
 
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct UndoScopeTests {
     private func light(_ id: String, room: String = "a") -> SmartDevice {
         SmartDevice(id: id, name: id, roomId: room, roomName: room, model: "test.light", isOnline: true,
@@ -16,15 +18,20 @@ struct UndoScopeTests {
         ))
         let suite = "test.undo.scope.\(UUID().uuidString)"
         let store = HomeStore(provider: provider, defaultsSuiteName: suite)
-        try await wait { store.devices.count == 2 }
+        try await store.waitForInitialSnapshot()
+        #expect(store.devices.count == 2)
         return (store, provider, suite)
     }
 
-    private func wait(_ condition: () async -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
-        while !(await condition()) {
-            try #require(ContinuousClock.now < deadline, "Expected asynchronous state did not arrive")
-            try await Task.sleep(for: .milliseconds(5))
+    private func waitForDevices(_ store: HomeStore, matching condition: ([SmartDevice]) -> Bool) async {
+        while !condition(store.devices) {
+            await withCheckedContinuation { continuation in
+                withObservationTracking {
+                    _ = store.devices
+                } onChange: {
+                    continuation.resume()
+                }
+            }
         }
     }
 
@@ -38,7 +45,7 @@ struct UndoScopeTests {
         let task = try #require(store.togglePrimary(other))
         _ = await task.value
         store.undoTurnAllOff()
-        try await wait { await provider.commands.count == 3 }
+        await provider.waitForCommands(3)
         #expect(store.devices.first { $0.id == "a" }?.isActiveOn == true)
         #expect(store.devices.first { $0.id == "b" }?.isActiveOn == false)
         #expect(!(await provider.commands).contains(.setLightPower(entityId: "light.b", isOn: true)))
@@ -49,11 +56,11 @@ struct UndoScopeTests {
         let (store, provider, suite) = try await makeStore()
         defer { store.userDefaults.removePersistentDomain(forName: suite) }
         store.turnAllOff()
-        try await wait { await provider.commands.count == 2 }
+        await provider.waitForCommands(2)
         await provider.replace(SynthesizedHome(devices: [light("a"), light("c")]))
-        try await wait { store.devices.map(\.id) == ["a", "c"] }
+        await waitForDevices(store) { $0.map(\.id) == ["a", "c"] }
         store.undoTurnAllOff()
-        try await wait { await provider.commands.count >= 3 }
+        await provider.waitForCommands(3)
         #expect(store.devices.map(\.id) == ["a", "c"])
         #expect((await provider.commands).filter { $0 == .setLightPower(entityId: "light.b", isOn: true) }.isEmpty)
     }
@@ -125,12 +132,12 @@ struct UndoScopeTests {
         defer { store.userDefaults.removePersistentDomain(forName: suite) }
         await provider.pauseNext()
         let request = Task { await store.runAssistantCommand("关闭a") }
-        try await wait { await provider.isPaused }
+        await provider.waitUntilPaused()
         store.selectMiHome("test-new-home")
         var incoming = light("a")
         incoming.name = "new home device"
         await provider.replace(SynthesizedHome(devices: [incoming]))
-        try await wait { store.devices.first?.name == "new home device" }
+        await waitForDevices(store) { $0.first?.name == "new home device" }
         await provider.release(failing: true)
         _ = await request.value
         #expect(store.devices.first?.name == "new home device")
@@ -143,10 +150,10 @@ struct UndoScopeTests {
         let (store, provider, suite) = try await makeStore()
         defer { store.userDefaults.removePersistentDomain(forName: suite) }
         store.turnAllOff()
-        try await wait { await provider.commands.count == 2 }
+        await provider.waitForCommands(2)
         await provider.pauseNext()
         store.undoTurnAllOff()
-        try await wait { await provider.isPaused }
+        await provider.waitUntilPaused()
         store.switchBackend(.demo)
         let next = try #require(store.provider as? DemoHomeProvider)
         await provider.release()
@@ -161,7 +168,7 @@ struct UndoScopeTests {
         defer { store.userDefaults.removePersistentDomain(forName: suite) }
         await provider.pauseNext()
         let request = Task { await store.runAssistantCommand("关闭所有灯") }
-        try await wait { await provider.isPaused }
+        await provider.waitUntilPaused()
         #expect(store.assistantState == .thinking)
         store.switchBackend(.demo)
         #expect(store.assistantState == .idle)
@@ -189,7 +196,7 @@ struct UndoScopeTests {
             return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
         })
         let request = Task { await store.runAssistantCommand("please prepare this home for a break") }
-        try await wait { await provider.isPaused }
+        await provider.waitUntilPaused()
         #expect(store.assistantState == .thinking)
         store.pendingCloudConsent = PendingCloudConsent(utterance: "打开a", endpoint: "example.invalid", providerTitle: "test")
         store.assistantSuggestions = [AssistantSuggestion(
@@ -213,41 +220,57 @@ struct UndoScopeTests {
 }
 
 private actor GatedUndoProvider: HomeProvider {
-    private let initial: SynthesizedHome
-    private var continuation: AsyncStream<HomeProviderEvent>.Continuation?
+    private nonisolated let stream: AsyncStream<HomeProviderEvent>
+    private let continuation: AsyncStream<HomeProviderEvent>.Continuation
     private var shouldPause = false
     private var gate: CheckedContinuation<Void, Never>?
     private var failReleasedCommand = false
     private(set) var commands: [DeviceCommand] = []
-    var isPaused: Bool { gate != nil }
+    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var commandWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
-    init(snapshot: SynthesizedHome) { initial = snapshot }
-    nonisolated func events() -> AsyncStream<HomeProviderEvent> {
-        AsyncStream { continuation in
-            Task { await self.register(continuation) }
-        }
+    init(snapshot: SynthesizedHome) {
+        let pair = AsyncStream<HomeProviderEvent>.makeStream()
+        stream = pair.stream
+        continuation = pair.continuation
+        continuation.yield(.snapshotUpdated(snapshot))
     }
-    private func register(_ continuation: AsyncStream<HomeProviderEvent>.Continuation) {
-        self.continuation = continuation
-        continuation.yield(.snapshotUpdated(initial))
+    nonisolated func events() -> AsyncStream<HomeProviderEvent> { stream }
+    func waitForCommands(_ count: Int) async {
+        guard commands.count < count else { return }
+        await withCheckedContinuation { commandWaiters.append((count, $0)) }
+    }
+    func waitUntilPaused() async {
+        guard gate == nil else { return }
+        await withCheckedContinuation { pauseWaiters.append($0) }
+    }
+    private func suspend() async {
+        await withCheckedContinuation { continuation in
+            gate = continuation
+            for waiter in pauseWaiters { waiter.resume() }
+            pauseWaiters.removeAll()
+        }
     }
     func execute(_ command: DeviceCommand) async throws {
         commands.append(command)
+        let ready = commandWaiters.filter { $0.count <= commands.count }
+        commandWaiters.removeAll { $0.count <= commands.count }
+        for waiter in ready { waiter.continuation.resume() }
         if shouldPause {
             shouldPause = false
-            await withCheckedContinuation { gate = $0 }
+            await suspend()
             if failReleasedCommand {
                 throw HomeProviderError.serviceCallFailed(500, "test failure")
             }
         }
     }
     func pauseNext() { shouldPause = true }
-    func suspendResponse() async { await withCheckedContinuation { gate = $0 } }
+    func suspendResponse() async { await suspend() }
     func release(failing: Bool = false) {
         failReleasedCommand = failing
         gate?.resume()
         gate = nil
     }
-    func replace(_ snapshot: SynthesizedHome) { continuation?.yield(.snapshotUpdated(snapshot)) }
+    func replace(_ snapshot: SynthesizedHome) { continuation.yield(.snapshotUpdated(snapshot)) }
     func refreshNow() async {}
 }
