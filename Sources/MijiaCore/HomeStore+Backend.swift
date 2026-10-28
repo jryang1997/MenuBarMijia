@@ -85,7 +85,7 @@ extension HomeStore {
         let stream = provider.events()
         eventTask = Task { [weak self] in
             for await event in stream {
-                guard let self else { break }
+                guard let self, !Task.isCancelled else { break }
                 self.handleProviderEvent(event)
             }
         }
@@ -322,6 +322,7 @@ extension HomeStore {
         case .demo: provider is DemoHomeProvider
         }
         guard homeBackend != backend || !matches else { return }
+        invalidateUndoContext()
 
         let previousBackend = homeBackend
         self.homeBackend = backend
@@ -358,6 +359,7 @@ extension HomeStore {
     }
 
     public func completeMiLogin(_ session: MiSession) {
+        invalidateUndoContext()
         MiSessionStore.save(session, defaults: userDefaults)
         self.miSessionMaskedUserId = session.maskedUserId
         if let region = MiCloudRegion(rawValue: session.region.lowercased()) {
@@ -377,6 +379,7 @@ extension HomeStore {
         MiSessionStore.clear(defaults: userDefaults)
         self.miSessionMaskedUserId = nil
         if homeBackend == .xiaomiCloud {
+            invalidateUndoContext()
             self.devices = []
             self.rooms = []
             self.environmentReadings = []
@@ -399,6 +402,7 @@ extension HomeStore {
     }
 
     public func updateConnection(serverURL: String, token: String) {
+        invalidateUndoContext()
         let normalized = HAWebSocketProvider.normalizeBaseURL(serverURL)
         if normalized != HAWebSocketProvider.normalizeBaseURL(serverURLString) {
             rememberHAInstanceId(forURL: normalized)
@@ -434,6 +438,7 @@ extension HomeStore {
             self.homeName = instance.locationName
         }
         guard normalizedCurrent != instance.baseURL else { return }
+        invalidateUndoContext()
         self.serverURLString = instance.baseURL
         if reconnectProvider, let haProvider = provider as? HAWebSocketProvider {
             let token = KeychainHelper.loadToken(defaults: userDefaults)
@@ -476,6 +481,9 @@ extension HomeStore {
     }
 
     public func updateLGWebOSConfig(_ newConfig: LGWebOSConfig) {
+        if newConfig.host != lgConfig.host || newConfig.isEnabled != lgConfig.isEnabled || newConfig.clientKey != lgConfig.clientKey {
+            invalidateUndoContext()
+        }
         self.lgConfig = newConfig
         if !newConfig.isEnabled || !newConfig.hasConfiguredHost {
             latestLGDevice = nil
@@ -558,16 +566,12 @@ extension HomeStore {
 
     /// Switches the visible Mi Home; nil shows every home's devices.
     public func selectMiHome(_ id: String?) {
+        guard selectedMiHomeId != id else { return }
+        invalidateUndoContext()
         if let id {
             userDefaults.set(id, forKey: MiCloudProvider.selectedHomeKey)
-            if userDefaults !== UserDefaults.standard {
-                UserDefaults.standard.set(id, forKey: MiCloudProvider.selectedHomeKey)
-            }
         } else {
             userDefaults.removeObject(forKey: MiCloudProvider.selectedHomeKey)
-            if userDefaults !== UserDefaults.standard {
-                UserDefaults.standard.removeObject(forKey: MiCloudProvider.selectedHomeKey)
-            }
         }
         selectedMiHomeId = id
         selectedRoomId = nil

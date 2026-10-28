@@ -2,6 +2,19 @@ import Foundation
 
 // Scenes, quick actions, 全关 and the unified undo banner (#48).
 extension HomeStore {
+    func invalidateUndoContext() {
+        controlContextID = UUID()
+        undoTimerTask?.cancel()
+        undoBanner = nil
+        lastAssistantUndo = nil
+        setAssistantState(.idle)
+        pendingCloudConsent = nil
+        assistantSuggestions = []
+        optimisticLockUntil.removeAll()
+        for task in debounceTasks.values { task.cancel() }
+        debounceTasks.removeAll()
+    }
+
     // MARK: - Scenes & Built-In QuickActions with 5-Second Undo
 
     @discardableResult
@@ -118,8 +131,10 @@ extension HomeStore {
             duration: undoBannerDuration
         )
 
+        let context = controlContextID
         Task {
             for cmd in commands {
+                guard context == controlContextID else { return }
                 try? await executeDeviceCommand(cmd)
             }
         }
@@ -219,8 +234,10 @@ extension HomeStore {
             deviceCount: targetIds.count
         )
 
+        let context = controlContextID
         Task {
             for cmd in offCommands {
+                guard context == controlContextID else { return }
                 try? await executeDeviceCommand(cmd)
             }
         }
@@ -266,12 +283,7 @@ extension HomeStore {
         lastAssistantUndo = nil
         undoTimerTask?.cancel()
         self.undoBanner = nil
-        let currentMap = Dictionary(uniqueKeysWithValues: devices.map { ($0.id, $0) })
-        self.devices = banner.previousDevices
-
-        for dev in banner.previousDevices where currentMap[dev.id] != dev {
-            lockOptimistic(dev.id, duration: .seconds(3.0))
-        }
+        let commands = applyUndoCommands(banner.restoreCommands)
 
         if let receipt = banner.habitReceipt {
             var memory = userHabitMemory
@@ -279,11 +291,28 @@ extension HomeStore {
             userHabitMemory = memory
         }
 
+        let context = controlContextID
         Task {
-            for cmd in banner.restoreCommands {
+            for cmd in commands {
+                guard context == controlContextID else { return }
                 try? await executeDeviceCommand(cmd)
             }
+            guard context == controlContextID else { return }
             showToast(L10n.tr("已恢复关闭前的状态", "Restored previous device states"))
         }
+    }
+
+    func applyUndoCommands(_ commands: [DeviceCommand]) -> [DeviceCommand] {
+        var applicable: [DeviceCommand] = []
+        for command in commands {
+            for idx in devices.indices {
+                guard let restored = Self.undoEffect(of: command, on: devices[idx]) else { continue }
+                devices[idx] = restored
+                lockOptimistic(restored.id, duration: .seconds(3.0))
+                applicable.append(command)
+                break
+            }
+        }
+        return applicable
     }
 }

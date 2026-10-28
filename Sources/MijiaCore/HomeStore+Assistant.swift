@@ -221,6 +221,7 @@ extension HomeStore {
     /// Resolves a natural-language command (local parser first, model fallback) and applies it.
     @discardableResult
     public func runAssistantCommand(_ text: String) async -> IntentPlan? {
+        let controlContext = controlContextID
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { return nil }
         if DelayPhrase.isCancel(spoken) {
@@ -266,10 +267,12 @@ extension HomeStore {
             do {
                 plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes, context: context)
             } catch {
+                guard controlContext == controlContextID else { return nil }
                 setAssistantState(.failed(AssistantError.userMessage(for: error)))
                 return nil
             }
         }
+        guard controlContext == controlContextID else { return nil }
         guard !plan.intents.isEmpty else {
             if !plan.suggestions.isEmpty {
                 assistantSuggestions = plan.suggestions
@@ -303,19 +306,18 @@ extension HomeStore {
         lastAssistantUndo = nil
         undoTimerTask?.cancel()
         undoBanner = nil
-        for previous in last.previous {
-            guard let idx = devices.firstIndex(where: { $0.id == previous.id }) else { continue }
-            devices[idx] = previous
-            lockOptimistic(previous.id, duration: .seconds(3.0))
-        }
+        let commands = applyUndoCommands(last.restore)
         if let receipt = last.habitReceipt {
             var memory = userHabitMemory
             memory.unrecord(receipt)
             userHabitMemory = memory
         }
-        for cmd in last.restore {
+        let context = controlContextID
+        for cmd in commands {
+            guard context == controlContextID else { return }
             try? await executeDeviceCommand(cmd)
         }
+        guard context == controlContextID else { return }
         let what = last.reply.hasPrefix("已") ? String(last.reply.dropFirst()) : last.reply
         setAssistantState(.done(L10n.tr("已撤销：\(what)", "Undone: \(what)")))
     }
@@ -485,6 +487,7 @@ extension HomeStore {
         recordedUtterance: String?,
         origin: AssistantExecutionOrigin
     ) async -> IntentPlan {
+        let context = controlContextID
         let previousSnapshot = devices
         var groupOrder: [String] = []
         var intentsByTarget: [String: [DeviceIntent]] = [:]
@@ -500,7 +503,8 @@ extension HomeStore {
             return Task { () -> [AssistantApplyOutcome] in
                 var out: [AssistantApplyOutcome] = []
                 for intent in intents {
-                    out.append(await self.apply(intent))
+                    guard context == self.controlContextID else { return out }
+                    out.append(await self.apply(intent, context: context))
                 }
                 return out
             }
@@ -509,6 +513,7 @@ extension HomeStore {
         for task in deviceTasks {
             outcomes.append(contentsOf: await task.value)
         }
+        guard context == controlContextID else { return plan }
 
         var restoreCommands: [DeviceCommand] = []
         var failedNames: [String] = []
@@ -593,11 +598,13 @@ extension HomeStore {
     }
 
     /// The single execution path for assistant intents: optimistic update, lock, dispatch, rollback on failure.
-    private func apply(_ intent: DeviceIntent) async -> AssistantApplyOutcome {
+    private func apply(_ intent: DeviceIntent, context: UUID) async -> AssistantApplyOutcome {
+        guard context == controlContextID else { return .skipped }
         if intent.operation == .activateScene {
             guard let scene = scenes.first(where: { $0.id == intent.targetId }) else { return .skipped }
             do {
                 try await executeDeviceCommand(.activateScene(entityId: scene.entityId))
+                guard context == controlContextID else { return .skipped }
                 return .applied(deviceId: nil, restore: [])
             } catch {
                 return .failed(scene.name)
@@ -613,14 +620,39 @@ extension HomeStore {
         lockOptimistic(previous.id, duration: .seconds(3.0))
         do {
             try await executeDeviceCommand(effect.command)
+            guard context == controlContextID else { return .skipped }
             return .applied(deviceId: previous.id, restore: effect.restore)
         } catch {
+            guard context == controlContextID else { return .skipped }
             if let revertIdx = devices.firstIndex(where: { $0.id == previous.id }) {
                 devices[revertIdx] = previous
             }
             optimisticLockUntil.removeValue(forKey: previous.id)
             return .failed(previous.name)
         }
+    }
+
+    static func undoEffect(of command: DeviceCommand, on device: SmartDevice) -> SmartDevice? {
+        let operation: IntentOperation
+        switch command {
+        case .setLightPower(_, let on), .setFanPower(_, let on), .setSwitch(_, let on): operation = .power(on)
+        case .setLightBrightness(_, let percent): operation = .brightness(percent)
+        case .setLightColorTemp(_, let kelvin): operation = .colorTemperature(kelvin)
+        case .setLightEffect(_, let effect): operation = .lightEffect(effect)
+        case .setClimatePower(_, let on, let mode): operation = .hvacMode(on ? mode : "off")
+        case .setClimateMode(_, let mode): operation = .hvacMode(mode)
+        case .setClimateTemperature(_, let temperature): operation = .targetTemperature(temperature)
+        case .setClimateFanMode(_, let mode), .setFanPresetMode(_, let mode): operation = .fanSpeed(mode)
+        case .setFanOscillating(_, let on): operation = .oscillation(on)
+        case .vacuumAction(_, .start): operation = .power(true)
+        case .vacuumAction(_, .returnToBase): operation = .power(false)
+        default: return nil
+        }
+        guard let effect = assistantEffect(of: operation, on: device),
+              effect.command.targetEntityId == command.targetEntityId else { return nil }
+        if case .setClimatePower = command { return effect.updated }
+        guard effect.command == command else { return nil }
+        return effect.updated
     }
 
     private static func assistantEffect(of operation: IntentOperation, on device: SmartDevice) -> AssistantEffect? {
@@ -774,7 +806,7 @@ extension HomeStore {
         }
     }
 
-    private func setAssistantState(_ state: AssistantState) {
+    func setAssistantState(_ state: AssistantState) {
         assistantState = state
         assistantResetTask?.cancel()
         switch state {
