@@ -17,10 +17,9 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 static LAST_FOCUS_LOSS_MS: AtomicU64 = AtomicU64::new(0);
 static PIN_POPOVER: AtomicBool = AtomicBool::new(false);
 
-/// Hosts the frontend configured (AI endpoint, Home Assistant, LG TV). Xiaomi's own
-/// API hosts are compiled in below; everything else must be added through
-/// `set_allowed_hosts` before `native_http` will talk to it (#29).
-static EXTRA_ALLOWED_HOSTS: LazyLock<RwLock<HashSet<String>>> =
+/// Configured origins retain the protocol and port, so permission for one service
+/// cannot authorize another service on the same host (#29).
+static EXTRA_ALLOWED_ORIGINS: LazyLock<RwLock<HashSet<String>>> =
     LazyLock::new(|| RwLock::new(HashSet::new()));
 
 const BUILT_IN_HOST_SUFFIXES: &[&str] = &[
@@ -42,62 +41,63 @@ fn normalize_host(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn normalize_extra_host(raw: &str) -> Option<String> {
-    let host = normalize_host(raw);
-    if host.is_empty() || host.len() > 253 {
-        return None;
-    }
-    if host.contains('/')
-        || host.contains('@')
-        || host.contains('?')
-        || host.contains('#')
-        || host.contains(' ')
+fn url_origin(url: &reqwest::Url) -> Option<String> {
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
     {
         return None;
     }
-    if host
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '_'))
-    {
-        Some(host)
+    let host = normalize_host(url.host_str()?);
+    if host.is_empty() {
+        return None;
+    }
+    let authority = if host.contains(':') {
+        format!("[{host}]")
     } else {
-        None
-    }
+        host
+    };
+    Some(format!(
+        "{}://{}:{}", url.scheme(), authority, url.port_or_known_default()?
+    ))
 }
 
-fn host_allowed(host: &str, extra: &HashSet<String>) -> bool {
-    let host = normalize_host(host);
-    if host.is_empty() {
-        return false;
+fn normalize_extra_origin(raw: &str) -> Option<String> {
+    let url = reqwest::Url::parse(raw.trim()).ok()?;
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return None;
     }
-    if extra.contains(&host) {
-        return true;
-    }
-    BUILT_IN_HOST_SUFFIXES
-        .iter()
-        .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")))
+    url_origin(&url)
 }
 
 fn check_url_allowed(url: &reqwest::Url, extra: &HashSet<String>) -> Result<(), String> {
-    match url.scheme() {
-        "http" | "https" => {}
-        scheme => return Err(format!("native_http 只允许 http/https 地址：{scheme}")),
-    }
-    let host = url
-        .host_str()
-        .ok_or_else(|| "native_http 地址缺少主机名".to_string())?;
-    if host_allowed(host, extra) {
+    let origin = url_origin(url)
+        .ok_or_else(|| "native_http 地址必须是无用户凭据的 http/https 地址".to_string())?;
+    let host = normalize_host(url.host_str().unwrap_or_default());
+    let built_in_host = BUILT_IN_HOST_SUFFIXES
+        .iter()
+        .any(|suffix| host == *suffix || host.ends_with(&format!(".{suffix}")));
+    let allowed = if built_in_host {
+        url.scheme() == "https" && url.port_or_known_default() == Some(443)
+    } else {
+        extra.contains(&origin)
+    };
+    if allowed {
         Ok(())
     } else {
-        Err(format!("native_http 拒绝访问未授权主机：{host}"))
+        Err(format!("native_http 拒绝访问未授权来源：{origin}"))
     }
 }
 
-fn allowed_hosts_snapshot() -> Result<HashSet<String>, String> {
-    EXTRA_ALLOWED_HOSTS
+fn redirect_allowed(original_origin: &str, next: &reqwest::Url, extra: &HashSet<String>) -> bool {
+    url_origin(next).as_deref() == Some(original_origin) && check_url_allowed(next, extra).is_ok()
+}
+
+fn allowed_origins_snapshot() -> Result<HashSet<String>, String> {
+    EXTRA_ALLOWED_ORIGINS
         .read()
-        .map(|hosts| hosts.clone())
-        .map_err(|_| "host allowlist unavailable".to_string())
+        .map(|origins| origins.clone())
+        .map_err(|_| "origin allowlist unavailable".to_string())
 }
 
 const CREDENTIAL_SERVICE: &str = "com.jryang.menubarmijia";
@@ -235,32 +235,20 @@ async fn native_http(
     follow_redirects: Option<bool>,
     timeout_ms: Option<u64>,
 ) -> Result<NativeHttpResponse, String> {
-    // Every request, including frontend-provided URLs, must hit an allowed host (#29).
-    let allowed_hosts = allowed_hosts_snapshot()?;
+    let allowed_origins = allowed_origins_snapshot()?;
     let parsed_url = reqwest::Url::parse(&url).map_err(|e| format!("native_http 地址无效：{e}"))?;
-    check_url_allowed(&parsed_url, &allowed_hosts)?;
+    check_url_allowed(&parsed_url, &allowed_origins)?;
 
     let follow = follow_redirects.unwrap_or(true);
     let policy = if follow {
-        let redirect_hosts = allowed_hosts.clone();
-        let original_host = parsed_url
-            .host_str()
-            .map(normalize_host)
-            .unwrap_or_default();
+        let redirect_origins = allowed_origins.clone();
+        let original_origin = url_origin(&parsed_url).expect("validated request origin");
         reqwest::redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= 5 {
                 return attempt.stop();
             }
-            let next_host = attempt
-                .url()
-                .host_str()
-                .map(normalize_host)
-                .unwrap_or_default();
-            // No cross-host redirects: a redirect must not turn an allowlisted URL
-            // into a request to a different server (and must still be allowlisted).
-            if next_host == original_host
-                && check_url_allowed(attempt.url(), &redirect_hosts).is_ok()
-            {
+            // Even another configured origin must not receive this request's headers or body.
+            if redirect_allowed(&original_origin, attempt.url(), &redirect_origins) {
                 attempt.follow()
             } else {
                 attempt.stop()
@@ -313,7 +301,7 @@ async fn native_http(
     // A stopped redirect comes back as a 3xx here; surfacing it as an error is
     // clearer than handing the frontend a response from a host it may not use.
     if follow && resp.status().is_redirection() && status != 304 {
-        return Err("native_http 拒绝跨主机或未授权重定向".to_string());
+        return Err("native_http 拒绝跨来源或未授权重定向".to_string());
     }
 
     let mut out_headers: HashMap<String, String> = HashMap::new();
@@ -338,20 +326,18 @@ async fn native_http(
     })
 }
 
-/// Replaces the user-configured host allowlist. Called with the AI endpoint and HA
-/// address from the frontend whenever settings change (#29).
 #[tauri::command]
-fn set_allowed_hosts(hosts: Vec<String>) -> Result<(), String> {
-    if hosts.len() > 64 {
-        return Err("host allowlist too long".to_string());
+fn set_allowed_origins(origins: Vec<String>) -> Result<(), String> {
+    if origins.len() > 64 {
+        return Err("origin allowlist too long".to_string());
     }
-    let normalized: HashSet<String> = hosts
+    let normalized: HashSet<String> = origins
         .iter()
-        .filter_map(|host| normalize_extra_host(host))
-        .collect();
-    let mut guard = EXTRA_ALLOWED_HOSTS
+        .map(|origin| normalize_extra_origin(origin).ok_or_else(|| "invalid configured origin".to_string()))
+        .collect::<Result<_, _>>()?;
+    let mut guard = EXTRA_ALLOWED_ORIGINS
         .write()
-        .map_err(|_| "host allowlist unavailable".to_string())?;
+        .map_err(|_| "origin allowlist unavailable".to_string())?;
     *guard = normalized;
     Ok(())
 }
@@ -500,7 +486,7 @@ fn main() {
         )
         .invoke_handler(tauri::generate_handler![
             native_http,
-            set_allowed_hosts,
+            set_allowed_origins,
             secure_store_get,
             secure_store_set,
             secure_store_delete,
@@ -570,16 +556,16 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn extra(hosts: &[&str]) -> HashSet<String> {
-        hosts
+    fn extra(origins: &[&str]) -> HashSet<String> {
+        origins
             .iter()
-            .filter_map(|host| normalize_extra_host(host))
+            .filter_map(|origin| normalize_extra_origin(origin))
             .collect()
     }
 
-    fn allows(url: &str, hosts: &[&str]) -> bool {
+    fn allows(url: &str, origins: &[&str]) -> bool {
         let parsed = reqwest::Url::parse(url).expect("test URL");
-        check_url_allowed(&parsed, &extra(hosts)).is_ok()
+        check_url_allowed(&parsed, &extra(origins)).is_ok()
     }
 
     #[test]
@@ -612,11 +598,11 @@ mod tests {
         let error = response.expect_err("unconfigured hosts must fail before networking");
         let message = error.as_str().expect("policy error returned to the frontend");
         assert!(message.contains("not-configured.invalid"), "unexpected IPC error: {message}");
-        assert!(message.contains("拒绝访问未授权主机"), "request reached transport: {message}");
+        assert!(message.contains("拒绝访问未授权来源"), "request reached transport: {message}");
     }
 
     #[test]
-    fn allows_only_xiaomi_api_and_configured_hosts() {
+    fn allows_only_xiaomi_api_and_configured_origins() {
         assert!(allows("https://api.io.mi.com/app/home/device_list", &[]));
         assert!(allows("https://de.api.io.mi.com/app/home/device_list", &[]));
         assert!(allows(
@@ -627,15 +613,15 @@ mod tests {
         assert!(allows("https://miot-spec.org/miot-spec-v2/instance", &[]));
         assert!(allows(
             "https://api.deepseek.com/v1/chat/completions",
-            &["api.deepseek.com"]
+            &["https://api.deepseek.com"]
         ));
-        assert!(allows("http://192.168.1.8:8123/api/", &["192.168.1.8"]));
+        assert!(allows("http://192.168.1.8:8123/api/", &["http://192.168.1.8:8123"]));
 
         assert!(!allows("https://evil.example/steal", &[]));
         assert!(!allows("https://api.io.mi.com.evil.example/app", &[]));
         assert!(!allows(
             "https://api.deepseek.com.evil.example/v1",
-            &["api.deepseek.com"]
+            &["https://api.deepseek.com"]
         ));
         assert!(!allows("file:///C:/Windows/win.ini", &[]));
     }
@@ -645,18 +631,39 @@ mod tests {
         assert!(!allows("http://api.io.mi.com/app/private", &[]));
         assert!(!allows("https://api.io.mi.com:8443/app/private", &[]));
         assert!(!allows("http://account.xiaomi.com/pass/serviceLogin", &[]));
+        assert!(!allows("http://api.io.mi.com/app/private", &["http://api.io.mi.com"]));
+        assert!(!allows("https://api.io.mi.com:8443/app/private", &["https://api.io.mi.com:8443"]));
     }
 
     #[test]
-    fn normalizes_configured_hosts_and_rejects_urls() {
-        assert_eq!(
-            normalize_extra_host(" API.DeepSeek.com. "),
-            Some("api.deepseek.com".to_string())
-        );
-        assert_eq!(normalize_extra_host("[::1]"), Some("::1".to_string()));
-        assert_eq!(normalize_extra_host("https://evil.example/path"), None);
-        assert_eq!(normalize_extra_host("evil.example/path"), None);
-        assert_eq!(normalize_extra_host(""), None);
+    fn configured_origins_keep_scheme_and_effective_port() {
+        assert!(allows("https://api.deepseek.com/v1", &["https://api.deepseek.com:443"]));
+        assert!(!allows("http://api.deepseek.com/v1", &["https://api.deepseek.com"]));
+        assert!(!allows("https://api.deepseek.com:8443/v1", &["https://api.deepseek.com"]));
+        assert!(allows("http://localhost:11434/api", &["http://localhost:11434"]));
+        assert!(!allows("http://localhost:8123/api", &["http://localhost:11434"]));
+        assert!(allows("http://[::1]:11434/api", &["http://[::1]:11434"]));
+        assert!(!allows("https://user@api.io.mi.com/app", &[]));
+    }
+
+    #[test]
+    fn normalizes_configured_origins_and_rejects_non_origins() {
+        assert_eq!(normalize_extra_origin(" HTTPS://API.DeepSeek.com.:443/ "), Some("https://api.deepseek.com:443".to_string()));
+        assert_eq!(normalize_extra_origin("http://[::1]:11434"), Some("http://[::1]:11434".to_string()));
+        for invalid in ["api.deepseek.com", "https://evil.example/path", "https://evil.example?key=value", "https://evil.example#fragment", "https://user@evil.example", "file:///tmp/config", ""] {
+            assert_eq!(normalize_extra_origin(invalid), None, "{invalid}");
+        }
+    }
+
+    #[test]
+    fn redirects_cannot_change_origin_even_to_another_allowed_origin() {
+        let origins = extra(&["https://configured.example", "http://configured.example", "https://configured.example:8443"]);
+        let original = reqwest::Url::parse("https://configured.example/start").unwrap();
+        let original_origin = url_origin(&original).unwrap();
+        assert!(redirect_allowed(&original_origin, &reqwest::Url::parse("https://configured.example:443/next").unwrap(), &origins));
+        for target in ["http://configured.example/next", "https://configured.example:8443/next", "https://api.io.mi.com/app"] {
+            assert!(!redirect_allowed(&original_origin, &reqwest::Url::parse(target).unwrap(), &origins), "{target}");
+        }
     }
 
     #[test]

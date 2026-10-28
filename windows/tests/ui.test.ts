@@ -68,6 +68,31 @@ afterEach(async () => {
   dom.close();
 });
 
+describe("Configured native origins", () => {
+  it("sends protocol, IPv6 host and configured port without API paths", async () => {
+    const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+    const invoke = async (command: string, args: Record<string, unknown> = {}) => {
+      calls.push({ command, args });
+      return undefined;
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+      assistantBaseURL: "HTTPS://API.DeepSeek.com:8443/v1",
+      haBaseURL: "http://[::1]:8123/api",
+    }));
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+
+    assert.deepEqual(calls.filter((call) => call.command === "set_allowed_origins").map((call) => call.args.origins), [
+      ["http://[::1]:8123", "https://api.deepseek.com:8443"],
+    ]);
+    assert.equal(calls.some((call) => call.command === "set_allowed_hosts"), false);
+  });
+});
+
 describe("Windows device control and undo", () => {
   it("restores an originally off light without turning it on through brightness", async () => {
     startDemo();
