@@ -641,6 +641,13 @@ mod tests {
     }
 
     #[test]
+    fn built_in_services_reject_plaintext_and_alternate_ports() {
+        assert!(!allows("http://api.io.mi.com/app/private", &[]));
+        assert!(!allows("https://api.io.mi.com:8443/app/private", &[]));
+        assert!(!allows("http://account.xiaomi.com/pass/serviceLogin", &[]));
+    }
+
+    #[test]
     fn normalizes_configured_hosts_and_rejects_urls() {
         assert_eq!(
             normalize_extra_host(" API.DeepSeek.com. "),
