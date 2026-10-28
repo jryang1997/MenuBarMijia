@@ -61,6 +61,8 @@ final class MenuBarPanelController: NSObject {
     private(set) var labelText: String?
     private(set) var tooltipText: String?
     private var observers: [any NSObjectProtocol] = []
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
     private var didInstall = false
 
     override init() {
@@ -108,6 +110,7 @@ final class MenuBarPanelController: NSObject {
     /// Releases the status item, the panel and every observer. Used by tests; the app keeps the item
     /// for its whole lifetime.
     func uninstall() {
+        removeMouseMonitors()
         labelTimer?.invalidate()
         labelTimer = nil
         stopPressTimer()
@@ -260,6 +263,7 @@ final class MenuBarPanelController: NSObject {
         }
 
         let wasVisible = panel.isVisible
+        installMouseMonitors()
         if presentsActively {
             // Order the window in first: cooperative activation only succeeds once the app has a
             // window to become active for, and this agent app owns none at that moment.
@@ -278,6 +282,7 @@ final class MenuBarPanelController: NSObject {
     }
 
     func hidePanel() {
+        removeMouseMonitors()
         guard let panel = panelWindow, panel.isVisible else { return }
         panel.orderOut(nil)
         store?.setPanelVisible(false)
@@ -517,6 +522,48 @@ final class MenuBarPanelController: NSObject {
         guard isPanelVisible, let window else { return }
         guard !isPanelWindow(window) else { return }
         guard window !== statusItem?.button?.window else { return }
+        hidePanel()
+    }
+
+    private func installMouseMonitors() {
+        guard localMouseMonitor == nil else { return }
+        let clicks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: clicks) { [weak self] event in
+            MainActor.assumeIsolated {
+                let point = event.window?.convertPoint(toScreen: event.locationInWindow)
+                    ?? event.locationInWindow
+                self?.handleMouseDown(in: event.window, at: point)
+            }
+            return event
+        }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: clicks) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.handleMouseDown(in: nil, at: NSEvent.mouseLocation)
+            }
+        }
+    }
+
+    private func removeMouseMonitors() {
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
+        localMouseMonitor = nil
+        globalMouseMonitor = nil
+    }
+
+    /// A click need not activate another app (desktop, nonactivating panels, other status items).
+    /// Keep our own controls and status button working, and never swallow the original click.
+    func handleMouseDown(in window: NSWindow?, at screenPoint: NSPoint) {
+        guard isPanelVisible, let panel = panelWindow else { return }
+        guard !isPanelWindow(window) else { return }
+        if panel.frame.contains(screenPoint) { return }
+        if let children = panel.childWindows,
+           children.contains(where: { $0.isVisible && $0.frame.contains(screenPoint) }) { return }
+        if let button = statusItem?.button,
+           let statusWindow = button.window,
+           statusWindow.convertToScreen(button.convert(button.bounds, to: nil)).contains(screenPoint) {
+            return
+        }
+        if SpeechInputController.shared.isListening || pressTimer != nil { return }
         hidePanel()
     }
 

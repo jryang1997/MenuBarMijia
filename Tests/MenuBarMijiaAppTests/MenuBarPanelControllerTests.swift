@@ -321,6 +321,38 @@ struct MenuBarPanelControllerTests {
         #expect(controller.isPanelVisible == false)
     }
 
+    @Test("An outside mouse click closes the panel without an application deactivation")
+    func outsideMouseClickClosesPanel() async throws {
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let controller = makeController(store: store)
+        defer { controller.uninstall() }
+        controller.showPanel()
+        let panel = try #require(controller.panelWindow)
+        let outside = NSPoint(x: panel.frame.minX - 20, y: panel.frame.midY)
+        controller.handleMouseDown(in: panel, at: panel.frame.origin)
+        #expect(controller.isPanelVisible, "panel controls keep working")
+        if let button = controller.statusItem?.button, let window = button.window {
+            let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
+            controller.handleMouseDown(in: window, at: NSPoint(x: frame.midX, y: frame.midY))
+            #expect(controller.isPanelVisible, "the status button must toggle on release")
+        }
+        let event = try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: outside, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1
+        ))
+
+        NSApp.sendEvent(event)
+
+        #expect(!controller.isPanelVisible)
+        #expect(!store.pollingContext.panelVisible)
+
+        controller.showPanel()
+        NSApp.sendEvent(event)
+        #expect(!controller.isPanelVisible, "outside clicks still work after reopening")
+    }
+
     @Test("Losing key status to another app closes the panel, but dictation keeps it")
     func appDeactivationClosesPanel() async throws {
         let (store, suite) = try await makeStore()
