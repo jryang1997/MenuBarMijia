@@ -13,7 +13,7 @@
 - **从系统设置返回时刷新通知权限（[#55](https://github.com/jryang1997/MenuBarMijia/issues/55), [#78](https://github.com/jryang1997/MenuBarMijia/pull/78)）**：不在启动瞬间弹出系统通知授权框；用户在系统设置更改通知权限并切回 App 时自动同步最新状态。
 - **撤销操作按属性与家庭隔离（[#75](https://github.com/jryang1997/MenuBarMijia/pull/75)）**：撤销只恢复该次动作修改的属性，保留用户随后手动调整的其他属性，并在切换家庭后丢弃旧家庭的待撤销动作。
 - **离线插座不再写入缓存功率（[#76](https://github.com/jryang1997/MenuBarMijia/pull/76)）**：设备离线时跳过缓存电表读数，避免虚增用电统计。
-- **繁体中文回执与发布脚本修复（[#69](https://github.com/jryang1997/MenuBarMijia/pull/69), [#72](https://github.com/jryang1997/MenuBarMijia/pull/72)）**：补齐定时描述、助手执行回执、风速与华氏温差的繁体中文翻译；移除 `Bundle.module` 编译期绝对路径引用，修复云端 macOS 发布包残留 `/Users/` 路径导致发布门禁失败的问题。
+- **繁体中文回执与发布脚本修复（[#69](https://github.com/jryang1997/MenuBarMijia/pull/69), [#72](https://github.com/jryang1997/MenuBarMijia/pull/72), [#82](https://github.com/jryang1997/MenuBarMijia/pull/82)）**：补齐定时描述、助手执行回执、风速与华氏温差的繁体中文翻译；移除 `Bundle.module` 编译期绝对路径引用，修复云端 macOS 发布包残留 `/Users/` 路径导致发布门禁失败的问题；轮换离线 Ed25519 更新签名密钥并改存维护者系统钥匙串（macOS 代码签名证书保持不变）。
 
 ## 1.1.0
 

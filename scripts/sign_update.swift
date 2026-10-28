@@ -21,7 +21,9 @@ import Foundation
 
 // 与 Sources/MijiaCore/UpdateChecker.swift 的 updateSigningPublicKeyBase64 保持一致；
 // 轮换密钥时两处一起改，否则这里会拒绝签名。
-let expectedPublicKeyBase64 = "SZe6sCJZy/U7JCW4mMU8dVBLJ2pIoWh1EhKCNA0wQRM="
+let expectedPublicKeyBase64 = "rLwWXuP0sOZvgd/KusLTTmBXN9DAZ9EzPBNhFSn9yUo="
+let keychainService = "com.jryang1997.release-signing.ed25519"
+let keychainAccount = "update-seed-base64"
 
 enum SigningError: Error, CustomStringConvertible {
     case usage
@@ -70,10 +72,35 @@ func decodeSeed(_ raw: String) throws -> Data {
     return seed
 }
 
+func readKeyFromKeychain() -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    process.arguments = [
+        "find-generic-password",
+        "-s", keychainService,
+        "-a", keychainAccount,
+        "-w"
+    ]
+    let out = Pipe()
+    process.standardOutput = out
+    process.standardError = Pipe()
+    do {
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        guard let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !str.isEmpty else { return nil }
+        return str
+    } catch {
+        return nil
+    }
+}
+
 func main() throws {
     let arguments = Array(CommandLine.arguments.dropFirst())
     guard arguments.count == 1 else { throw SigningError.usage }
-    guard let rawKey = ProcessInfo.processInfo.environment["MENUBARMIJIA_UPDATE_SIGNING_KEY"] else {
+    guard let rawKey = ProcessInfo.processInfo.environment["MENUBARMIJIA_UPDATE_SIGNING_KEY"] ?? readKeyFromKeychain() else {
         throw SigningError.missingKey
     }
 
