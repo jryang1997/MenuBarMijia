@@ -84,9 +84,16 @@ struct IntentOperationsV2Tests {
 
     @Test("空调调高两度 / 温度低一点 adjust the target temperature relatively")
     func temperatureSteps() throws {
-        let up = try #require(Self.parse("空调调高两度"))
+        let up = try #require(L10n.$overrideTemperatureUnit.withValue(.celsius) {
+            Self.parse("空调调高两度")
+        })
         #expect(up.intents == [DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(28))])
         #expect(up.reply == "已客厅空调设为 28°C")
+        let fahrenheitUp = try #require(L10n.$overrideTemperatureUnit.withValue(.fahrenheit) {
+            Self.parse("空调调高两度")
+        })
+        #expect(fahrenheitUp.intents == up.intents)
+        #expect(fahrenheitUp.reply == "已客厅空调设为 82.4°F")
         let down = try #require(Self.parse("空调温度低一点"))
         #expect(down.intents == [DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(25))])
         let clamp = IntentValidator.normalize(.temperatureStep(10), for: Self.livingAC)

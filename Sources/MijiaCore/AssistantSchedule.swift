@@ -62,16 +62,12 @@ public enum DelayPhrase {
     /// 30 → "30 秒后"，600 → "10 分钟后"，5400 → "1 小时 30 分钟后"。
     public static func describe(_ delay: TimeInterval) -> String {
         let total = Int(delay.rounded())
-        if L10n.isEnglish {
-            if total < 60 { return "In \(total)s: " }
-            let hours = total / 3600, minutes = (total % 3600) / 60
-            if hours == 0 { return "In \(minutes)m: " }
-            return minutes == 0 ? "In \(hours)h: " : "In \(hours)h \(minutes)m: "
-        }
-        if total < 60 { return "\(total) 秒后" }
+        if total < 60 { return L10n.format("%@ 秒后", "In %@s: ", String(total)) }
         let hours = total / 3600, minutes = (total % 3600) / 60
-        if hours == 0 { return "\(minutes) 分钟后" }
-        return minutes == 0 ? "\(hours) 小时后" : "\(hours) 小时 \(minutes) 分钟后"
+        if hours == 0 { return L10n.format("%@ 分钟后", "In %@m: ", String(minutes)) }
+        return minutes == 0
+            ? L10n.format("%@ 小时后", "In %@h: ", String(hours))
+            : L10n.format("%@ 小时 %@ 分钟后", "In %@h %@m: ", String(hours), String(minutes))
     }
 
     private static func enSeconds(_ ns: NSString, _ m: NSTextCheckingResult) -> TimeInterval? {

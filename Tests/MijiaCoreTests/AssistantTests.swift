@@ -370,8 +370,15 @@ struct AssistantTests {
         #expect(summary.contains("书房吸顶灯·月光模式"))
         #expect(summary.contains("「老规矩写代码」"))
 
-        let suggestions = memory.topSuggestions(for: eveningDate, devices: Self.devices, scenes: Self.scenes)
+        let suggestions = L10n.$overrideTemperatureUnit.withValue(.celsius) {
+            memory.topSuggestions(for: eveningDate, devices: Self.devices, scenes: Self.scenes)
+        }
         #expect(suggestions.map(\.title) == ["书房吸顶灯·月光模式", "客厅空调·25°C"])
+        let fahrenheitSuggestions = L10n.$overrideTemperatureUnit.withValue(.fahrenheit) {
+            memory.topSuggestions(for: eveningDate, devices: Self.devices, scenes: Self.scenes)
+        }
+        #expect(fahrenheitSuggestions.map(\.title) == ["书房吸顶灯·月光模式", "客厅空调·77°F"])
+        #expect(fahrenheitSuggestions.map(\.intents) == suggestions.map(\.intents))
     }
 
     @Test("Model resolver surfaces HTTP errors and empty content")

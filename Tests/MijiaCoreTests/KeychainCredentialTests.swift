@@ -30,30 +30,32 @@ struct KeychainCredentialTests {
     }
 
     @Test("Migration moves a plaintext credential into the Keychain and deletes the plaintext key")
-    func migrationMovesSecretAndDeletesPlaintext() {
+    func migrationMovesSecretAndDeletesPlaintext() throws {
+        let suite = "test.keychain-migration.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
         let account = scratchAccount("migrate")
         let plaintextKey = "test_plaintext_\(UUID().uuidString)"
         defer {
             KeychainHelper.saveSecret("", account: account)
-            UserDefaults.standard.removeObject(forKey: plaintextKey)
+            defaults.removePersistentDomain(forName: suite)
         }
 
-        UserDefaults.standard.set("legacy-secret", forKey: plaintextKey)
-        KeychainHelper.migratePlaintextSecret(defaults: .standard, plaintextKey: plaintextKey, account: account)
+        defaults.set("legacy-secret", forKey: plaintextKey)
+        KeychainHelper.migratePlaintextSecret(defaults: defaults, plaintextKey: plaintextKey, account: account)
         #expect(KeychainHelper.readKeychainSecret(account: account) == "legacy-secret", "the plaintext value must land in the Keychain")
-        #expect(UserDefaults.standard.string(forKey: plaintextKey) == nil)
+        #expect(defaults.string(forKey: plaintextKey) == nil)
 
         // Idempotent: a second launch has nothing left to migrate.
-        KeychainHelper.migratePlaintextSecret(defaults: .standard, plaintextKey: plaintextKey, account: account)
-        #expect(UserDefaults.standard.string(forKey: plaintextKey) == nil)
+        KeychainHelper.migratePlaintextSecret(defaults: defaults, plaintextKey: plaintextKey, account: account)
+        #expect(defaults.string(forKey: plaintextKey) == nil)
         #expect(KeychainHelper.readKeychainSecret(account: account) == "legacy-secret")
 
         // Whitespace-only leftovers are dropped without writing an empty secret.
         let blankAccount = scratchAccount("blank")
         defer { KeychainHelper.saveSecret("", account: blankAccount) }
-        UserDefaults.standard.set("  \n", forKey: plaintextKey)
-        KeychainHelper.migratePlaintextSecret(defaults: .standard, plaintextKey: plaintextKey, account: blankAccount)
-        #expect(UserDefaults.standard.string(forKey: plaintextKey) == nil)
+        defaults.set("  \n", forKey: plaintextKey)
+        KeychainHelper.migratePlaintextSecret(defaults: defaults, plaintextKey: plaintextKey, account: blankAccount)
+        #expect(defaults.string(forKey: plaintextKey) == nil)
         #expect(KeychainHelper.loadSecret(account: blankAccount).isEmpty)
     }
 
