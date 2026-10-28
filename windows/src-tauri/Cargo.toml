@@ -1,6 +1,6 @@
 [package]
 name = "menubarmijia-windows"
-version = "1.1.1"
+version = "1.1.2"
 description = "MenuBarMijia for Windows 11 System Tray"
 authors = ["jryang1997"]
 edition = "2021"
