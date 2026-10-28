@@ -576,22 +576,36 @@ public enum L10n {
         return found
     }
 
-    /// Searches the module resources first, then the app and executable locations and their parents.
+    private final class BundleToken {}
+
+    /// Searches the loaded bundles, the app, and executable locations and their parents.
     static var translationSearchBases: [URL] {
         var bases: [URL] = []
+        #if !os(macOS)
         if let resources = Bundle.module.resourceURL { bases.append(resources) }
-        if let resources = Bundle.main.resourceURL { bases.append(resources) }
-        let mainURL = Bundle.main.bundleURL
-        bases.append(mainURL)
-        bases.append(mainURL.appendingPathComponent("Contents/Resources"))
-        bases.append(mainURL.appendingPathComponent("Contents/MacOS"))
-        if let executable = Bundle.main.executableURL {
-            bases.append(executable.deletingLastPathComponent())
+        #endif
+        if let override = ProcessInfo.processInfo.environment["PACKAGE_RESOURCE_BUNDLE_PATH"]
+            ?? ProcessInfo.processInfo.environment["PACKAGE_RESOURCE_BUNDLE_URL"] {
+            bases.append(URL(fileURLWithPath: override))
         }
-        var parent = mainURL.deletingLastPathComponent()
-        for _ in 0..<3 {
-            bases.append(parent)
-            parent = parent.deletingLastPathComponent()
+        var bundles: [Bundle] = [Bundle(for: BundleToken.self), Bundle.main]
+        for bundle in Bundle.allBundles where !bundles.contains(bundle) {
+            bundles.append(bundle)
+        }
+        for bundle in bundles {
+            if let resources = bundle.resourceURL { bases.append(resources) }
+            let bundleURL = bundle.bundleURL
+            bases.append(bundleURL)
+            bases.append(bundleURL.appendingPathComponent("Contents/Resources"))
+            bases.append(bundleURL.appendingPathComponent("Contents/MacOS"))
+            if let executable = bundle.executableURL {
+                bases.append(executable.deletingLastPathComponent())
+            }
+            var parent = bundleURL.deletingLastPathComponent()
+            for _ in 0..<3 {
+                bases.append(parent)
+                parent = parent.deletingLastPathComponent()
+            }
         }
         return bases
     }

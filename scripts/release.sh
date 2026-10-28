@@ -101,10 +101,13 @@ else
 fi
 
 echo "▶ [5/5] 最终检查"
-if grep -aq "/Users/" "$APP/Contents/MacOS/MenuBarMijiaApp" "$DMG"; then
-    echo "❌ 检测到安装包内残留本机路径 (/Users/)，已中止发布！"
-    exit 1
-fi
+for file in "$APP/Contents/MacOS/MenuBarMijiaApp" "$DMG"; do
+    if grep -aq "/Users/" "$file"; then
+        echo "❌ 检测到 $(basename "$file") 内残留本机路径 (/Users/)，已中止发布！" >&2
+        grep -aob "/Users/" "$file" | head -n 5 >&2
+        exit 1
+    fi
+done
 (cd "$DIST" && shasum -a 256 "$(basename "$DMG")" | tee "$(basename "$DMG").sha256")
 
 echo "✅ 完成：$DMG"

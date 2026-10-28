@@ -68,8 +68,19 @@ cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/MenuBarMijia_MijiaCore.bun
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
 chmod +x "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
 strip -S -x "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
-if nm -ap "$APP_DIR/Contents/MacOS/MenuBarMijiaApp" | grep -q "/Users/"; then
+if ! SYMBOL_TABLE="$(nm -ap "$APP_DIR/Contents/MacOS/MenuBarMijiaApp")"; then
+    echo "❌ 无法读取 MenuBarMijiaApp 符号表，不能确认发布包是否泄露本机路径。" >&2
+    exit 1
+fi
+LEAKED_SYMBOLS="$(printf '%s\n' "$SYMBOL_TABLE" | grep "/Users/" || true)"
+if [ -n "$LEAKED_SYMBOLS" ]; then
     echo "❌ MenuBarMijiaApp 符号表中仍残留本地编译路径 (/Users/)！"
+    printf '%s\n' "$LEAKED_SYMBOLS" | head -n 5 >&2
+    exit 1
+fi
+if grep -aq "/Users/" "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"; then
+    echo "❌ MenuBarMijiaApp 二进制中仍残留本地编译路径 (/Users/)！" >&2
+    grep -aob "/Users/" "$APP_DIR/Contents/MacOS/MenuBarMijiaApp" | head -n 5 >&2
     exit 1
 fi
 
