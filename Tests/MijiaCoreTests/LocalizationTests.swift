@@ -415,11 +415,18 @@ struct LocalizationTests {
             ])
             #expect(moonPlan.reply == "Switched 书房吸顶灯 to Moonlight mode")
 
-            let tempPlan = try #require(AssistantTests.parse("set living room ac to 24 degrees"))
+            let tempPlan = try #require(L10n.$overrideTemperatureUnit.withValue(.celsius) {
+                AssistantTests.parse("set living room ac to 24 degrees")
+            })
             #expect(tempPlan.intents == [
                 DeviceIntent(targetId: "dev_living_ac", operation: .targetTemperature(24))
             ])
-            #expect(tempPlan.reply == "Set 客厅空调 to 24°C", "spoken replies stay Celsius: they mirror the command")
+            #expect(tempPlan.reply == "Set 客厅空调 to 24°C")
+            let fahrenheitPlan = try #require(L10n.$overrideTemperatureUnit.withValue(.fahrenheit) {
+                AssistantTests.parse("set living room ac to 24 degrees")
+            })
+            #expect(fahrenheitPlan.intents == tempPlan.intents)
+            #expect(fahrenheitPlan.reply == "Set 客厅空调 to 75.2°F")
 
             let coolPlan = try #require(AssistantTests.parse("living room ac cool mode"))
             #expect(coolPlan.intents == [
