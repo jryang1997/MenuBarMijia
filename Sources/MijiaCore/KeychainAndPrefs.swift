@@ -86,20 +86,29 @@ public enum KeychainHelper {
 
     /// Passing `nil` deletes the item.
     @discardableResult
-    static func writeKeychainData(_ data: Data?, account: String, accessibility: String? = nil) -> Bool {
+    static func writeKeychainData(
+        _ data: Data?, account: String, accessibility: String? = nil,
+        updateItem: (CFDictionary, CFDictionary) -> OSStatus = SecItemUpdate,
+        addItem: (CFDictionary) -> OSStatus = { SecItemAdd($0, nil) }
+    ) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        SecItemDelete(query as CFDictionary)
-        guard let data else { return true }
-        var addQuery = query
-        addQuery[kSecValueData as String] = data
-        if let accessibility {
-            addQuery[kSecAttrAccessible as String] = accessibility
+        guard let data else {
+            let status = SecItemDelete(query as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
         }
-        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        var attributes: [String: Any] = [kSecValueData as String: data]
+        if let accessibility {
+            attributes[kSecAttrAccessible as String] = accessibility
+        }
+        let status = updateItem(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecSuccess { return true }
+        guard status == errSecItemNotFound else { return false }
+        let addQuery = query.merging(attributes) { _, newValue in newValue }
+        return addItem(addQuery as CFDictionary) == errSecSuccess
     }
 
     static func deleteKeychainItem(account: String) {

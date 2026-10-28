@@ -8,6 +8,19 @@ struct KeychainCredentialTests {
     /// Keychain writes in tests use a scratch account so a developer's real credentials are never touched.
     private func scratchAccount(_ label: String) -> String { "test.\(label).\(UUID().uuidString)" }
 
+    @Test("A rejected Keychain replacement preserves the previous credential")
+    func rejectedReplacementPreservesPreviousCredential() throws {
+        let account = scratchAccount("failed-replacement")
+        defer { KeychainHelper.saveSecret("", account: account) }
+        try #require(KeychainHelper.saveSecret("previous-value", account: account))
+
+        #expect(!KeychainHelper.writeKeychainData(
+            Data("replacement-value".utf8), account: account,
+            updateItem: { _, _ in -1 }, addItem: { _ in -1 }
+        ))
+        #expect(KeychainHelper.readKeychainSecret(account: account) == "previous-value")
+    }
+
     @Test("Saving a secret writes only the Keychain, never a plain UserDefaults copy")
     func secretIsNeverMirroredAsPlaintext() {
         let account = scratchAccount("secret")
@@ -22,6 +35,10 @@ struct KeychainCredentialTests {
         #expect(UserDefaults.standard.string(forKey: plaintextKey) == nil)
         #expect(KeychainHelper.readKeychainSecret(account: account) == "sk-test-value")
         #expect(KeychainHelper.loadSecret(account: account) == "sk-test-value")
+
+        #expect(KeychainHelper.saveSecret("replacement-value", account: account))
+        #expect(KeychainHelper.readKeychainSecret(account: account) == "replacement-value")
+        #expect(UserDefaults.standard.string(forKey: plaintextKey) == nil)
 
         // Saving an empty value deletes the item instead of leaving an empty secret behind.
         #expect(KeychainHelper.saveSecret("", account: account), "an empty value deletes the item")

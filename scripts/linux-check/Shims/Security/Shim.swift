@@ -14,4 +14,4 @@ func key(_ q: [String: Any]) -> String { "\(q[kSecAttrService] ?? "")|\(q[kSecAt
 public func SecItemAdd(_ q: CFDictionary, _ r: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus { lock.lock(); defer { lock.unlock() }; store[key(q)] = q[kSecValueData] as? Data; return errSecSuccess }
 public func SecItemCopyMatching(_ q: CFDictionary, _ r: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus { lock.lock(); defer { lock.unlock() }; guard let d = store[key(q)] else { return errSecItemNotFound }; r?.pointee = d; return errSecSuccess }
 public func SecItemDelete(_ q: CFDictionary) -> OSStatus { lock.lock(); defer { lock.unlock() }; store[key(q)] = nil; return errSecSuccess }
-public func SecItemUpdate(_ q: CFDictionary, _ a: CFDictionary) -> OSStatus { lock.lock(); defer { lock.unlock() }; store[key(q)] = a[kSecValueData] as? Data; return errSecSuccess }
+public func SecItemUpdate(_ q: CFDictionary, _ a: CFDictionary) -> OSStatus { lock.lock(); defer { lock.unlock() }; guard store[key(q)] != nil else { return errSecItemNotFound }; store[key(q)] = a[kSecValueData] as? Data; return errSecSuccess }
