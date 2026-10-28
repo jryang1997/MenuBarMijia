@@ -1,5 +1,20 @@
 # 更新记录
 
+## 1.1.1
+
+### 安全与凭据
+- **macOS 钥匙串单条目保险库与升级引导（[#16](https://github.com/jryang1997/MenuBarMijia/issues/16), [#80](https://github.com/jryang1997/MenuBarMijia/pull/80)）**：将米家登录会话、Home Assistant 令牌、各 AI 服务商 API Key 及 LG 电视指纹合并保存在单个钥匙串条目（`CredentialVault`）中，升级版本后首次启动先展示说明，最多只需授权一次钥匙串访问。
+- **防止旧版明文覆盖钥匙串与写入失败丢凭据（[#73](https://github.com/jryang1997/MenuBarMijia/pull/73), [#77](https://github.com/jryang1997/MenuBarMijia/pull/77)）**：钥匙串已有凭据时不再被残留旧明文覆盖；钥匙串或 Windows 凭据管理器写入失败时保留原有已存凭据。
+- **Windows 原生 HTTP 来源白名单收归宿主管理（[#74](https://github.com/jryang1997/MenuBarMijia/pull/74), [#79](https://github.com/jryang1997/MenuBarMijia/pull/79)）**：仅允许访问已保存设置中的小米云、AI 服务商与 Home Assistant 地址，不再接受前端 WebView 自行放行新域名或跨源重定向。
+- **NAS 部署包摘要校验与停服前预检（[#72](https://github.com/jryang1997/MenuBarMijia/pull/72)）**：`nas/deploy_ha.sh` 与 `nas/remote_setup.sh` 强制校验本地与远端归档 SHA-256、限制远端临时目录权限为 700，并在镜像拉取与标签准备成功前不停止既有 Home Assistant 容器。
+
+### 交互与可靠性
+- **点击外部区域收起菜单栏面板**：在桌面或其他应用窗口点击鼠标左键或右键时自动收起控制面板。
+- **从系统设置返回时刷新通知权限（[#55](https://github.com/jryang1997/MenuBarMijia/issues/55), [#78](https://github.com/jryang1997/MenuBarMijia/pull/78)）**：不在启动瞬间弹出系统通知授权框；用户在系统设置更改通知权限并切回 App 时自动同步最新状态。
+- **撤销操作按属性与家庭隔离（[#75](https://github.com/jryang1997/MenuBarMijia/pull/75)）**：撤销只恢复该次动作修改的属性，保留用户随后手动调整的其他属性，并在切换家庭后丢弃旧家庭的待撤销动作。
+- **离线插座不再写入缓存功率（[#76](https://github.com/jryang1997/MenuBarMijia/pull/76)）**：设备离线时跳过缓存电表读数，避免虚增用电统计。
+- **繁体中文回执与发布脚本修复（[#69](https://github.com/jryang1997/MenuBarMijia/pull/69), [#72](https://github.com/jryang1997/MenuBarMijia/pull/72)）**：补齐定时描述、助手执行回执、风速与华氏温差的繁体中文翻译；移除 `Bundle.module` 编译期绝对路径引用，修复云端 macOS 发布包残留 `/Users/` 路径导致发布门禁失败的问题。
+
 ## 1.1.0
 
 - 降低重复设备快照引起的界面刷新，设备别名先在临时列表中应用，再比较最终状态。回归验证相同快照不触发界面状态失效，实际状态和亮度变化仍正常更新。作者报告的 CPU 降幅尚未独立复现。
