@@ -11,7 +11,6 @@ import {
   inferAssistantPreset,
   assistantEndpointIdentity,
   endpointAllowsSendingSecrets,
-  parseAssistantEndpoint,
   isLocalAssistantEndpoint,
   INSECURE_ENDPOINT_MESSAGE,
   ModelActionPolicy,
@@ -569,8 +568,7 @@ export class MenuMijiaWindowsApp {
   private readonly loadedSettings: LoadedSettings = loadSettings();
   private settings: PersistedSettings = this.loadedSettings.settings;
   private readonly credentialVault = new CredentialVault();
-  /** Serialized host list last sent to Rust; avoids re-sending it on every periodic settings save. */
-  private lastAllowedOrigins: string | null = null;
+  private lastSubmittedEndpoints: string | null = null;
   // Assigned in the constructor, after the interface language is resolved: the demo home is
   // generated per language (#52), so a field initializer would freeze the module default.
   private devices: SmartDevice[];
@@ -634,7 +632,7 @@ export class MenuMijiaWindowsApp {
         : demoDevices();
     this.scenes = this.settings.connectionMode === "xiaomiCloud" ? [] : demoScenes();
     this.initializeCredentials();
-    this.syncAllowedOrigins();
+    this.submitServiceEndpoints();
 
     if (!this.settings.hasCompletedOnboarding && !this.settings.miSession) {
       this.activeSheet = "onboarding";
@@ -690,7 +688,7 @@ export class MenuMijiaWindowsApp {
         this.settings.miCloudRegion = normalizeMiCloudRegion(this.settings.miSession.region);
         if (this.activeSheet === "onboarding") this.activeSheet = "none";
       }
-      this.syncAllowedOrigins();
+      this.submitServiceEndpoints();
       writeSettingsForStorage(this.settings);
       if (this.settings.connectionMode === "xiaomiCloud" && this.settings.miSession) {
         void this.refreshXiaomiDevices(true);
@@ -711,7 +709,7 @@ export class MenuMijiaWindowsApp {
 
   private saveSettings(): void {
     writeSettingsForStorage(this.settings);
-    this.syncAllowedOrigins();
+    this.submitServiceEndpoints();
     void this.persistCredentials();
   }
 
@@ -733,21 +731,22 @@ export class MenuMijiaWindowsApp {
     applyTemperatureUnit(locale, this.settings.temperatureUnit);
   }
 
-  /** This frontend-controlled list constrains requests; it does not authorize settings changes. */
-  private syncAllowedOrigins(): void {
-    const origins: string[] = [];
-    for (const url of [this.settings.assistantBaseURL, this.settings.haBaseURL]) {
-      const endpoint = parseAssistantEndpoint(url);
-      if (!endpoint) continue;
-      const host = endpoint.host.includes(":") ? `[${endpoint.host}]` : endpoint.host;
-      const port = endpoint.port === null ? "" : `:${endpoint.port}`;
-      origins.push(`${endpoint.scheme}://${host}${port}`);
+  private submitServiceEndpoints(): void {
+    const assistantUrl = this.settings.assistantBaseURL.trim();
+    const haUrl = this.settings.haBaseURL.trim();
+    const serialized = `${assistantUrl}\n${haUrl}`;
+    if (serialized === this.lastSubmittedEndpoints) return;
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) {
+      this.lastSubmittedEndpoints = serialized;
+      return;
     }
-    origins.sort();
-    const serialized = origins.join("\n");
-    if (serialized === this.lastAllowedOrigins) return;
-    this.lastAllowedOrigins = serialized;
-    invokeTauriVoid("set_allowed_origins", { origins });
+    void invoke("set_service_endpoints", { assistantUrl, haUrl }).then(
+      () => {
+        this.lastSubmittedEndpoints = serialized;
+      },
+      () => undefined,
+    );
   }
 
   /** Restores the last known release so an update found yesterday still shows after a restart. */
