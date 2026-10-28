@@ -44,6 +44,44 @@ struct EnergyHistoryTests {
         #expect(abs(value - expected) < 1e-9, "expected \(expected), got \(value)")
     }
 
+    @Test("Offline cached counters do not create a baseline or observed day")
+    @MainActor
+    func offlineCounterIsNotAnObservation() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let history = EnergyHistory(defaults: defaults, calendar: testCalendar)
+        var offline = testPlug("plug_tv", "电视插座", kwh: 10)
+        offline.isOnline = false
+
+        history.record(devices: [offline], now: testDate(0, 9))
+        #expect(history.recordingStartedAt == nil)
+        #expect(history.dailyTotals(dayCount: 1, now: testDate(0, 9)).first?.isObserved == false)
+
+        history.record(devices: [testPlug("plug_tv", "电视插座", kwh: 11)], now: testDate(1, 9))
+        #expect(history.recordingStartedAt == testDate(1, 9))
+        #expect(history.totalKwh(dayCount: 7, now: testDate(1, 9)) == 0)
+    }
+
+    @Test("Offline snapshots preserve the last valid counter and observation time")
+    @MainActor
+    func offlineDayDoesNotMoveTheBaseline() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let history = EnergyHistory(defaults: defaults, calendar: testCalendar)
+        history.record(devices: [testPlug("plug_tv", "电视插座", kwh: 10)], now: testDate(0, 9))
+        var offline = testPlug("plug_tv", "电视插座", kwh: 10.5)
+        offline.isOnline = false
+        history.record(devices: [offline], now: testDate(1, 9))
+
+        let restored = EnergyHistory(defaults: defaults, calendar: testCalendar)
+        #expect(restored.dailyTotals(dayCount: 1, now: testDate(1, 9)).first?.isObserved == false)
+        restored.record(devices: [testPlug("plug_tv", "电视插座", kwh: 11)], now: testDate(2, 9))
+        let days = restored.dailyTotals(dayCount: 3, now: testDate(2, 9))
+        #expect(days.map(\.isObserved) == [true, false, true])
+        expectClose(days[0].kwh, 1)
+        expectClose(days[1].kwh, 0)
+    }
+
     // MARK: Baselines
 
     @Test("The first reading only sets a baseline; nothing is invented")

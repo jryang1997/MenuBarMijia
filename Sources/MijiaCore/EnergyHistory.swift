@@ -121,7 +121,8 @@ public final class EnergyHistory {
         var observedCounter = false
 
         for device in devices {
-            guard case .plug(let spec) = device.kind,
+            guard device.isOnline,
+                  case .plug(let spec) = device.kind,
                   let reading = spec.energyKwh,
                   reading.isFinite,
                   reading >= 0 else {
