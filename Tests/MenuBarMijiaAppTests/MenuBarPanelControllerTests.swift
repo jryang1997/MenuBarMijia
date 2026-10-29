@@ -447,8 +447,8 @@ struct MenuBarPanelControllerTests {
         bitmap.size = size
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
 
-        // Sample background pixel near top-right header empty area (x: 280, y: 24)
-        let bgColor = try #require(bitmap.colorAt(x: 280, y: 24)?.usingColorSpace(.deviceRGB))
+        // Sample background pixel in the outer top-left padding (x: 10, y: 6) where no header views render.
+        let bgColor = try #require(bitmap.colorAt(x: 10, y: 6)?.usingColorSpace(.deviceRGB))
         let luminance = 0.2126 * bgColor.redComponent + 0.7152 * bgColor.greenComponent + 0.0722 * bgColor.blueComponent
         let effectiveName = panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
         #expect(effectiveName == .darkAqua)
