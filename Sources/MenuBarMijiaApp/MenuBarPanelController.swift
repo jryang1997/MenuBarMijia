@@ -253,6 +253,7 @@ final class MenuBarPanelController: NSObject {
         guard let store else { return }
         let panel = panelWindow ?? Self.makePanel()
         panelWindow = panel
+        panel.appearance = Self.preferredAppearance()
         if panel.contentView == nil {
             attachContent(to: panel)
         }
@@ -324,8 +325,16 @@ final class MenuBarPanelController: NSObject {
         panel.isMovable = false
         panel.isMovableByWindowBackground = false
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.appearance = preferredAppearance()
         panel.contentView = nil
         return panel
+    }
+
+    /// Mirrors `AppAppearance` onto the AppKit panel so materials, dynamic `NSColor`s, menus and
+    /// tooltips match the SwiftUI scheme.
+    static func preferredAppearance() -> NSAppearance? {
+        let raw = UserDefaults.standard.string(forKey: AppAppearance.storageKey)
+        return (raw.flatMap(AppAppearance.init(rawValue:)) ?? .system).nsAppearance
     }
 
     private func attachContent(to panel: NSPanel) {
@@ -583,6 +592,7 @@ final class MenuBarPanelController: NSObject {
     }
 
     func handlePreferencesChanged() {
+        panelWindow?.appearance = Self.preferredAppearance()
         guard isPanelVisible else { return }
         let height = Self.preferredContentSize(screen: statusScreen).height
         updatePanelSize(width: Self.panelWidth, height: height)

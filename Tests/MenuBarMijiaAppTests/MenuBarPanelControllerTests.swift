@@ -402,4 +402,61 @@ struct MenuBarPanelControllerTests {
         // Settings is a different window, so ⌘,-style AppKit handling stays untouched there.
         #expect(controller.isPanelWindow(NSApp.keyWindow) == (NSApp.keyWindow === panel))
     }
+
+    @Test("Classic skin in dark mode renders a dark panel background instead of light material")
+    func classicDarkModeRendersDarkBackground() async throws {
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+        let prevSkin = UserDefaults.standard.string(forKey: AppSkin.storageKey)
+        let prevAppearance = UserDefaults.standard.string(forKey: AppAppearance.storageKey)
+        defer {
+            if let prevSkin { UserDefaults.standard.set(prevSkin, forKey: AppSkin.storageKey) }
+            else { UserDefaults.standard.removeObject(forKey: AppSkin.storageKey) }
+            if let prevAppearance { UserDefaults.standard.set(prevAppearance, forKey: AppAppearance.storageKey) }
+            else { UserDefaults.standard.removeObject(forKey: AppAppearance.storageKey) }
+        }
+
+        UserDefaults.standard.set(AppSkin.classic.rawValue, forKey: AppSkin.storageKey)
+        UserDefaults.standard.set(AppAppearance.dark.rawValue, forKey: AppAppearance.storageKey)
+
+        let controller = makeController(store: store)
+        defer { controller.uninstall() }
+        controller.showPanel()
+
+        let panel = try #require(controller.panelWindow)
+        let hosting = try #require(panel.contentView)
+        panel.layoutIfNeeded()
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        panel.displayIfNeeded()
+
+        let size = hosting.bounds.size
+        let bitmap = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(size.width),
+            pixelsHigh: Int(size.height),
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        bitmap.size = size
+        hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+
+        // Sample background pixel near top-right header empty area (x: 280, y: 24)
+        let bgColor = try #require(bitmap.colorAt(x: 280, y: 24)?.usingColorSpace(.deviceRGB))
+        let luminance = 0.2126 * bgColor.redComponent + 0.7152 * bgColor.greenComponent + 0.0722 * bgColor.blueComponent
+        let effectiveName = panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+        #expect(effectiveName == .darkAqua)
+        #expect(luminance < 0.35, "Classic dark mode panel background should be dark, got luminance \(luminance)")
+
+        // Switching to forced light updates the panel's appearance right away.
+        UserDefaults.standard.set(AppAppearance.light.rawValue, forKey: AppAppearance.storageKey)
+        controller.handlePreferencesChanged()
+        #expect(panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
+    }
 }
