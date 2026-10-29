@@ -133,7 +133,6 @@ public final class HomeStore {
     public var miCloudRegion: MiCloudRegion = .cn {
         didSet {
             userDefaults.set(miCloudRegion.rawValue, forKey: "mi_cloud_region")
-            syncSensorHistoryScope()
         }
     }
 
@@ -189,7 +188,8 @@ public final class HomeStore {
         }
     }
 
-    public internal(set) var miSessionMaskedUserId: String? {
+    public internal(set) var miSessionMaskedUserId: String?
+    var miSessionScopeIdentifier: String? {
         didSet { syncSensorHistoryScope() }
     }
 
@@ -287,8 +287,9 @@ public final class HomeStore {
             L10n.currentLanguage = initialEffective
         }
 
+        let initialMiSession = MiSessionStore.load(defaults: ud)
         let savedRegion = ud.string(forKey: "mi_cloud_region").flatMap(MiCloudRegion.init(rawValue:))
-            ?? MiSessionStore.load(defaults: ud).flatMap { MiCloudRegion(rawValue: $0.region.lowercased()) }
+            ?? initialMiSession.flatMap { MiCloudRegion(rawValue: $0.region.lowercased()) }
             ?? .cn
         self.miCloudRegion = savedRegion
 
@@ -296,7 +297,8 @@ public final class HomeStore {
         self.serverURLString = savedURL
         let initialBackend = ud.string(forKey: "home_backend").flatMap(HomeBackend.init(rawValue:)) ?? .homeAssistant
         self.homeBackend = initialBackend
-        self.miSessionMaskedUserId = MiSessionStore.load(defaults: ud)?.maskedUserId
+        self.miSessionMaskedUserId = initialMiSession?.maskedUserId
+        self.miSessionScopeIdentifier = initialMiSession?.historyScopeIdentifier
         self.selectedMiHomeId = ud.string(forKey: MiCloudProvider.selectedHomeKey)
         self.lgConfig = LGWebOSConfig.load(from: ud)
         self.homeName = ud.string(forKey: "home_name") ?? KeychainHelper.localizedDefaultHomeName

@@ -235,8 +235,7 @@ extension HomeStore {
             let normalized = HAWebSocketProvider.normalizeBaseURL(serverURLString).lowercased()
             scope = "ha:\(normalized)"
         case .xiaomiCloud:
-            let user = miSessionMaskedUserId ?? "anonymous"
-            scope = "mi:\(miCloudRegion.rawValue):\(user)"
+            scope = miSessionScopeIdentifier ?? "mi:signed-out"
         }
         sensorHistory.setConnectionScope(scope)
     }
@@ -403,6 +402,7 @@ extension HomeStore {
         invalidateUndoContext()
         MiSessionStore.save(session, defaults: userDefaults)
         self.miSessionMaskedUserId = session.maskedUserId
+        self.miSessionScopeIdentifier = session.historyScopeIdentifier
         if let region = MiCloudRegion(rawValue: session.region.lowercased()) {
             self.miCloudRegion = region
         }
@@ -419,6 +419,7 @@ extension HomeStore {
     public func logoutMiAccount() {
         MiSessionStore.clear(defaults: userDefaults)
         self.miSessionMaskedUserId = nil
+        self.miSessionScopeIdentifier = nil
         if homeBackend == .xiaomiCloud {
             invalidateUndoContext()
             self.devices = []

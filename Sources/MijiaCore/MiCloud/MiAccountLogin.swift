@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -34,6 +35,17 @@ public struct MiSession: Codable, Equatable, Sendable {
     public var maskedUserId: String {
         guard userId.count > 4 else { return String(repeating: "*", count: userId.count) }
         return "\(userId.prefix(2))****\(userId.suffix(2))"
+    }
+
+    /// Stable, non-reversible namespace identifier derived from the active session's region and full
+    /// `userId`, so accounts sharing the same `maskedUserId` (e.g. `12345689` vs `12999989`) never
+    /// collide while keeping the raw `userId` out of `UserDefaults`.
+    public var historyScopeIdentifier: String {
+        let normalizedRegion = region.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let effectiveRegion = normalizedRegion.isEmpty ? "cn" : normalizedRegion
+        let digest = SHA256.hash(data: Data("\(effectiveRegion):\(userId)".utf8))
+        let hex = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "mi:\(effectiveRegion):\(hex)"
     }
 
     public var apiBaseURL: String {

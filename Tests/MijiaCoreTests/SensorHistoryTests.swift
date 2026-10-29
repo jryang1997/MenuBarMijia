@@ -218,6 +218,23 @@ struct SensorHistoryTests {
         #expect(reloadedFirst.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 21.5)
         let reloadedSecond = SensorHistory(defaults: defaults, calendar: cal, connectionScope: "ha:http://192.168.1.20:8123")
         #expect(reloadedSecond.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 28.0)
+
+        // Two Xiaomi accounts sharing the same display mask (`12****89`) still produce distinct scopes.
+        let sessionA = MiSession(userId: "12345689", cUserId: "c1", ssecurity: "s1", serviceToken: "t1", region: "cn")
+        let sessionB = MiSession(userId: "12999989", cUserId: "c2", ssecurity: "s2", serviceToken: "t2", region: "cn")
+        #expect(sessionA.maskedUserId == sessionB.maskedUserId)
+        #expect(sessionA.historyScopeIdentifier != sessionB.historyScopeIdentifier)
+
+        // Changing the region picker in HomeStore before a new login keeps the active session's scope.
+        let storeSuite = "SensorHistoryTests.storeScope.\(UUID().uuidString)"
+        let storeDefaults = try #require(UserDefaults(suiteName: storeSuite))
+        defer { storeDefaults.removePersistentDomain(forName: storeSuite) }
+        MiSessionStore.save(sessionA, defaults: storeDefaults)
+        storeDefaults.set(HomeBackend.xiaomiCloud.rawValue, forKey: "home_backend")
+        let store = HomeStore(provider: DemoHomeProvider(), defaultsSuiteName: storeSuite)
+        #expect(store.sensorHistory.connectionScope == sessionA.historyScopeIdentifier)
+        store.miCloudRegion = .de
+        #expect(store.sensorHistory.connectionScope == sessionA.historyScopeIdentifier)
     }
 
     @Test("MiotSynthesizer resolves temperature and humidity property keys from MIoT spec")
