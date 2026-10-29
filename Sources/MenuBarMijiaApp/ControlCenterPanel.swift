@@ -51,8 +51,9 @@ public struct ControlCenterPanel: View {
     private var skin: AppSkin { AppSkin(rawValue: skinRaw) ?? .classic }
     private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
     /// The panel sets `skinRoot` on its own body, so it cannot read that environment back;
-    /// resolve the same palette locally (#51).
-    private var palette: SkinPalette { skin.palette(for: appearance.colorScheme ?? colorScheme) }
+    /// resolve the effective scheme and palette locally (#51).
+    private var effectiveScheme: ColorScheme { appearance.colorScheme ?? colorScheme }
+    private var palette: SkinPalette { skin.palette(for: effectiveScheme) }
     private var skinAccentFill: AnyShapeStyle { skin.isClassic ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(palette.accentGradient) }
     private var skinOnAccent: Color { skin.isClassic ? .white : palette.onAccent }
 
@@ -920,7 +921,7 @@ public struct ControlCenterPanel: View {
                                 .font(.system(size: 13.5, weight: .semibold))
                                 .foregroundStyle(
                                     store.activeDeviceCount > 0
-                                        ? (skin.isClassic ? (colorScheme == .dark ? Color.orange : Color(red: 0.86, green: 0.42, blue: 0.04)) : palette.accent)
+                                        ? (skin.isClassic ? (effectiveScheme == .dark ? Color.orange : Color(red: 0.86, green: 0.42, blue: 0.04)) : palette.accent)
                                         : Color.secondary
                                 )
                         }
@@ -1099,7 +1100,7 @@ public struct ControlCenterPanel: View {
         return HStack(spacing: 4) {
             Image(systemName: "bolt.fill")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(colorScheme == .dark ? Color.green : Color(red: 0.08, green: 0.54, blue: 0.22))
+                .foregroundStyle(effectiveScheme == .dark ? Color.green : Color(red: 0.08, green: 0.54, blue: 0.22))
 
             Text(String(format: "%.0fW", watts))
                 .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -1111,7 +1112,7 @@ public struct ControlCenterPanel: View {
         .overlay {
             if skin.isClassic {
                 capsule
-                    .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
+                    .strokeBorder(Color.white.opacity(effectiveScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
             }
         }
     }
@@ -1121,7 +1122,7 @@ public struct ControlCenterPanel: View {
         return HStack(spacing: 5) {
             Image(systemName: "thermometer.medium")
                 .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(colorScheme == .dark ? Color.teal : Color(red: 0.04, green: 0.48, blue: 0.52))
+                .foregroundStyle(effectiveScheme == .dark ? Color.teal : Color(red: 0.04, green: 0.48, blue: 0.52))
 
             Text(L10n.displayRoomName(env.label))
                 .font(.system(size: 11, weight: .semibold))
@@ -1147,7 +1148,7 @@ public struct ControlCenterPanel: View {
         .overlay {
             if skin.isClassic {
                 capsule
-                    .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
+                    .strokeBorder(Color.white.opacity(effectiveScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
             }
         }
     }
@@ -1184,7 +1185,7 @@ public struct ControlCenterPanel: View {
                                 Image(systemName: action.sfSymbolName)
                                     .font(.system(size: 10.5, weight: .semibold))
                                     .foregroundStyle(
-                                        colorScheme == .dark
+                                        effectiveScheme == .dark
                                             ? Color.orange
                                             : Color(red: 0.82, green: 0.38, blue: 0.04)
                                     )

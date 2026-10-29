@@ -127,6 +127,15 @@ public enum AppAppearance: String, CaseIterable, Identifiable, Sendable {
         case .dark: return .dark
         }
     }
+
+    /// `nil` inherits the system appearance on `NSWindow` / `NSView`.
+    public var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
+        }
+    }
 }
 
 // MARK: - Palette
@@ -274,9 +283,6 @@ public struct SkinRoot: ViewModifier {
     public func body(content: Content) -> some View {
         let p = skin.palette(for: effectiveScheme)
         return content
-            .environment(\.appSkin, skin)
-            .environment(\.skinPalette, p)
-            .environment(\.colorScheme, effectiveScheme)
             .fontDesign(p.fontDesign)
             .foregroundStyle(p.fg)
             .tint(p.accent)
@@ -297,6 +303,9 @@ public struct SkinRoot: ViewModifier {
                     }
                 }
             }
+            .environment(\.appSkin, skin)
+            .environment(\.skinPalette, p)
+            .environment(\.colorScheme, effectiveScheme)
     }
 }
 
@@ -600,11 +609,15 @@ private struct SkinSwatch: View {
     let skin: AppSkin
     let isSelected: Bool
 
+    private var effectiveScheme: ColorScheme {
+        let appearance = AppAppearance(rawValue: appearanceRaw) ?? .system
+        return appearance.colorScheme ?? colorScheme
+    }
+
     /// Mirrors what the panel will actually paint for the current appearance (#51), so a light
     /// skin previews its dark twin while the system is dark.
     private var palette: SkinPalette {
-        let appearance = AppAppearance(rawValue: appearanceRaw) ?? .system
-        return skin.palette(for: appearance.colorScheme ?? colorScheme)
+        skin.palette(for: effectiveScheme)
     }
 
     var body: some View {
@@ -629,6 +642,7 @@ private struct SkinSwatch: View {
                 .frame(height: 14)
                 .padding(.horizontal, 8)
             }
+            .environment(\.colorScheme, effectiveScheme)
             .frame(height: 38)
             .overlay {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
