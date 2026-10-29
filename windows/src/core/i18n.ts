@@ -267,6 +267,14 @@ const CATALOG: Readonly<Record<string, readonly [string, string]>> = {
   "华氏度 (°F)": ["华氏度 (°F)", "Fahrenheit (°F)"],
   "检查更新失败，请稍后再试": ["检查更新失败，请稍后再试", "Update check failed; try again later"],
   "已是最新版本 v{version}": ["已是最新版本 v{version}", "v{version} is the latest version"],
+  "启用全局呼出快捷键": ["启用全局呼出快捷键", "Enable global shortcut"],
+  "呼出面板的快捷键": ["呼出面板的快捷键", "Show panel shortcut"],
+  "按下组合…": ["按下组合…", "Press keys…"],
+  "点击后按下新的组合；Esc 取消": ["点击后按下新的组合；Esc 取消", "Click, then press a new combination; Esc cancels"],
+  "恢复 Alt+M": ["恢复 Alt+M", "Reset Alt+M"],
+  "需要至少一个 Ctrl / Alt / Shift / Win，或单按 F1–F20。Esc 取消。": ["需要至少一个 Ctrl / Alt / Shift / Win，或单按 F1–F20。Esc 取消。", "Use at least one of Ctrl / Alt / Shift / Win, or a single F1–F20 key. Esc cancels."],
+  "这个组合已被其他应用占用，换一个再试。": ["这个组合已被其他应用占用，换一个再试。", "Another app already owns this shortcut. Try a different combination."],
+  "重试": ["重试", "Retry"],
 
   // Demo home, rooms and scenes
   "客厅吸顶灯": ["客厅吸顶灯", "Living room ceiling light"],

@@ -212,3 +212,178 @@ export function localizeFanMode(raw: string): string {
   const m = /^level\s*(\d+)$/.exec(lower);
   return m ? t("{level} 档", { level: m[1] ?? "" }) : raw;
 }
+
+// MARK: - Customizable Global Shortcut (#43)
+
+export const DEFAULT_GLOBAL_SHORTCUT = "Alt+M";
+
+const CANONICAL_MODIFIERS = ["Ctrl", "Alt", "Shift", "Super"] as const;
+type ShortcutModifier = (typeof CANONICAL_MODIFIERS)[number];
+
+const MODIFIER_ALIASES: Record<string, ShortcutModifier> = {
+  ctrl: "Ctrl",
+  control: "Ctrl",
+  alt: "Alt",
+  option: "Alt",
+  shift: "Shift",
+  super: "Super",
+  meta: "Super",
+  win: "Super",
+  cmd: "Super",
+  command: "Super",
+};
+
+const SPECIAL_KEY_ALIASES: Record<string, string> = {
+  space: "Space",
+  tab: "Tab",
+  enter: "Enter",
+  return: "Enter",
+  backspace: "Backspace",
+  delete: "Delete",
+  del: "Delete",
+  insert: "Insert",
+  home: "Home",
+  end: "End",
+  pageup: "PageUp",
+  pgup: "PageUp",
+  pagedown: "PageDown",
+  pgdn: "PageDown",
+  up: "ArrowUp",
+  arrowup: "ArrowUp",
+  down: "ArrowDown",
+  arrowdown: "ArrowDown",
+  left: "ArrowLeft",
+  arrowleft: "ArrowLeft",
+  right: "ArrowRight",
+  arrowright: "ArrowRight",
+  minus: "Minus",
+  "-": "Minus",
+  equal: "Equal",
+  "=": "Equal",
+  bracketleft: "BracketLeft",
+  "[": "BracketLeft",
+  bracketright: "BracketRight",
+  "]": "BracketRight",
+  backslash: "Backslash",
+  "\\": "Backslash",
+  semicolon: "Semicolon",
+  ";": "Semicolon",
+  quote: "Quote",
+  "'": "Quote",
+  backquote: "Backquote",
+  "`": "Backquote",
+  comma: "Comma",
+  ",": "Comma",
+  period: "Period",
+  ".": "Period",
+  slash: "Slash",
+  "/": "Slash",
+};
+
+function normalizeKeyToken(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^[a-zA-Z]$/.test(trimmed)) return trimmed.toUpperCase();
+  if (/^[0-9]$/.test(trimmed)) return trimmed;
+  const keyMatch = /^key([a-z])$/i.exec(trimmed);
+  if (keyMatch) return keyMatch[1]!.toUpperCase();
+  const digitMatch = /^digit([0-9])$/i.exec(trimmed);
+  if (digitMatch) return digitMatch[1]!;
+  const fnMatch = /^f([1-9]|1[0-9]|20)$/i.exec(trimmed);
+  if (fnMatch) return `F${fnMatch[1]}`;
+  const special = SPECIAL_KEY_ALIASES[trimmed.toLowerCase()];
+  return special ?? null;
+}
+
+function isFunctionKeyToken(keyToken: string): boolean {
+  return /^F([1-9]|1[0-9]|20)$/.test(keyToken);
+}
+
+/**
+ * Parses and validates a shortcut string into canonical `Ctrl+Alt+Shift+Super+<Key>` order.
+ * Requires at least one modifier or a standalone F1–F20 key so a plain letter cannot hijack typing.
+ */
+export function parseGlobalShortcut(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const parts = raw
+    .split("+")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return null;
+
+  const mods = new Set<ShortcutModifier>();
+  let mainKey: string | null = null;
+  for (const part of parts) {
+    const mod = MODIFIER_ALIASES[part.toLowerCase()];
+    if (mod) {
+      mods.add(mod);
+      continue;
+    }
+    if (mainKey !== null) return null;
+    const normalizedKey = normalizeKeyToken(part);
+    if (!normalizedKey) return null;
+    mainKey = normalizedKey;
+  }
+
+  if (!mainKey) return null;
+  if (mods.size === 0 && !isFunctionKeyToken(mainKey)) return null;
+
+  const orderedMods = CANONICAL_MODIFIERS.filter((m) => mods.has(m));
+  return [...orderedMods, mainKey].join("+");
+}
+
+export function isValidGlobalShortcut(raw: unknown): boolean {
+  return parseGlobalShortcut(raw) !== null;
+}
+
+export function normalizeGlobalShortcut(raw: unknown): string {
+  return parseGlobalShortcut(raw) ?? DEFAULT_GLOBAL_SHORTCUT;
+}
+
+export interface KeyEventLike {
+  readonly key: string;
+  readonly code?: string;
+  readonly ctrlKey?: boolean;
+  readonly altKey?: boolean;
+  readonly shiftKey?: boolean;
+  readonly metaKey?: boolean;
+}
+
+export type RecordedShortcutOutcome =
+  | { readonly kind: "cancel" }
+  | { readonly kind: "modifier-only" }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "recorded"; readonly shortcut: string };
+
+const IGNORED_MODIFIER_KEYS = new Set(["control", "ctrl", "alt", "shift", "meta", "os", "super"]);
+
+/** Turns a DOM `keydown` event into a recorded global shortcut or a state transition (#43). */
+export function recordShortcutFromKeyEvent(event: KeyEventLike): RecordedShortcutOutcome {
+  const keyLower = (event.key ?? "").toLowerCase();
+  if (keyLower === "escape" || (event.code ?? "").toLowerCase() === "escape") {
+    return { kind: "cancel" };
+  }
+  if (IGNORED_MODIFIER_KEYS.has(keyLower)) {
+    return { kind: "modifier-only" };
+  }
+
+  const keyToken =
+    (event.code ? normalizeKeyToken(event.code) : null) ??
+    (event.key === " " ? "Space" : normalizeKeyToken(event.key));
+  if (!keyToken) {
+    return { kind: "invalid" };
+  }
+
+  const mods: ShortcutModifier[] = [];
+  if (event.ctrlKey) mods.push("Ctrl");
+  if (event.altKey) mods.push("Alt");
+  if (event.shiftKey) mods.push("Shift");
+  if (event.metaKey) mods.push("Super");
+
+  const candidate = [...mods, keyToken].join("+");
+  const normalized = parseGlobalShortcut(candidate);
+  if (!normalized) {
+    return { kind: "invalid" };
+  }
+  return { kind: "recorded", shortcut: normalized };
+}

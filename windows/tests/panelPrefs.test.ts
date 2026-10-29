@@ -3,14 +3,19 @@ import { describe, it } from "node:test";
 
 import type { SmartDevice } from "../src/core/models.js";
 import {
+  DEFAULT_GLOBAL_SHORTCUT,
   applyOrder,
   chosenSize,
   comfort,
   emptyLayoutPrefs,
   homeOptions,
+  isValidGlobalShortcut,
   localizeFanMode,
   moveInOrder,
+  normalizeGlobalShortcut,
   pageSections,
+  parseGlobalShortcut,
+  recordShortcutFromKeyEvent,
   resolvedSize,
   spans,
 } from "../src/ui/panelPrefs.js";
@@ -80,5 +85,30 @@ describe("panel layout prefs", () => {
     assert.equal(comfort(22, 30).label, "偏干");
     assert.equal(localizeFanMode("Level3"), "3 档");
     assert.equal(localizeFanMode("auto"), "自动");
+  });
+
+  it("global shortcut parser normalizes modifier order and rejects plain keys (#43)", () => {
+    assert.equal(DEFAULT_GLOBAL_SHORTCUT, "Alt+M");
+    assert.equal(parseGlobalShortcut("shift+ctrl+alt+keyk"), "Ctrl+Alt+Shift+K");
+    assert.equal(parseGlobalShortcut("win+space"), "Super+Space");
+    assert.equal(parseGlobalShortcut("f8"), "F8");
+    assert.equal(isValidGlobalShortcut("Alt+M"), true);
+    assert.equal(isValidGlobalShortcut("M"), false);
+    assert.equal(isValidGlobalShortcut("Space"), false);
+    assert.equal(isValidGlobalShortcut("Ctrl+"), false);
+    assert.equal(normalizeGlobalShortcut("junk"), "Alt+M");
+    assert.equal(normalizeGlobalShortcut("ctrl+alt+m"), "Ctrl+Alt+M");
+
+    assert.deepEqual(recordShortcutFromKeyEvent({ key: "Escape" }), { kind: "cancel" });
+    assert.deepEqual(recordShortcutFromKeyEvent({ key: "Control", ctrlKey: true }), { kind: "modifier-only" });
+    assert.deepEqual(recordShortcutFromKeyEvent({ key: "m", code: "KeyM" }), { kind: "invalid" });
+    assert.deepEqual(
+      recordShortcutFromKeyEvent({ key: "k", code: "KeyK", ctrlKey: true, shiftKey: true }),
+      { kind: "recorded", shortcut: "Ctrl+Shift+K" },
+    );
+    assert.deepEqual(recordShortcutFromKeyEvent({ key: "F9", code: "F9" }), {
+      kind: "recorded",
+      shortcut: "F9",
+    });
   });
 });

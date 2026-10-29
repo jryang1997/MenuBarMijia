@@ -74,6 +74,7 @@ import {
   type LayoutPrefs,
   type PanelHeight,
   type TileSize,
+  DEFAULT_GLOBAL_SHORTCUT,
   PANEL_HEIGHTS,
   SKINS,
   TILE_SIZES,
@@ -86,7 +87,9 @@ import {
   localizeFanMode,
   moveInOrder,
   nextSize,
+  normalizeGlobalShortcut,
   pageSections,
+  recordShortcutFromKeyEvent,
   resolvedSize,
   scopedKey,
   spans,
@@ -190,6 +193,10 @@ interface PersistedSettings {
   interfaceLanguage: LanguagePreference;
   /** °C/°F display (#52); stored/command values stay Celsius. */
   temperatureUnit: TemperatureUnitPreference;
+  /** Whether the system-wide tray shortcut is registered (#43). */
+  enableGlobalHotkey: boolean;
+  /** Canonical global shortcut string (default `"Alt+M"`, #43). */
+  globalHotkey: string;
 }
 
 interface UndoStep {
@@ -500,6 +507,8 @@ function loadSettings(): LoadedSettings {
             parsed.temperatureUnit === "celsius" || parsed.temperatureUnit === "fahrenheit"
               ? parsed.temperatureUnit
               : "system",
+          enableGlobalHotkey: typeof parsed.enableGlobalHotkey === "boolean" ? parsed.enableGlobalHotkey : true,
+          globalHotkey: normalizeGlobalShortcut(parsed.globalHotkey),
           layout: { ...emptyLayoutPrefs(), ...(parsed.layout ?? {}) },
           selectedHomeId: parsed.selectedHomeId ?? null,
         },
@@ -536,6 +545,8 @@ function loadSettings(): LoadedSettings {
       selectedHomeId: null,
       interfaceLanguage: "system",
       temperatureUnit: "system",
+      enableGlobalHotkey: true,
+      globalHotkey: DEFAULT_GLOBAL_SHORTCUT,
     },
     hasLegacyCredentials: false,
   };
@@ -675,6 +686,9 @@ export class MenuMijiaWindowsApp {
   private poppedDeviceId: string | null = null;
   private dimPreview: { id: string; percent: number } | null = null;
   private suppressNextClick = false;
+  private isRecordingHotkey = false;
+  private hotkeyNeedsHint = false;
+  private hotkeyRegistrationError: string | null = null;
 
   constructor(private readonly root: HTMLElement) {
     this.specResolver = new MiotSpecResolver(
@@ -701,6 +715,7 @@ export class MenuMijiaWindowsApp {
     this.bindLayoutGestures();
     this.bindOpenAnimation();
     this.applyPanelHeight();
+    void this.applyGlobalHotkey();
     this.startTimerLoop();
     this.restoreUpdateState();
     this.render();
@@ -881,11 +896,62 @@ export class MenuMijiaWindowsApp {
     invokeTauriVoid("open_release_page", { url: this.availableUpdate?.htmlURL ?? UPDATE_RELEASES_PAGE });
   }
 
+  /**
+   * Synchronizes the Windows global shortcut registration with the current preference (#43),
+   * unregistering immediately when disabled (Coding Standard #3) and surfacing conflicts.
+   */
+  private async applyGlobalHotkey(): Promise<void> {
+    const enabled = this.settings.enableGlobalHotkey;
+    const shortcut = normalizeGlobalShortcut(this.settings.globalHotkey);
+    this.settings.globalHotkey = shortcut;
+    if (!enabled) {
+      this.hotkeyRegistrationError = null;
+    }
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) {
+      this.hotkeyRegistrationError = null;
+      return;
+    }
+    try {
+      await invoke("set_global_shortcut", { enabled, shortcut });
+      this.hotkeyRegistrationError = null;
+    } catch {
+      this.hotkeyRegistrationError = enabled ? t("这个组合已被其他应用占用，换一个再试。") : null;
+    }
+    if (this.activeSheet === "settings") {
+      this.render();
+    }
+  }
+
   private bindGlobalKeys(): void {
     window.addEventListener("keydown", (e) => {
+      if (this.isRecordingHotkey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const outcome = recordShortcutFromKeyEvent(e);
+        if (outcome.kind === "cancel") {
+          this.isRecordingHotkey = false;
+          this.hotkeyNeedsHint = false;
+          this.render();
+        } else if (outcome.kind === "invalid") {
+          this.hotkeyNeedsHint = true;
+          this.render();
+        } else if (outcome.kind === "recorded") {
+          this.isRecordingHotkey = false;
+          this.hotkeyNeedsHint = false;
+          this.settings.globalHotkey = outcome.shortcut;
+          this.saveSettings();
+          void this.applyGlobalHotkey();
+          this.render();
+        }
+        return;
+      }
+
       if (e.key === "Escape") {
         if (this.activeSheet !== "none") {
           this.activeSheet = "none";
+          this.isRecordingHotkey = false;
+          this.hotkeyNeedsHint = false;
           invokeTauriVoid("set_pin_popover", { pin: false });
           this.render();
         } else {
@@ -2877,6 +2943,47 @@ export class MenuMijiaWindowsApp {
           </div>
 
           <div class="cc-field">
+            <div class="cc-field-row">
+              <label for="settings-enable-hotkey">${t("启用全局呼出快捷键")}</label>
+              <input id="settings-enable-hotkey" type="checkbox" ${this.settings.enableGlobalHotkey ? "checked" : ""} />
+            </div>
+            ${
+              this.settings.enableGlobalHotkey
+                ? `<div class="cc-update-row" style="margin-top: 6px;">
+                     <span>${t("呼出面板的快捷键")}</span>
+                     <div style="display: flex; gap: 6px; align-items: center;">
+                       <button
+                         type="button"
+                         class="cc-seg-pill ${this.isRecordingHotkey ? "is-active" : ""}"
+                         id="btn-record-hotkey"
+                         title="${t("点击后按下新的组合；Esc 取消")}"
+                         aria-pressed="${this.isRecordingHotkey}"
+                       >${this.isRecordingHotkey ? t("按下组合…") : this.escapeHtml(this.settings.globalHotkey)}</button>
+                       ${
+                         this.settings.globalHotkey !== DEFAULT_GLOBAL_SHORTCUT
+                           ? `<button type="button" class="cc-btn-secondary" id="btn-reset-hotkey">${t("恢复 Alt+M")}</button>`
+                           : ""
+                       }
+                     </div>
+                   </div>`
+                : ""
+            }
+            ${
+              this.settings.enableGlobalHotkey && (this.isRecordingHotkey || this.hotkeyNeedsHint)
+                ? `<p class="cc-field-hint" id="hotkey-record-hint">${t("需要至少一个 Ctrl / Alt / Shift / Win，或单按 F1–F20。Esc 取消。")}</p>`
+                : ""
+            }
+            ${
+              this.settings.enableGlobalHotkey && this.hotkeyRegistrationError
+                ? `<div class="cc-update-row" id="hotkey-conflict-row" style="margin-top: 6px;">
+                     <span class="cc-field-hint" style="color: #e67e22; margin: 0;">${this.escapeHtml(this.hotkeyRegistrationError)}</span>
+                     <button type="button" class="cc-btn-secondary" id="btn-retry-hotkey">${t("重试")}</button>
+                   </div>`
+                : ""
+            }
+          </div>
+
+          <div class="cc-field">
             <label>${t("设备数据源")}</label>
             <div class="cc-segmented-pills">
               <button
@@ -3293,6 +3400,34 @@ export class MenuMijiaWindowsApp {
       this.render();
     });
 
+    this.root.querySelector<HTMLInputElement>("#settings-enable-hotkey")?.addEventListener("change", (e) => {
+      this.settings.enableGlobalHotkey = (e.target as HTMLInputElement).checked;
+      this.isRecordingHotkey = false;
+      this.hotkeyNeedsHint = false;
+      this.saveSettings();
+      void this.applyGlobalHotkey();
+      this.render();
+    });
+
+    this.root.querySelector("#btn-record-hotkey")?.addEventListener("click", () => {
+      this.isRecordingHotkey = !this.isRecordingHotkey;
+      this.hotkeyNeedsHint = false;
+      this.render();
+    });
+
+    this.root.querySelector("#btn-reset-hotkey")?.addEventListener("click", () => {
+      this.isRecordingHotkey = false;
+      this.hotkeyNeedsHint = false;
+      this.settings.globalHotkey = DEFAULT_GLOBAL_SHORTCUT;
+      this.saveSettings();
+      void this.applyGlobalHotkey();
+      this.render();
+    });
+
+    this.root.querySelector("#btn-retry-hotkey")?.addEventListener("click", () => {
+      void this.applyGlobalHotkey();
+    });
+
     this.root.querySelector("#btn-hide-panel")?.addEventListener("click", () => {
       invokeTauriVoid("set_pin_popover", { pin: false });
       invokeTauriVoid("hide_panel");
@@ -3637,6 +3772,8 @@ export class MenuMijiaWindowsApp {
 
     this.root.querySelector("#btn-close-settings")?.addEventListener("click", () => {
       this.activeSheet = "none";
+      this.isRecordingHotkey = false;
+      this.hotkeyNeedsHint = false;
       invokeTauriVoid("set_pin_popover", { pin: false });
       this.render();
     });
@@ -3715,6 +3852,8 @@ export class MenuMijiaWindowsApp {
       if (habitEl) this.settings.habitLearningEnabled = habitEl.checked;
       this.saveSettings();
       this.activeSheet = "none";
+      this.isRecordingHotkey = false;
+      this.hotkeyNeedsHint = false;
       invokeTauriVoid("set_pin_popover", { pin: false });
       this.render();
     });

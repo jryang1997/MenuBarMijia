@@ -944,3 +944,101 @@ describe("Interface language and temperature units (#52)", () => {
     assert.match(textOf(".cc-sensor"), /25\.5°C/);
   });
 });
+
+describe("Customizable global shortcut (#43)", () => {
+  it("registers Alt+M by default, records a custom shortcut, persists it, and unregisters when disabled", async () => {
+    const hotkeyCalls: Array<{ enabled: boolean; shortcut: string }> = [];
+    const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      if (name === "set_global_shortcut") {
+        hotkeyCalls.push({ enabled: Boolean(args["enabled"]), shortcut: String(args["shortcut"]) });
+      }
+      return undefined;
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem(
+      "menumijia.windows.settings.v2",
+      JSON.stringify({
+        connectionMode: "demo",
+        hasCompletedOnboarding: true,
+        interfaceLanguage: "zh-Hans",
+      }),
+    );
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+    assert.deepEqual(hotkeyCalls.at(-1), { enabled: true, shortcut: "Alt+M" });
+
+    await click("#btn-settings");
+    assert.equal(textOf("#btn-record-hotkey"), "Alt+M");
+
+    // Arm the recorder; a plain letter without modifiers shows the hint and keeps listening.
+    await click("#btn-record-hotkey");
+    assert.equal(textOf("#btn-record-hotkey"), "按下组合…");
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "m", code: "KeyM", bubbles: true }));
+    await setImmediate();
+    assert.equal(textOf("#btn-record-hotkey"), "按下组合…");
+    assert.ok(document.querySelector("#hotkey-record-hint"));
+
+    // Press Ctrl+Alt+K -> records, persists, and calls set_global_shortcut.
+    window.dispatchEvent(
+      new window.KeyboardEvent("keydown", {
+        key: "k",
+        code: "KeyK",
+        ctrlKey: true,
+        altKey: true,
+        bubbles: true,
+      }),
+    );
+    await setImmediate();
+    assert.equal(textOf("#btn-record-hotkey"), "Ctrl+Alt+K");
+    assert.deepEqual(hotkeyCalls.at(-1), { enabled: true, shortcut: "Ctrl+Alt+K" });
+    const savedAfterRecord = JSON.parse(localStorage.getItem("menumijia.windows.settings.v2") ?? "{}") as Record<string, unknown>;
+    assert.equal(savedAfterRecord["globalHotkey"], "Ctrl+Alt+K");
+
+    // Reset button restores Alt+M.
+    await click("#btn-reset-hotkey");
+    await setImmediate();
+    assert.equal(textOf("#btn-record-hotkey"), "Alt+M");
+    assert.deepEqual(hotkeyCalls.at(-1), { enabled: true, shortcut: "Alt+M" });
+
+    // Unchecking the toggle immediately unregisters the global shortcut (Coding Standard #3).
+    const enableBox = element("#settings-enable-hotkey") as HTMLInputElement;
+    enableBox.checked = false;
+    enableBox.dispatchEvent(new window.Event("change", { bubbles: true }));
+    await setImmediate();
+    assert.deepEqual(hotkeyCalls.at(-1), { enabled: false, shortcut: "Alt+M" });
+    assert.equal(document.querySelector("#btn-record-hotkey"), null);
+  });
+
+  it("surfaces a conflict notice when registration fails and clears it on retry", async () => {
+    let shouldFail = true;
+    const invoke = async (name: string): Promise<unknown> => {
+      if (name === "set_global_shortcut" && shouldFail) {
+        throw new Error("HotKey already registered");
+      }
+      return undefined;
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem(
+      "menumijia.windows.settings.v2",
+      JSON.stringify({
+        connectionMode: "demo",
+        hasCompletedOnboarding: true,
+        interfaceLanguage: "zh-Hans",
+      }),
+    );
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+    await click("#btn-settings");
+
+    const conflictRow = document.querySelector("#hotkey-conflict-row");
+    assert.ok(conflictRow, "conflict warning is shown in Settings");
+    assert.match(conflictRow.textContent ?? "", /已被其他应用占用/);
+
+    shouldFail = false;
+    await click("#btn-retry-hotkey");
+    await setImmediate();
+    assert.equal(document.querySelector("#hotkey-conflict-row"), null);
+  });
+});
