@@ -133,6 +133,7 @@ public final class HomeStore {
     public var miCloudRegion: MiCloudRegion = .cn {
         didSet {
             userDefaults.set(miCloudRegion.rawValue, forKey: "mi_cloud_region")
+            syncSensorHistoryScope()
         }
     }
 
@@ -175,14 +176,22 @@ public final class HomeStore {
     }
 
     public var serverURLString: String {
-        didSet { userDefaults.set(serverURLString, forKey: "ha_server_url") }
+        didSet {
+            userDefaults.set(serverURLString, forKey: "ha_server_url")
+            syncSensorHistoryScope()
+        }
     }
 
     public internal(set) var homeBackend: HomeBackend {
-        didSet { userDefaults.set(homeBackend.rawValue, forKey: "home_backend") }
+        didSet {
+            userDefaults.set(homeBackend.rawValue, forKey: "home_backend")
+            syncSensorHistoryScope()
+        }
     }
 
-    public internal(set) var miSessionMaskedUserId: String?
+    public internal(set) var miSessionMaskedUserId: String? {
+        didSet { syncSensorHistoryScope() }
+    }
 
     public private(set) var toastNotice: ToastNotice?
     public internal(set) var undoBanner: UndoBanner?
@@ -345,6 +354,7 @@ public final class HomeStore {
         if provider == nil, initialBackend == .homeAssistant, !isTestEnvironment {
             self.provider = makeHAProvider(baseURLString: savedURL, token: initialHAToken)
         }
+        syncSensorHistoryScope()
         startListening()
         restoreScheduledCommands()
         // Demo mode is strictly offline: no LAN discovery, no LG connection (#47).

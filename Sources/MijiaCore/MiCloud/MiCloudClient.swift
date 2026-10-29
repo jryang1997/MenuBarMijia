@@ -612,13 +612,21 @@ public actor MiCloudClient: MiCloudAPI {
         return points
     }
 
+    private struct ExtractedHistoryNumber {
+        let value: Double
+        /// `true` when the value was already converted from a hex representation (e.g. `Int16` tenths
+        /// or `Float32` bytes) or parsed from a decimal string with a fractional point, so it must
+        /// not be divided by 10 again.
+        let isPreScaled: Bool
+    }
+
     static func decodeHistoryValues(_ raw: JSONValue, key: String, isTemperature: Bool) -> [Double] {
-        let numbers = extractRawNumbers(raw, key: key)
+        let extracted = extractRawNumbers(raw, key: key)
         let usesTenthsScale = ["4100", "4102", "1004", "1006"].contains(key.lowercased())
-        return numbers.compactMap { num -> Double? in
-            guard num.isFinite else { return nil }
-            var adjusted = num
-            if usesTenthsScale, abs(adjusted) > 85, adjusted.rounded() == adjusted {
+        return extracted.compactMap { item -> Double? in
+            guard item.value.isFinite else { return nil }
+            var adjusted = item.value
+            if usesTenthsScale, !item.isPreScaled {
                 adjusted /= 10.0
             }
             if isTemperature {
@@ -629,10 +637,10 @@ public actor MiCloudClient: MiCloudAPI {
         }
     }
 
-    private static func extractRawNumbers(_ raw: JSONValue, key: String) -> [Double] {
+    private static func extractRawNumbers(_ raw: JSONValue, key: String) -> [ExtractedHistoryNumber] {
         switch raw {
         case .number(let d):
-            return [d]
+            return [ExtractedHistoryNumber(value: d, isPreScaled: d.rounded() != d)]
         case .array(let arr):
             return arr.flatMap { extractRawNumbers($0, key: key) }
         case .object(let obj):
@@ -652,18 +660,19 @@ public actor MiCloudClient: MiCloudAPI {
             let lowerKey = key.lowercased()
             if (lowerKey == "4c01" || lowerKey == "4c08"),
                let floatVal = decodeLittleEndianFloat32Hex(trimmed) {
-                return [floatVal]
+                return [ExtractedHistoryNumber(value: floatVal, isPreScaled: true)]
             }
             if ["4100", "4102", "1004", "1006"].contains(lowerKey),
                trimmed.range(of: ".", options: .literal) == nil,
                let int16Tenths = decodeLittleEndianInt16Hex(trimmed) {
-                return [int16Tenths]
+                return [ExtractedHistoryNumber(value: int16Tenths, isPreScaled: true)]
             }
             if let d = Double(trimmed) {
-                return [d]
+                let hasDecimalPoint = trimmed.contains(".")
+                return [ExtractedHistoryNumber(value: d, isPreScaled: hasDecimalPoint || d.rounded() != d)]
             }
             if let floatVal = decodeLittleEndianFloat32Hex(trimmed) {
-                return [floatVal]
+                return [ExtractedHistoryNumber(value: floatVal, isPreScaled: true)]
             }
             return []
         case .bool, .null:
