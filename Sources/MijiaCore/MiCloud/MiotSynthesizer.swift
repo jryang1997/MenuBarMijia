@@ -213,7 +213,14 @@ public enum MiotSynthesizer {
 
     static func buildPlug(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
         let on = r.ref("on", in: s)
-        let power = r.first("electric-power", in: r.spec.services(named: "power-consumption") + r.spec.services)
+        let consumptionServices = r.spec.services(named: "power-consumption") + r.spec.services
+        let power = r.first("electric-power", in: consumptionServices)
+        let energy = r.first("power-consumption", in: consumptionServices, where: { energyScale(for: $0) != nil })
+        let energyKwh = energy.flatMap { ref -> Double? in
+            guard let raw = ref.value?.doubleValue, raw.isFinite, raw >= 0,
+                  let scale = energyScale(for: ref.property) else { return nil }
+            return (raw * scale * 1000).rounded() / 1000
+        }
         let lockService = r.spec.services(named: "physical-controls-locked").first
         let lock = lockService.flatMap { r.ref("physical-controls-locked", in: $0) }
 
@@ -221,7 +228,7 @@ public enum MiotSynthesizer {
             switchEntityId: MiotAddress.make(did: r.did, siid: s.iid),
             isOn: on?.value?.miotBool ?? false,
             powerWatts: power?.value?.doubleValue,
-            energyKwh: nil,
+            energyKwh: energyKwh,
             childLockEntityId: lock.map { MiotAddress.make(did: r.did, siid: $0.service.iid) },
             isChildLocked: lock?.value?.miotBool ?? false
         ))
@@ -264,6 +271,30 @@ public enum MiotSynthesizer {
             scaled = raw
         }
         return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
+    }
+
+    /// Scale factor that converts a MIoT `power-consumption` reading into kWh (#62).
+    /// Returns `nil` when an integer property has neither a recognized `unit` nor an explicit
+    /// scale in `comment` (e.g. "0.01kwh"), so ambiguous raw integers are never guessed.
+    static func energyScale(for property: MiotProperty) -> Double? {
+        let unit = property.unit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let comment = (property.comment ?? "")
+            .lowercased()
+            .replacingOccurrences(of: ",", with: ".")
+            .replacingOccurrences(of: " ", with: "")
+        if unit == "wh" || unit == "watt-hour" || comment.contains("0.001kwh") {
+            return 0.001
+        }
+        if comment.contains("0.01kwh") {
+            return 0.01
+        }
+        if unit == "kwh" || unit == "kilowatt-hour" || comment.contains("1kwh") {
+            return 1.0
+        }
+        if property.format == "float", unit.isEmpty || unit == "none" {
+            return 1.0
+        }
+        return nil
     }
 
     /// MIoT mode descriptions → the HA hvac vocabulary the UI already localizes.
@@ -327,10 +358,14 @@ final class MiotReader {
     }
 
     /// First readable match across `services` in order (duplicates ignored).
-    func first(_ name: String, in services: [MiotService]) -> Ref? {
+    func first(
+        _ name: String,
+        in services: [MiotService],
+        where predicate: (MiotProperty) -> Bool = { _ in true }
+    ) -> Ref? {
         var seen: Set<Int> = []
         for service in services where seen.insert(service.iid).inserted {
-            if let p = service.properties.first(where: { $0.shortName == name && $0.isReadable }) {
+            if let p = service.properties.first(where: { $0.shortName == name && $0.isReadable && predicate($0) }) {
                 return make(service, p)
             }
         }

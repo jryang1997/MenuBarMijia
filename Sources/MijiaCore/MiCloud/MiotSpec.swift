@@ -38,16 +38,18 @@ public struct MiotProperty: Codable, Equatable, Sendable {
     public var valueRange: [Double]?
     public var valueList: [MiotValueListItem]?
     public var unit: String?
+    public var comment: String?
 
     enum CodingKeys: String, CodingKey {
-        case iid, type, description, format, access, unit
+        case iid, type, description, format, access, unit, comment
         case valueRange = "value-range"
         case valueList = "value-list"
     }
 
     public init(
         iid: Int, type: String, description: String? = nil, format: String, access: [String],
-        valueRange: [Double]? = nil, valueList: [MiotValueListItem]? = nil, unit: String? = nil
+        valueRange: [Double]? = nil, valueList: [MiotValueListItem]? = nil, unit: String? = nil,
+        comment: String? = nil
     ) {
         self.iid = iid
         self.type = type
@@ -57,6 +59,7 @@ public struct MiotProperty: Codable, Equatable, Sendable {
         self.valueRange = valueRange
         self.valueList = valueList
         self.unit = unit
+        self.comment = comment
     }
 
     public init(from decoder: Decoder) throws {
@@ -69,6 +72,7 @@ public struct MiotProperty: Codable, Equatable, Sendable {
         valueRange = try? c.decode([Double].self, forKey: .valueRange)
         valueList = try? c.decode([MiotValueListItem].self, forKey: .valueList)
         unit = try? c.decode(String.self, forKey: .unit)
+        comment = try? c.decode(String.self, forKey: .comment)
     }
 
     public var shortName: String { miotShortName(type) }

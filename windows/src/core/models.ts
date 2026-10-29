@@ -50,6 +50,7 @@ export interface PlugSpec {
   readonly switchEntityId: string;
   isOn: boolean;
   readonly powerWatts: number | null;
+  readonly energyKwh?: number | null;
   readonly childLockEntityId: string | null;
   isChildLocked: boolean;
 }

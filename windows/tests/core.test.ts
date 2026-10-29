@@ -541,6 +541,99 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
       { id: "home_9001", name: "", dids: ["unassigned_did"], homeId: "9001", homeName: "我的家" },
     ]);
   });
+
+  it("maps explicit MIoT kWh, 0.01kWh, and Wh cumulative counters while ignoring untagged integers (#62)", () => {
+    const makeSpec = (energyProp: Record<string, unknown>): MiotDeviceSpec => {
+      const parsed = parseMiotDeviceSpec({
+        type: "urn:miot-spec-v2:device:outlet:0000A002:test-plug:1",
+        services: [
+          {
+            iid: 2,
+            type: "urn:miot-spec-v2:service:switch:0000780C:test-plug:1",
+            properties: [{ iid: 1, type: "urn:miot-spec-v2:property:on:00000006:test-plug:1", format: "bool", access: ["read", "write"] }],
+            actions: [],
+          },
+          {
+            iid: 3,
+            type: "urn:miot-spec-v2:service:power-consumption:0000780E:test-plug:1",
+            properties: [
+              { iid: 1, type: "urn:miot-spec-v2:property:electric-power:00000066:test-plug:1", format: "float", access: ["read"] },
+              energyProp,
+            ],
+            actions: [],
+          },
+        ],
+      });
+      assert.ok(parsed);
+      return parsed;
+    };
+
+    const specs: Record<string, MiotDeviceSpec> = {
+      "test.plug.kwh": makeSpec({
+        iid: 2,
+        type: "urn:miot-spec-v2:property:power-consumption:0000002F:test-plug:1",
+        format: "float",
+        access: ["read"],
+        unit: "kWh",
+      }),
+      "test.plug.centi": makeSpec({
+        iid: 2,
+        type: "urn:miot-spec-v2:property:power-consumption:0000002F:test-plug:1",
+        format: "uint16",
+        access: ["read"],
+        comment: "耗电量（单位:0,01Kwh）",
+      }),
+      "test.plug.wh": makeSpec({
+        iid: 2,
+        type: "urn:miot-spec-v2:property:power-consumption:0000002F:test-plug:1",
+        format: "uint32",
+        access: ["read"],
+        unit: "Wh",
+      }),
+      "test.plug.untagged": makeSpec({
+        iid: 2,
+        type: "urn:miot-spec-v2:property:power-consumption:0000002F:test-plug:1",
+        format: "uint32",
+        access: ["read"],
+        unit: "none",
+      }),
+    };
+
+    const records = [
+      { did: "p_kwh", name: "直读插座", model: "test.plug.kwh", isOnline: true, specType: null },
+      { did: "p_centi", name: "百分度插座", model: "test.plug.centi", isOnline: true, specType: null },
+      { did: "p_wh", name: "瓦时插座", model: "test.plug.wh", isOnline: true, specType: null },
+      { did: "p_untagged", name: "无单位插座", model: "test.plug.untagged", isOnline: true, specType: null },
+    ];
+    const values = new Map<string, unknown>([
+      ["p_kwh.2.1", true],
+      ["p_kwh.3.1", 40],
+      ["p_kwh.3.2", 12.34],
+      ["p_centi.2.1", true],
+      ["p_centi.3.1", 55],
+      ["p_centi.3.2", 250],
+      ["p_wh.2.1", true],
+      ["p_wh.3.1", 10],
+      ["p_wh.3.2", 1500],
+      ["p_untagged.2.1", true],
+      ["p_untagged.3.1", 20],
+      ["p_untagged.3.2", 500],
+    ]);
+
+    const home = MiotSynthesizer.synthesize(records, [], specs, values);
+    const byId = new Map(home.devices.map((d) => [d.id, d.kind]));
+    const plugEnergy = (id: string) => {
+      const k = byId.get(id);
+      return k?.kind === "plug" ? k.energyKwh : undefined;
+    };
+    assert.equal(plugEnergy("p_kwh"), 12.34);
+    assert.equal(plugEnergy("p_centi"), 2.5);
+    assert.equal(plugEnergy("p_wh"), 1.5);
+    assert.equal(plugEnergy("p_untagged"), undefined);
+
+    const untaggedProps = MiotSynthesizer.requiredProps(records[3]!, specs["test.plug.untagged"]!);
+    assert.equal(untaggedProps.some((p) => p.siid === 3 && p.piid === 2), false);
+  });
 });
 
 describe("LocalIntentParser, DelayPhrase, UndoPhrase, and ModelIntentResolver", () => {
