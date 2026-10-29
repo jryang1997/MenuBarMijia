@@ -8,10 +8,18 @@ import MijiaCore
 public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUserNotificationCenterDelegate {
     public static let shared = HotkeyAndNotificationManager()
 
+    /// Holding the global shortcut (`⌥M` by default) for 0.2 s starts hold-to-talk voice input,
+    /// matching the menu-bar icon long-press threshold (`MenuBarPanelController.holdThreshold`).
+    public static let hotkeyHoldThreshold: TimeInterval = 0.2
+
     private weak var store: HomeStore?
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
+    private var hotkeyHoldTask: Task<Void, Never>?
+    public private(set) var isHotkeyPhysicallyDown = false
+    public private(set) var isHotkeyHoldTriggered = false
     private var localKeyMonitor: Any?
+    private var localKeyUpMonitor: Any?
     private var localFlagsMonitor: Any?
     private var windowBecomeKeyObserver: NSObjectProtocol?
     private var applicationBecomeActiveObserver: NSObjectProtocol?
@@ -32,6 +40,11 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                 await self?.refreshNotificationPermission()
             }
         }
+    }
+
+    func attachStoreForTesting(_ store: HomeStore?) {
+        cancelHotkeyHold()
+        self.store = store
     }
 
     public func start(with store: HomeStore) {
@@ -86,6 +99,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
     }
 
     private func unregisterGlobalHotKey() {
+        cancelHotkeyHold()
         if let ref = hotKeyRef {
             UnregisterEventHotKey(ref)
             hotKeyRef = nil
@@ -129,21 +143,35 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
     private func installHotKeyHandler() -> Bool {
         if eventHandlerRef != nil { return true }
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        var eventTypes = [
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyPressed)
+            ),
+            EventTypeSpec(
+                eventClass: OSType(kEventClassKeyboard),
+                eventKind: UInt32(kEventHotKeyReleased)
+            )
+        ]
 
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
-            { _, _, _ -> OSStatus in
-                Task { @MainActor in
-                    HotkeyAndNotificationManager.shared.handleGlobalHotKeyTriggered()
+            { _, event, _ -> OSStatus in
+                guard let event else { return noErr }
+                let kind = GetEventKind(event)
+                if kind == UInt32(kEventHotKeyPressed) {
+                    Task { @MainActor in
+                        HotkeyAndNotificationManager.shared.handleGlobalHotKeyPressed()
+                    }
+                } else if kind == UInt32(kEventHotKeyReleased) {
+                    Task { @MainActor in
+                        HotkeyAndNotificationManager.shared.handleGlobalHotKeyReleased()
+                    }
                 }
                 return noErr
             },
-            1,
-            &eventType,
+            eventTypes.count,
+            &eventTypes,
             nil,
             &eventHandlerRef
         )
@@ -159,9 +187,47 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         return mask
     }
 
-    private func handleGlobalHotKeyTriggered() {
+    /// Short press (< `hotkeyHoldThreshold`) toggles the panel on release; holding for at least
+    /// `hotkeyHoldThreshold` opens the panel and starts Push-to-Talk voice recognition, matching
+    /// the menu-bar icon press/hold gesture.
+    func handleGlobalHotKeyPressed(holdThreshold: TimeInterval = HotkeyAndNotificationManager.hotkeyHoldThreshold) {
         guard let store, store.enableGlobalHotkey else { return }
-        toggleMenuBarExtraWindow()
+        guard !isHotkeyPhysicallyDown else { return }
+        isHotkeyPhysicallyDown = true
+        isHotkeyHoldTriggered = false
+        hotkeyHoldTask?.cancel()
+        hotkeyHoldTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(holdThreshold))
+            guard !Task.isCancelled, let self, self.isHotkeyPhysicallyDown, !self.isHotkeyHoldTriggered else { return }
+            self.isHotkeyHoldTriggered = true
+            MenuBarPanelController.shared.beginHoldToTalk()
+        }
+    }
+
+    func handleGlobalHotKeyReleased() {
+        guard isHotkeyPhysicallyDown else { return }
+        isHotkeyPhysicallyDown = false
+        hotkeyHoldTask?.cancel()
+        hotkeyHoldTask = nil
+
+        if isHotkeyHoldTriggered {
+            isHotkeyHoldTriggered = false
+            MenuBarPanelController.shared.endHoldToTalk()
+        } else {
+            guard let store, store.enableGlobalHotkey else { return }
+            toggleMenuBarExtraWindow()
+        }
+    }
+
+    private func cancelHotkeyHold() {
+        hotkeyHoldTask?.cancel()
+        hotkeyHoldTask = nil
+        let wasHoldTriggered = isHotkeyHoldTriggered
+        isHotkeyPhysicallyDown = false
+        isHotkeyHoldTriggered = false
+        if wasHoldTriggered {
+            MenuBarPanelController.shared.endHoldToTalk()
+        }
     }
 
     /// Opens the control center, or closes it when it is already on screen.
@@ -185,7 +251,17 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
     private func setupLocalKeyboardMonitors() {
         if localFlagsMonitor == nil {
             localFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
-                self?.store?.isOptionKeyPressed = event.modifierFlags.contains(.option)
+                guard let self else { return event }
+                self.store?.isOptionKeyPressed = event.modifierFlags.contains(.option)
+                // Releasing the modifier key (e.g. ⌥) before the main key (M) while the panel is
+                // active ends a hotkey hold just like releasing the main key does.
+                if self.isHotkeyPhysicallyDown {
+                    let shortcut = HotkeyPreferences.load()
+                    let currentMods = HotkeyRecorderController.modifiers(from: event.modifierFlags)
+                    if !currentMods.isSuperset(of: shortcut.modifiers) {
+                        self.handleGlobalHotKeyReleased()
+                    }
+                }
                 return event
             }
         }
@@ -195,6 +271,17 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
                 guard let self, let store = self.store else { return event }
                 if self.handleKeyDown(event, store: store) {
                     return nil
+                }
+                return event
+            }
+        }
+
+        if localKeyUpMonitor == nil {
+            localKeyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+                guard let self, self.isHotkeyPhysicallyDown else { return event }
+                let shortcut = HotkeyPreferences.load()
+                if Int(event.keyCode) == Int(shortcut.keyCode) {
+                    self.handleGlobalHotKeyReleased()
                 }
                 return event
             }
@@ -235,11 +322,23 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
             return true
         }
 
+        // Do not let key-repeats of the global shortcut (e.g. holding ⌥M for voice input) leak into
+        // a focused text field (`µ` on US keyboards) or re-toggle the panel mid-hold.
+        if store.enableGlobalHotkey,
+           !HotkeyRecorderController.shared.isRecording,
+           HotkeyRecorderController.matches(event) {
+            if !HotkeySettingsState.shared.isRegistered, !event.isARepeat, !isHotkeyPhysicallyDown {
+                MenuBarPanelController.shared.hidePanel()
+            }
+            return true
+        }
+
         // Do not intercept typing when a text field (e.g., XiaoAi input or Settings URL) is first responder
         if let responder = NSApp.keyWindow?.firstResponder,
            responder is NSTextView || responder is NSTextField {
             if code == kVK_Escape {
                 if store.isShowingAssistantBar {
+                    SpeechInputController.shared.stop(andSubmit: false, store: store)
                     store.dismissAssistantBar()
                 }
                 NSApp.keyWindow?.makeFirstResponder(nil)
@@ -252,12 +351,6 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
         // normal AppKit control behavior instead of triggering device actions (#42).
         if !MenuBarPanelController.shared.isPanelWindow(NSApp.keyWindow) {
             return false
-        }
-
-        // The configured global shortcut also closes an open panel instead of being re-triggered.
-        if store.enableGlobalHotkey, HotkeyRecorderController.matches(event) {
-            MenuBarPanelController.shared.hidePanel()
-            return true
         }
 
         if event.charactersIgnoringModifiers == "/",
@@ -294,6 +387,7 @@ public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUse
             return true
         case kVK_Escape:
             if store.isShowingAssistantBar {
+                SpeechInputController.shared.stop(andSubmit: false, store: store)
                 store.dismissAssistantBar()
             } else if store.expandedDeviceId != nil {
                 store.expandedDeviceId = nil

@@ -302,8 +302,8 @@ private struct GeneralSettingsTab: View {
                 SettingsSection(title: L10n.tr("全局快捷键", "Global Shortcut")) {
                     SettingsToggleRow(
                         title: L10n.tr(
-                            "启用全局快捷键 \(hotkey.shortcut.displayString) 呼出面板",
-                            "Global shortcut \(hotkey.shortcut.displayString) for the dashboard"
+                            "启用全局快捷键 \(hotkey.shortcut.displayString)（短按面板，长按语音）",
+                            "Global shortcut \(hotkey.shortcut.displayString) (tap for dashboard, hold to speak)"
                         ),
                         isOn: Binding(
                             get: { store.enableGlobalHotkey },

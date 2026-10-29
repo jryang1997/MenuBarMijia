@@ -459,4 +459,54 @@ struct MenuBarPanelControllerTests {
         controller.handlePreferencesChanged()
         #expect(panel.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua)
     }
+
+    @Test("Short global hotkey press toggles the panel; holding opens voice assistant without closing on release")
+    func globalHotkeyShortPressAndLongHoldVoice() async throws {
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+        _ = NSApplication.shared
+        let sharedController = MenuBarPanelController.shared
+        let prevPresentsActively = sharedController.presentsActively
+        sharedController.presentsActively = false
+        sharedController.install(with: store)
+        HotkeyAndNotificationManager.shared.attachStoreForTesting(store)
+        defer {
+            HotkeyAndNotificationManager.shared.attachStoreForTesting(nil)
+            SpeechInputController.shared.stop(andSubmit: false, store: nil)
+            SpeechInputController.shared.setPreviewState(isListening: false, isHoldToTalk: false, draft: "")
+            sharedController.uninstall()
+            sharedController.presentsActively = prevPresentsActively
+        }
+
+        // 1. Short tap (< threshold): toggles the panel open on release, without opening the voice bar.
+        HotkeyAndNotificationManager.shared.handleGlobalHotKeyPressed(holdThreshold: 0.3)
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown)
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyHoldTriggered == false)
+        HotkeyAndNotificationManager.shared.handleGlobalHotKeyReleased()
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown == false)
+        #expect(sharedController.isPanelVisible)
+        #expect(store.isShowingAssistantBar == false)
+
+        // Second short tap closes the panel.
+        HotkeyAndNotificationManager.shared.handleGlobalHotKeyPressed(holdThreshold: 0.3)
+        HotkeyAndNotificationManager.shared.handleGlobalHotKeyReleased()
+        #expect(sharedController.isPanelVisible == false)
+
+        // 2. Long hold (>= threshold): opens the panel, presents the assistant bar, and starts Hold-to-Talk.
+        HotkeyAndNotificationManager.shared.handleGlobalHotKeyPressed(holdThreshold: 0.03)
+        try await Task.sleep(for: .milliseconds(70))
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown)
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyHoldTriggered)
+        #expect(sharedController.isPanelVisible)
+        #expect(store.isShowingAssistantBar)
+        #expect(SpeechInputController.shared.isHoldToTalk)
+
+        // Releasing after a long hold finishes Hold-to-Talk instead of toggling the panel closed.
+        HotkeyAndNotificationManager.shared.handleGlobalHotKeyReleased()
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown == false)
+        #expect(HotkeyAndNotificationManager.shared.isHotkeyHoldTriggered == false)
+        #expect(sharedController.isPanelVisible)
+        #expect(store.isShowingAssistantBar)
+    }
 }
