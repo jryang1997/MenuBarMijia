@@ -39,6 +39,8 @@ public struct ControlCenterPanel: View {
     @Environment(\.openSettings) private var openSettings
     /// Drives the open animation; reset whenever the menu-bar window closes so every open replays it.
     @State private var isPresented = false
+    /// Re-centers the active room pill when the user taps an already-selected pill after scrolling.
+    @State private var roomScrollTrigger = 0
 
     /// Card sizes are remembered per page: a room id, or "all" for the overview.
     private var layoutScope: String { store.selectedRoomId ?? "all" }
@@ -63,7 +65,7 @@ public struct ControlCenterPanel: View {
     }
 
     public var body: some View {
-        let _ = store.effectiveLanguage
+        let _ = (store.effectiveLanguage, store.selectedRoomId, store.rooms.count)
         ZStack(alignment: .bottom) {
             if store.shouldShowOnboarding {
                 OnboardingGuideView(store: store)
@@ -1050,6 +1052,7 @@ public struct ControlCenterPanel: View {
                                 powerChip(watts: store.totalPowerWatts)
                             }
                         }
+                        .horizontalWheelScroll()
                     }
                     .padding(6)
                 }
@@ -1264,6 +1267,7 @@ public struct ControlCenterPanel: View {
                         }
                     }
                 }
+                .horizontalWheelScroll()
             }
             .padding(6)
         }
@@ -1282,15 +1286,48 @@ public struct ControlCenterPanel: View {
         }
     }
 
+    private func scrollRoomStrip(using proxy: ScrollViewProxy, roomId: String?, animated: Bool) {
+        let target = roomId ?? "roomsStart"
+        let anchor: UnitPoint = roomId == nil ? .leading : .center
+        if animated && !reduceMotion {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                proxy.scrollTo(target, anchor: anchor)
+            }
+        } else {
+            proxy.scrollTo(target, anchor: anchor)
+        }
+    }
+
     private var roomFilterBar: some View {
         HStack(spacing: 6) {
             if skin.isClassic {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    AdaptiveGlassContainer(spacing: 5) {
-                        roomPillsRow
-                            .padding(.trailing, 10)
-                            .padding(.leading, 6)
-                            .padding(.vertical, 6)
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        AdaptiveGlassContainer(spacing: 5) {
+                            HStack(spacing: 0) {
+                                Color.clear.frame(width: 0, height: 1).id("roomsStart")
+                                roomPillsRow
+                                    .padding(.trailing, 10)
+                                    .padding(.leading, 6)
+                                    .padding(.vertical, 6)
+                            }
+                            .horizontalWheelScroll()
+                        }
+                    }
+                    .defaultScrollAnchor(.leading)
+                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                    .onChange(of: isPresented) { _, shown in
+                        guard shown else { return }
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                    }
+                    .onAppear {
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                    }
+                    .onChange(of: store.selectedRoomId) { _, id in
+                        scrollRoomStrip(using: proxy, roomId: id, animated: true)
+                    }
+                    .onChange(of: roomScrollTrigger) { _, _ in
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
                     }
                 }
                 .padding(.leading, -6)
@@ -1316,6 +1353,7 @@ public struct ControlCenterPanel: View {
                             // Extra side inset keeps the end pills clear of the track's curved ends.
                             roomPillsRow.padding(.vertical, 3).padding(.horizontal, 6)
                         }
+                        .horizontalWheelScroll()
                     }
                     .defaultScrollAnchor(.leading)
                     .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
@@ -1325,18 +1363,17 @@ public struct ControlCenterPanel: View {
                     // and re-layout the strip while a context menu was open.
                     .onChange(of: isPresented) { _, shown in
                         guard shown else { return }
-                        var t = Transaction(); t.disablesAnimations = true
-                        withTransaction(t) {
-                            // Selected room goes to the middle, never under the faded left edge.
-                            if let id = store.selectedRoomId { proxy.scrollTo(id, anchor: .center) } else { proxy.scrollTo("roomsStart", anchor: .leading) }
-                        }
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
                     }
-                    .onAppear { proxy.scrollTo("roomsStart", anchor: .leading) }
+                    .onAppear {
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                    }
                     // Keep the chosen room fully visible; tapping a half-hidden one slides it in.
                     .onChange(of: store.selectedRoomId) { _, id in
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            proxy.scrollTo(id ?? "roomsStart", anchor: .center)
-                        }
+                        scrollRoomStrip(using: proxy, roomId: id, animated: true)
+                    }
+                    .onChange(of: roomScrollTrigger) { _, _ in
+                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
                     }
                     // Soft fade at both ends instead of letters being sliced by the track edge.
                     .mask(
@@ -1432,6 +1469,16 @@ public struct ControlCenterPanel: View {
         }
     }
 
+    private func selectRoom(_ roomId: String?, animation: Animation) {
+        withAnimation(animation) {
+            if store.selectedRoomId == roomId {
+                roomScrollTrigger &+= 1
+            } else {
+                store.selectedRoomId = roomId
+            }
+        }
+    }
+
     @ViewBuilder
     private func roomPill(title: String, roomId: String?) -> some View {
         let isSelected = (store.selectedRoomId == roomId)
@@ -1440,9 +1487,7 @@ public struct ControlCenterPanel: View {
         } else {
             let p = palette
             Button {
-                withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) {
-                    store.selectedRoomId = roomId
-                }
+                selectRoom(roomId, animation: .spring(response: 0.4, dampingFraction: 0.72))
             } label: {
                 Text(title)
                     .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
@@ -1464,9 +1509,7 @@ public struct ControlCenterPanel: View {
 
     private func classicRoomPill(title: String, roomId: String?, isSelected: Bool) -> some View {
         Button(title) {
-            withAnimation(AppleMotion.snappySpring) {
-                store.selectedRoomId = roomId
-            }
+            selectRoom(roomId, animation: AppleMotion.snappySpring)
         }
         .buttonStyle(PillActionButtonStyle(isSelected: isSelected, tintColor: .accentColor))
     }
