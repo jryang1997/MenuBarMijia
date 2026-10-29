@@ -683,7 +683,7 @@ fn set_panel_height(app: AppHandle, height: f64) {
     let target = if height <= 0.0 { max_h } else { height.min(max_h) };
 
     let old_pos = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
-    let old_size = window.outer_size().unwrap_or(PhysicalSize::new(360, 520));
+    let old_size = window.outer_size().unwrap_or(PhysicalSize::new(480, 520));
     let width = old_size.width as f64 / scale;
     let _ = window.set_size(tauri::LogicalSize::new(width, target));
     let new_h = (target * scale) as i32;
@@ -693,7 +693,7 @@ fn set_panel_height(app: AppHandle, height: f64) {
 }
 
 fn position_popover(window: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>) {
-    let win_size = window.outer_size().unwrap_or(PhysicalSize::new(360, 520));
+    let win_size = window.outer_size().unwrap_or(PhysicalSize::new(480, 520));
     let win_w = win_size.width as i32;
     let win_h = win_size.height as i32;
 

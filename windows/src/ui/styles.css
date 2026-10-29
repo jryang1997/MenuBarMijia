@@ -85,7 +85,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 8px 6px;
+  min-width: 0;
 }
 
 .cc-title-group {
@@ -93,6 +95,7 @@ body {
   align-items: center;
   gap: 9px;
   min-width: 0;
+  flex: 1 1 150px;
 }
 
 .cc-home-badge {
@@ -132,9 +135,12 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .cc-home-title {
+  min-width: 0;
   font-size: 14.5px;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -142,6 +148,7 @@ body {
 }
 
 .cc-mode-pill {
+  flex: 0 0 auto;
   font-size: 9.5px;
   font-weight: 600;
   padding: 1.5px 6.5px;
@@ -173,8 +180,11 @@ body {
 .cc-header-controls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
 }
 
 .cc-circle-btn {
@@ -226,6 +236,9 @@ body {
 
 .cc-all-off-pill {
   height: 24px;
+  max-width: 100%;
+  min-width: 0;
+  flex: 0 1 auto;
   padding: 0 8.5px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.24);
@@ -238,6 +251,12 @@ body {
   gap: 4px;
   cursor: pointer;
   transition: transform 160ms var(--ease-out-expo), filter 160ms ease;
+}
+.cc-all-off-pill > span:not(.cc-hold-fill) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cc-all-off-pill svg {
@@ -257,8 +276,11 @@ body {
 .cc-env-strip {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  overflow-x: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cc-env-chip {
@@ -452,8 +474,11 @@ body {
   padding: 0 13px 7px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5.5px;
-  overflow-x: auto;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cc-quick-pill {
@@ -503,17 +528,24 @@ body {
 .cc-room-bar {
   padding: 0 13px 7px;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cc-room-scroll {
   display: flex;
   align-items: center;
+  align-content: flex-start;
+  flex-wrap: wrap;
   gap: 5px;
-  overflow-x: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: 96px;
   flex: 1;
+  min-width: 0;
 }
 
 .cc-room-pill {
@@ -554,13 +586,15 @@ body {
 /* Main Scrollable Device Grid (Apple Control Center 2-Column Tiles) */
 .cc-scroll-area {
   flex: 1;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
-  padding: 9px 13px 11px;
+  padding: 10px 13px 12px;
 }
 
 .cc-devices-grid {
   display: grid;
-  gap: 7px;
+  gap: 9px;
 }
 
 .cc-devices-grid.is-compact {
@@ -720,9 +754,11 @@ body {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-primary);
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .cc-tile-status {
@@ -914,6 +950,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .cc-footer-status {
@@ -1231,7 +1269,7 @@ body {
 
 /* Home switcher */
 .cc-home-switch {
-  display: inline-flex; align-items: center; gap: 4px;
+  display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%;
   border: 0; background: none; color: inherit; cursor: pointer; padding: 0; font: inherit;
 }
 .cc-home-caret { display: inline-flex; width: 10px; height: 10px; color: var(--text-secondary); transition: transform 220ms var(--ease-out-expo); }
@@ -1356,15 +1394,13 @@ body {
 .cc-all-off-pill.is-holding .cc-hold-fill { transform: scaleX(1); transition: transform 600ms linear; }
 .cc-all-off-pill.is-done { padding: 0 16px; }
 
-/* Room track: pills inside one rounded trough, both ends fade */
-.cc-room-track { flex: 1; min-width: 0; }
+/* Room track: pills sit in one trough and wrap instead of being clipped. */
+.cc-room-track { flex: 1; min-width: 0; max-width: 100%; }
 .cc-popover.is-skinned .cc-room-track {
-  border-radius: 999px; background: var(--s-chip); border: 1px solid var(--s-line); overflow: hidden;
+  border-radius: 14px; background: var(--s-chip); border: 1px solid var(--s-line); overflow: hidden;
 }
 .cc-popover.is-skinned .cc-room-scroll {
-  padding: 3px 6px; gap: 2px; scroll-behavior: smooth;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 26px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 10px, #000 calc(100% - 26px), transparent 100%);
+  padding: 3px 6px; gap: 4px 2px;
 }
 .cc-popover.is-skinned .cc-room-pill { border: 0; background: none; color: var(--s-muted); box-shadow: none; transition: color 200ms ease, background 260ms var(--ease-out-expo); }
 .cc-popover.is-skinned .cc-room-pill.is-active { background: var(--s-accent-grad); color: var(--s-on); }
@@ -1391,6 +1427,7 @@ body {
   transition: transform 160ms cubic-bezier(0.3, 1.6, 0.5, 1);
 }
 .cc-climate-step:active { transform: scale(0.84); }
+.cc-climate-power, .cc-climate-step, .cc-climate-temp { flex-shrink: 0; }
 .cc-climate-temp { min-width: 44px; text-align: center; font-size: 23px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .cc-climate-temp small { font-size: 14px; opacity: 0.6; }
 .cc-climate-gauge { height: 4px; border-radius: 999px; background: var(--s-chip, rgba(255, 255, 255, 0.08)); overflow: hidden; }
@@ -1403,8 +1440,8 @@ body {
 /* Sensor card */
 .cc-sensor { padding: 10px 11px; gap: 6px; display: flex; flex-direction: column; justify-content: center; }
 .cc-sensor.is-compact { padding: 6.5px 11px; gap: 3px; }
-.cc-sensor-top { display: flex; align-items: center; gap: 6px; justify-content: space-between; }
-.cc-sensor-name { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cc-sensor-top { display: flex; align-items: center; gap: 6px; justify-content: space-between; min-width: 0; }
+.cc-sensor-name { flex: 1; min-width: 0; font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cc-sensor-name.is-strong { font-size: 12px; font-weight: 650; color: var(--text-primary); }
 .cc-sensor-room { font-size: 10px; color: var(--text-secondary); }
 .cc-sensor-main { display: flex; align-items: baseline; gap: 6px; }
@@ -1531,13 +1568,17 @@ body {
 .cc-popover.is-skinned .cc-range { accent-color: var(--s-accent); }
 .cc-popover.is-skinned .cc-climate.is-active .cc-tile-name { color: var(--s-fg); }
 
-/* Keep cards inside the panel: grid items otherwise refuse to shrink below their text width. */
+/* Keep every strip inside the panel. Flex items otherwise grow to their text and get clipped. */
+.cc-popover > * { min-width: 0; max-width: 100%; }
+.cc-header { min-width: 0; max-width: 100%; }
 .cc-scroll-area { overflow-x: hidden; }
 .cc-group, .cc-devices-grid.is-flow > *, .cc-tile-body, .cc-climate-name { min-width: 0; }
-.cc-tile-name, .cc-tile-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-tile-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cc-title-group, .cc-title-stack, .cc-title-row { min-width: 0; flex-shrink: 1; }
 .cc-subtitle, .cc-home-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cc-header-controls { flex-shrink: 0; }
+.cc-header-controls { flex-shrink: 1; min-width: 0; }
+.cc-circle-btn, .cc-footer-icon-btn, .cc-footer-pill { flex-shrink: 0; }
+.cc-comfort { flex-shrink: 0; }
 .cc-popover.is-skinned .cc-env-label, .cc-popover.is-skinned .cc-env-val, .cc-popover.is-skinned .cc-env-hum,
 .cc-popover.is-skinned .cc-quick-pill, .cc-popover.is-skinned .cc-footer-label { color: var(--s-fg); }
 .cc-popover.is-skinned .cc-env-hum, .cc-popover.is-skinned .cc-footer-label { color: var(--s-muted); }
