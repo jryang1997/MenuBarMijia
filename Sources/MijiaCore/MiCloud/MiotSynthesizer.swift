@@ -273,6 +273,20 @@ public enum MiotSynthesizer {
         return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
     }
 
+    private static func hasScaleToken(_ comment: String, _ token: String) -> Bool {
+        var searchRange = comment.startIndex..<comment.endIndex
+        while let range = comment.range(of: token, range: searchRange) {
+            let prevIndex = range.lowerBound > comment.startIndex ? comment.index(before: range.lowerBound) : nil
+            let prevChar = prevIndex.map { comment[$0] }
+            let isPartOfOtherNumber = prevChar.map { $0.isNumber || $0 == "." } ?? false
+            if !isPartOfOtherNumber {
+                return true
+            }
+            searchRange = range.upperBound..<comment.endIndex
+        }
+        return false
+    }
+
     /// Scale factor that converts a MIoT `power-consumption` reading into kWh (#62).
     /// Returns `nil` when an integer property has neither a recognized `unit` nor an explicit
     /// scale in `comment` (e.g. "0.01kwh"), so ambiguous raw integers are never guessed.
@@ -286,13 +300,13 @@ public enum MiotSynthesizer {
             .lowercased()
             .replacingOccurrences(of: ",", with: ".")
             .replacingOccurrences(of: " ", with: "")
-        if unit == "wh" || unit == "watt-hour" || unit.contains("0.001kwh") || comment.contains("0.001kwh") {
+        if unit == "wh" || unit == "watt-hour" || unit == "0.001kwh" || hasScaleToken(comment, "0.001kwh") {
             return 0.001
         }
-        if unit.contains("0.01kwh") || comment.contains("0.01kwh") {
+        if unit == "0.01kwh" || hasScaleToken(comment, "0.01kwh") {
             return 0.01
         }
-        if unit == "kwh" || unit == "kilowatt-hour" || unit.contains("1kwh") || comment.contains("1kwh") {
+        if unit == "kwh" || unit == "kilowatt-hour" || unit == "1kwh" || hasScaleToken(comment, "1kwh") {
             return 1.0
         }
         if property.format == "float", unit.isEmpty || unit == "none" {

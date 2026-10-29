@@ -483,6 +483,47 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
     if (home.devices[0]?.kind.kind === "plug") {
       assert.equal(home.devices[0].kind.energyKwh, 5.12);
     }
+
+    const unsupportedDeciSpec = parseMiotDeviceSpec({
+      type: "urn:miot-spec-v2:device:outlet:0000A002:deci-plug:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:switch:0000780C:deci-plug:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:deci-plug:1", format: "bool", access: ["read", "write"] },
+          ],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:power-consumption:0000780E:deci-plug:1",
+          properties: [
+            {
+              iid: 1,
+              type: "urn:miot-spec-v2:property:power-consumption:0000002F:deci-plug:1",
+              format: "uint32",
+              access: ["read"],
+              unit: "0.1kWh",
+              comment: "单位:0.1kWh",
+            },
+          ],
+        },
+      ],
+    });
+    assert.ok(unsupportedDeciSpec);
+    const deciHome = MiotSynthesizer.synthesize(
+      [{ did: "p_deci", name: "插座", model: "deci.plug", isOnline: true, specType: null }],
+      [],
+      { "deci.plug": unsupportedDeciSpec },
+      new Map<string, unknown>([
+        ["p_deci.2.1", true],
+        ["p_deci.3.1", 512],
+      ])
+    );
+    assert.equal(deciHome.devices[0]?.kind.kind, "plug");
+    if (deciHome.devices[0]?.kind.kind === "plug") {
+      assert.equal(deciHome.devices[0].kind.energyKwh, undefined);
+    }
   });
 
   it("matches the cross-platform MIoT golden JSON corpus shared with MijiaCoreTests", () => {

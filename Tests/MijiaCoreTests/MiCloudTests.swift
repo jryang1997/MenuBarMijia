@@ -332,6 +332,12 @@ struct MiotSynthesizerTests {
                 MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:power-consumption:0000002F:unit-plug:1", format: "uint32", access: ["read"], unit: "0.01kWh"),
             ]),
         ])
+        let unsupportedDeciSpec = MiotDeviceSpec(type: "urn:miot-spec-v2:device:outlet:0000A002:deci-plug:1", services: [
+            switchService,
+            MiotService(iid: 3, type: "urn:miot-spec-v2:service:power-consumption:0000780E:deci-plug:1", properties: [
+                MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:power-consumption:0000002F:deci-plug:1", format: "uint32", access: ["read"], unit: "0.1kWh", comment: "单位:0.1kWh"),
+            ]),
+        ])
 
         let home = MiotSynthesizer.synthesize(
             devices: [
@@ -339,6 +345,7 @@ struct MiotSynthesizerTests {
                 MiDeviceRecord(did: "p2", name: "插座B", model: "xiaomi.2pro", isOnline: true),
                 MiDeviceRecord(did: "p3", name: "插座C", model: "wh.plug", isOnline: true),
                 MiDeviceRecord(did: "p4", name: "插座D", model: "unit.plug", isOnline: true),
+                MiDeviceRecord(did: "p5", name: "插座E", model: "deci.plug", isOnline: true),
             ],
             rooms: [],
             specs: [
@@ -346,6 +353,7 @@ struct MiotSynthesizerTests {
                 "xiaomi.2pro": floatKwhSpec,
                 "wh.plug": whSpec,
                 "unit.plug": unitScaledSpec,
+                "deci.plug": unsupportedDeciSpec,
             ],
             values: [
                 MiotFixtures.key("p1", 2, 1): .bool(true),
@@ -356,6 +364,8 @@ struct MiotSynthesizerTests {
                 MiotFixtures.key("p3", 3, 1): .number(1500),
                 MiotFixtures.key("p4", 2, 1): .bool(true),
                 MiotFixtures.key("p4", 3, 1): .number(512),
+                MiotFixtures.key("p5", 2, 1): .bool(true),
+                MiotFixtures.key("p5", 3, 1): .number(512),
             ]
         )
         let byId = Dictionary(uniqueKeysWithValues: home.devices.map { ($0.id, $0) })
@@ -363,6 +373,7 @@ struct MiotSynthesizerTests {
         if case .plug(let b) = byId["p2"]?.kind { #expect(b.energyKwh == 3.75) } else { Issue.record("expected plug p2") }
         if case .plug(let c) = byId["p3"]?.kind { #expect(c.energyKwh == 1.5) } else { Issue.record("expected plug p3") }
         if case .plug(let d) = byId["p4"]?.kind { #expect(d.energyKwh == 5.12) } else { Issue.record("expected plug p4") }
+        if case .plug(let e) = byId["p5"]?.kind { #expect(e.energyKwh == nil) } else { Issue.record("expected plug p5") }
     }
 
     @Test("Split keys of a multi-key Mesh panel become separate plugs addressed at the parent did")

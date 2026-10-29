@@ -1110,6 +1110,18 @@ function miotBool(val: unknown): boolean | null {
   return null;
 }
 
+function hasScaleToken(comment: string, token: string): boolean {
+  let idx = comment.indexOf(token);
+  while (idx !== -1) {
+    const prev = idx > 0 ? comment[idx - 1]! : "";
+    if (!((prev >= "0" && prev <= "9") || prev === ".")) {
+      return true;
+    }
+    idx = comment.indexOf(token, idx + token.length);
+  }
+  return false;
+}
+
 /**
  * Scale factor that converts a MIoT `power-consumption` reading into kWh (#62).
  * Returns `null` when an integer property has neither a recognized `unit` nor an explicit
@@ -1125,13 +1137,13 @@ function energyScale(prop: MiotProperty): number | null {
     .toLowerCase()
     .replaceAll(",", ".")
     .replaceAll(" ", "");
-  if (unit === "wh" || unit === "watt-hour" || unit.includes("0.001kwh") || comment.includes("0.001kwh")) {
+  if (unit === "wh" || unit === "watt-hour" || unit === "0.001kwh" || hasScaleToken(comment, "0.001kwh")) {
     return 0.001;
   }
-  if (unit.includes("0.01kwh") || comment.includes("0.01kwh")) {
+  if (unit === "0.01kwh" || hasScaleToken(comment, "0.01kwh")) {
     return 0.01;
   }
-  if (unit === "kwh" || unit === "kilowatt-hour" || unit.includes("1kwh") || comment.includes("1kwh")) {
+  if (unit === "kwh" || unit === "kilowatt-hour" || unit === "1kwh" || hasScaleToken(comment, "1kwh")) {
     return 1.0;
   }
   if (prop.format === "float" && (unit === "" || unit === "none")) {
