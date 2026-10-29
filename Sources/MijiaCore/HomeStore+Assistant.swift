@@ -224,6 +224,7 @@ extension HomeStore {
         let controlContext = controlContextID
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { return nil }
+        let startedAt = Date()
         if DelayPhrase.isCancel(spoken) {
             let count = cancelScheduledCommands()
             setAssistantState(
@@ -242,6 +243,7 @@ extension HomeStore {
         setAssistantState(.thinking)
 
         let plan: IntentPlan
+        var usedHabitContext = false
         if let local = LocalIntentParser.parse(utterance, devices: devices, scenes: scenes) {
             plan = local
         } else if homeBackend == .demo {
@@ -264,6 +266,7 @@ extension HomeStore {
             }
             let resolver = makeAssistantResolver(config: config)
             let context = buildAssistantContext()
+            usedHabitContext = !context.habitSummary.isEmpty
             do {
                 plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes, context: context)
             } catch {
@@ -291,7 +294,13 @@ extension HomeStore {
         // A locally parsed command is the user's explicit ask. A model plan is the AI filling in
         // devices/actions the user never spelled out, so it does not train habits (#34).
         let origin: AssistantExecutionOrigin = plan.source == .local ? .userInitiated : .aiAutomatic
-        return await executeIntentPlan(plan, recordedUtterance: utterance, origin: origin)
+        return await executeIntentPlan(
+            plan,
+            recordedUtterance: utterance,
+            origin: origin,
+            receiptStartedAt: startedAt,
+            usedHabitContext: usedHabitContext
+        )
     }
 
     // MARK: - Voice Undo
@@ -485,7 +494,9 @@ extension HomeStore {
     func executeIntentPlan(
         _ plan: IntentPlan,
         recordedUtterance: String?,
-        origin: AssistantExecutionOrigin
+        origin: AssistantExecutionOrigin,
+        receiptStartedAt: Date? = nil,
+        usedHabitContext: Bool = false
     ) async -> IntentPlan {
         let context = controlContextID
         let previousSnapshot = devices
@@ -579,7 +590,15 @@ extension HomeStore {
             } else {
                 assistantSuggestions = userHabitMemory.topSuggestions(devices: devices, scenes: scenes, limit: 3)
             }
-            setAssistantState(.done(plan.reply))
+            let receipt = receiptStartedAt.map { start in
+                AssistantExecutionReceipt(
+                    route: plan.source == .local ? .localRule : .aiModel,
+                    elapsedMilliseconds: elapsedMilliseconds(since: start),
+                    usedHabitContext: usedHabitContext,
+                    habitSummary: usedHabitContext ? plan.reply : nil
+                )
+            }
+            setAssistantState(.done(plan.reply), receipt: receipt)
         }
         return plan
     }
@@ -806,8 +825,13 @@ extension HomeStore {
         }
     }
 
-    func setAssistantState(_ state: AssistantState) {
+    private func elapsedMilliseconds(since start: Date) -> Int {
+        max(0, Int((Date().timeIntervalSince(start) * 1000).rounded()))
+    }
+
+    func setAssistantState(_ state: AssistantState, receipt: AssistantExecutionReceipt? = nil) {
         assistantState = state
+        lastAssistantReceipt = receipt
         assistantResetTask?.cancel()
         switch state {
         case .done, .failed, .awaitingChoice:
@@ -817,6 +841,7 @@ extension HomeStore {
                 try? await Task.sleep(for: .seconds(delay))
                 guard !Task.isCancelled, let self, self.assistantState == state else { return }
                 self.assistantState = .idle
+                self.lastAssistantReceipt = nil
             }
         case .idle, .thinking:
             break
