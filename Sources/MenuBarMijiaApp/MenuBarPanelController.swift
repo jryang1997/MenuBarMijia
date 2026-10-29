@@ -81,6 +81,7 @@ final class MenuBarPanelController: NSObject {
         guard !didInstall else { return }
         didInstall = true
         createStatusItem()
+        installMouseMonitors()
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didFinishLaunchingNotification,
             object: nil,
@@ -143,8 +144,26 @@ final class MenuBarPanelController: NSObject {
             // of AppKit acting on mouse-down alone.
             _ = button.sendAction(on: [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp])
         }
+        configureStatusItemLongPress(on: item)
         statusItem = item
         syncStatusItem()
+    }
+
+    /// Registers `setLongPressAction:` on `NSStatusItem` for macOS 26+, where the out-of-process
+    /// menu bar (`NSMenuBarNavigationSceneExtension`) routes press-and-hold and secondary clicks
+    /// through `-[NSStatusItem _performSecondaryAction:type:]` instead of delivering `leftMouseDown`
+    /// to the button action when the finger first touches the trackpad.
+    private func configureStatusItemLongPress(on item: NSStatusItem) {
+        // Always assign `item.target` unconditionally: `-[NSStatusItem target]` falls back to
+        // `button.target`, whereas `-[NSStatusItem _performSecondaryAction:type:]` reads the
+        // `NSStatusItem->_target` ivar directly without consulting `button.target`.
+        item.target = self
+        let setLongSel = NSSelectorFromString("setLongPressAction:")
+        guard item.responds(to: setLongSel),
+              let method = class_getInstanceMethod(type(of: item), setLongSel) else { return }
+        typealias SetSelFn = @convention(c) (AnyObject, Selector, Selector) -> Void
+        let imp = unsafeBitCast(method_getImplementation(method), to: SetSelFn.self)
+        imp(item, setLongSel, #selector(handleStatusItemNativeLongPress(_:)))
     }
 
     // MARK: - Menu Bar Label (#54)
@@ -283,7 +302,6 @@ final class MenuBarPanelController: NSObject {
     }
 
     func hidePanel() {
-        removeMouseMonitors()
         guard let panel = panelWindow, panel.isVisible else { return }
         panel.orderOut(nil)
         store?.setPanelVisible(false)
@@ -385,28 +403,73 @@ final class MenuBarPanelController: NSObject {
 
     // MARK: - Status Item Gesture
 
-    /// A short left click toggles the panel and holding either button for 0.2 s starts dictation —
-    /// what the private `setLongPressAction:` plus the old mouse monitors produced, rebuilt on public
-    /// API: the button reports press and release, and a `.common`-mode timer measures the hold while
-    /// AppKit's tracking loop owns the main run loop. A short right click does nothing, as before.
-    @objc private func handleStatusItemPress() {
+    /// A short left click toggles the panel and holding either button for 0.2 s starts dictation.
+    /// On macOS 26+, the system menu bar (`NSMenuBarNavigationSceneExtension`) hosts status items
+    /// out-of-process: it delivers holds via `setLongPressAction:` (`_performSecondaryAction:type:`)
+    /// and delivers short clicks as a synthesized mouseDown+mouseUp pair upon release. Combining
+    /// button actions, `setLongPressAction:`, and mouse-down monitors covers both in-process and
+    /// out-of-process menu bar hosts.
+    @objc func handleStatusItemPress() {
         switch NSApp.currentEvent?.type {
         case .leftMouseDown?:
+            guard ProcessInfo.processInfo.systemUptime >= suppressReleaseUntil, !pressTriggered else { return }
             pressAllowsToggle = true
             beginPress()
         case .rightMouseDown?:
+            guard ProcessInfo.processInfo.systemUptime >= suppressReleaseUntil, !pressTriggered else { return }
             pressAllowsToggle = false
             beginPress()
         case .leftMouseUp?, .rightMouseUp?:
-            finishPress()
+            // On macOS 26+ (NSSceneStatusItem), `-[NSStatusItem _performOneShotAction:]` synthesizes
+            // both `leftMouseDown` and `leftMouseUp` back-to-back at the moment the press begins while
+            // the physical mouse button is still held down. Only finish immediately when the button is
+            // no longer physically pressed; otherwise let `pressTimer` track the hold threshold and
+            // eventual release.
+            if (NSEvent.pressedMouseButtons & 0x3) == 0 {
+                finishPress()
+            }
         default:
-            break
+            if !pressTriggered, ProcessInfo.processInfo.systemUptime >= suppressReleaseUntil {
+                togglePanel()
+            }
+        }
+    }
+
+    @objc func handleStatusItemNativeLongPress(_ sender: Any?) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if !pressTriggered {
+            pressTriggered = true
+            pressAllowsToggle = false
+            pressStartedAt = now
+            beginHoldToTalk()
+        }
+        if (NSEvent.pressedMouseButtons & 0x3) != 0 {
+            startPressTimerIfNeeded()
+        } else {
+            finishPress()
+        }
+    }
+
+    private func beginHoldDetectionFromMonitor() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now >= suppressReleaseUntil, !pressTriggered else { return }
+        if pressTimer == nil {
+            pressAllowsToggle = false
+            pressStartedAt = now
+            startPressTimerIfNeeded()
         }
     }
 
     private func beginPress() {
-        pressTriggered = false
-        pressStartedAt = ProcessInfo.processInfo.systemUptime
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now >= suppressReleaseUntil, !pressTriggered else { return }
+        if pressTimer == nil {
+            pressStartedAt = now
+        }
+        startPressTimerIfNeeded()
+    }
+
+    private func startPressTimerIfNeeded() {
         guard pressTimer == nil else { return }
         let timer = Timer(
             timeInterval: Self.holdTick,
@@ -435,15 +498,21 @@ final class MenuBarPanelController: NSObject {
     private func finishPress() {
         guard pressTimer != nil || pressTriggered else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        // AppKit can deliver both the up action and the timer fallback for one release.
-        guard now >= suppressReleaseUntil else { return }
-        suppressReleaseUntil = now + 0.15
-
         stopPressTimer()
+
         if pressTriggered {
             pressTriggered = false
+            pressAllowsToggle = false
+            suppressReleaseUntil = now + 0.45
             endHoldToTalk()
-        } else if pressAllowsToggle {
+            return
+        }
+
+        // AppKit can deliver both the up action and the timer fallback for one release.
+        guard now >= suppressReleaseUntil else { return }
+        if pressAllowsToggle {
+            pressAllowsToggle = false
+            suppressReleaseUntil = now + 0.15
             togglePanel()
         }
     }
@@ -458,12 +527,14 @@ final class MenuBarPanelController: NSObject {
     func beginHoldToTalk() {
         guard let store else { return }
         SpeechInputController.shared.startHoldToTalk(store: store)
+        syncStatusItem()
         showPanel()
         store.presentAssistantBar(startVoice: false)
         // A microphone prompt or the first audio buffer can steal key status; re-assert the panel.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(70))
             guard let self, let store = self.store, store.isShowingAssistantBar else { return }
+            self.syncStatusItem()
             self.showPanel()
         }
     }
@@ -471,9 +542,11 @@ final class MenuBarPanelController: NSObject {
     func endHoldToTalk() {
         guard let store else { return }
         SpeechInputController.shared.finishHoldToTalk(store: store)
+        syncStatusItem()
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(70))
             guard let self, let store = self.store, store.isShowingAssistantBar else { return }
+            self.syncStatusItem()
             self.showPanel()
         }
     }
@@ -562,18 +635,24 @@ final class MenuBarPanelController: NSObject {
     /// A click need not activate another app (desktop, nonactivating panels, other status items).
     /// Keep our own controls and status button working, and never swallow the original click.
     func handleMouseDown(in window: NSWindow?, at screenPoint: NSPoint) {
+        if let button = statusItem?.button,
+           let statusWindow = button.window {
+            let statusRect = statusWindow.convertToScreen(button.convert(button.bounds, to: nil))
+            if window === statusWindow || statusRect.insetBy(dx: -6, dy: -6).contains(screenPoint) {
+                if (NSEvent.pressedMouseButtons & 0x3) != 0 {
+                    beginHoldDetectionFromMonitor()
+                }
+                return
+            }
+        }
         guard isPanelVisible, let panel = panelWindow else { return }
         guard !isPanelWindow(window) else { return }
         if panel.frame.contains(screenPoint) { return }
         if let children = panel.childWindows,
            children.contains(where: { $0.isVisible && $0.frame.contains(screenPoint) }) { return }
-        if let button = statusItem?.button,
-           let statusWindow = button.window,
-           statusWindow.convertToScreen(button.convert(button.bounds, to: nil)).contains(screenPoint) {
-            return
-        }
         if SpeechInputController.shared.isListening
             || SpeechInputController.shared.isHoldToTalk
+            || pressTriggered
             || pressTimer != nil
             || HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown { return }
         hidePanel()
@@ -584,6 +663,7 @@ final class MenuBarPanelController: NSObject {
         // A TCC prompt (microphone/speech) deactivates the app mid-dictation; keep the panel.
         if SpeechInputController.shared.isListening
             || SpeechInputController.shared.isHoldToTalk
+            || pressTriggered
             || pressTimer != nil
             || HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown { return }
         hidePanel()

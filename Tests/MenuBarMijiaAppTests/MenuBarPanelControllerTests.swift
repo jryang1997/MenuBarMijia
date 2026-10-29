@@ -510,6 +510,50 @@ struct MenuBarPanelControllerTests {
         #expect(store.isShowingAssistantBar)
     }
 
+    @Test("Status item native long press opens voice assistant and suppresses trailing synthetic click")
+    func statusItemLongPressOpensVoiceAndSuppressesTrailingClick() async throws {
+        let (store, suite) = try await makeStore()
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+
+        let controller = makeController(store: store)
+        defer {
+            SpeechInputController.shared.stop(andSubmit: false, store: nil)
+            SpeechInputController.shared.setPreviewState(isListening: false, isHoldToTalk: false, draft: "")
+            controller.uninstall()
+        }
+
+        let item = try #require(controller.statusItem)
+        if let targetIvar = class_getInstanceVariable(NSStatusItem.self, "_target") {
+            let rawTarget = object_getIvar(item, targetIvar) as AnyObject?
+            #expect(rawTarget === controller, "NSStatusItem->_target ivar must be set directly for _performSecondaryAction:type:")
+        }
+        let getLongSel = NSSelectorFromString("longPressAction")
+        if item.responds(to: getLongSel),
+           let method = class_getInstanceMethod(type(of: item), getLongSel) {
+            typealias GetSelFn = @convention(c) (AnyObject, Selector) -> Selector?
+            let imp = unsafeBitCast(method_getImplementation(method), to: GetSelFn.self)
+            #expect(imp(item, getLongSel) == #selector(MenuBarPanelController.handleStatusItemNativeLongPress(_:)))
+        }
+
+        // Simulate macOS 26+ out-of-process menu bar secondary action (type 0 = long press on status item)
+        let secondarySel = NSSelectorFromString("_performSecondaryAction:type:")
+        if item.responds(to: secondarySel),
+           let method = class_getInstanceMethod(type(of: item), secondarySel) {
+            typealias PerformSecondaryFn = @convention(c) (AnyObject, Selector, AnyObject?, Int) -> Void
+            let imp = unsafeBitCast(method_getImplementation(method), to: PerformSecondaryFn.self)
+            imp(item, secondarySel, nil, 0)
+        } else {
+            controller.handleStatusItemNativeLongPress(item)
+        }
+        #expect(controller.isPanelVisible)
+        #expect(store.isShowingAssistantBar)
+
+        // A trailing synthetic click delivered right after releasing a long press must not close the panel
+        controller.handleStatusItemPress()
+        #expect(controller.isPanelVisible)
+        #expect(store.isShowingAssistantBar)
+    }
+
     @Test("Horizontal wheel monitor translates vertical mouse wheel and trackpad deltas into clamped horizontal scroll")
     func horizontalWheelMonitorScrollsAndClamps() {
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: 32))
