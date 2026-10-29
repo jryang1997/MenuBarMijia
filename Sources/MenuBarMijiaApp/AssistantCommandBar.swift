@@ -77,12 +77,14 @@ public final class SpeechInputController {
     private var holdReleaseTask: Task<Void, Never>?
     private var hasCapturedSpeech: Bool = false
     private var isStarting: Bool = false
+    private var isHoldGestureActive: Bool = false
 
     public init() {}
 
     public func setPreviewState(isListening: Bool, isHoldToTalk: Bool, draft: String) {
         self.isListening = isListening
         self.isHoldToTalk = isHoldToTalk
+        self.isHoldGestureActive = isHoldToTalk
         self.draft = draft
     }
 
@@ -110,8 +112,9 @@ public final class SpeechInputController {
     public func startHoldToTalk(store: HomeStore) {
         holdReleaseTask?.cancel()
         holdReleaseTask = nil
+        isHoldGestureActive = true
+        isHoldToTalk = true
         if isListening {
-            isHoldToTalk = true
             silenceTimerTask?.cancel()
             silenceTimerTask = nil
             return
@@ -120,19 +123,20 @@ public final class SpeechInputController {
     }
 
     public func finishHoldToTalk(store: HomeStore) {
+        isHoldGestureActive = false
         guard isHoldToTalk || isListening || isStarting else { return }
         holdReleaseTask?.cancel()
         holdReleaseTask = Task { @MainActor [weak self] in
-            // Allow 320ms after mouse release for SFSpeechRecognizer to flush any syllables spoken while held.
+            // Allow 320ms after mouse/key release for SFSpeechRecognizer to flush any syllables spoken while held.
             try? await Task.sleep(for: .milliseconds(320))
             guard !Task.isCancelled, let self else { return }
             let hasText = self.hasCapturedSpeech || !self.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if self.isListening {
                 if hasText {
-                    // User spoke while holding the menu bar icon (Push-to-Talk): stop and execute immediately.
+                    // User spoke while holding the menu bar icon or global hotkey (Push-to-Talk): stop and execute immediately.
                     self.stop(andSubmit: true, store: store)
                 } else {
-                    // User long-pressed the menu bar icon to summon voice input and released before speaking:
+                    // User long-pressed to summon voice input and released before speaking:
                     // seamlessly transition to hands-free listening with 1.1s silence auto-submit.
                     self.isHoldToTalk = false
                 }
@@ -191,8 +195,13 @@ public final class SpeechInputController {
             return
         }
 
+        let gestureStillActive = isHoldGestureActive
         stop(andSubmit: false, store: store)
-        isHoldToTalk = holdMode && ((NSEvent.pressedMouseButtons & 0x3) != 0)
+        isHoldGestureActive = gestureStillActive
+        let isStillHoldingInput = gestureStillActive
+            || ((NSEvent.pressedMouseButtons & 0x3) != 0)
+            || HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown
+        isHoldToTalk = holdMode && isStillHoldingInput
 
         let engine = AVAudioEngine()
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -265,6 +274,7 @@ public final class SpeechInputController {
         hasCapturedSpeech = false
         isListening = false
         isHoldToTalk = false
+        isHoldGestureActive = false
 
         recognitionRequest?.endAudio()
         recognitionRequest = nil
@@ -412,8 +422,8 @@ struct AssistantCommandBar: View {
             suggestionsRow
         }
         .help(L10n.tr(
-            "长按顶部菜单栏温度图标可按住说话；或点击麦克风说话，打字回车执行",
-            "Long-press the menu bar icon for Push-to-Talk, click the mic to speak, or type and press Return"
+            "长按 ⌥M 或顶部菜单栏图标可按住说话；或点击麦克风说话，打字回车执行",
+            "Hold ⌥M or the menu bar icon for Push-to-Talk, click the mic to speak, or type and press Return"
         ))
         .animation(AppleMotion.snappySpring, value: store.assistantState)
         .animation(AppleMotion.snappySpring, value: store.assistantSuggestions)
@@ -426,12 +436,12 @@ struct AssistantCommandBar: View {
             if store.assistantVoiceRequest != lastHandledVoiceRequest {
                 lastHandledVoiceRequest = store.assistantVoiceRequest
                 Task { await speech.start(holdMode: false, store: store) }
-            } else if !speech.isListening {
+            } else if !speech.isListening && !speech.isHoldToTalk {
                 isFieldFocused = true
             }
         }
         .onChange(of: store.assistantFocusRequest) { _, _ in
-            if !speech.isListening {
+            if !speech.isListening && !speech.isHoldToTalk {
                 isFieldFocused = true
             }
         }
@@ -655,8 +665,8 @@ struct AssistantCommandBar: View {
     private var placeholderText: String {
         if speech.isHoldToTalk {
             return L10n.tr(
-                "按住菜单栏说话，松开立即执行（如：准备写代码、书房灯月光模式）",
-                "Hold menu bar to speak, release to run (e.g. turn on study light, moonlight mode)"
+                "按住快捷键或菜单栏说话，松开立即执行（如：准备写代码、书房灯月光模式）",
+                "Hold shortcut or menu bar to speak, release to run (e.g. turn on study light, moonlight mode)"
             )
         }
         if speech.isListening {
@@ -687,7 +697,7 @@ struct AssistantCommandBar: View {
             : L10n.tr("语音输入", "Voice input")))
         .help(speech.isListening
               ? L10n.tr("停止聆听并执行", "Stop listening and run")
-              : L10n.tr("语音输入（快捷键 V，或长按菜单栏图标）", "Voice input (Shortcut V, or long-press menu bar icon)"))
+              : L10n.tr("语音输入（快捷键 V，或长按 ⌥M / 菜单栏图标）", "Voice input (Shortcut V, or hold ⌥M / menu bar icon)"))
     }
 
     @ViewBuilder

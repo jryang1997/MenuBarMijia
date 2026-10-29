@@ -428,8 +428,8 @@ public struct OnboardingGuideView: View {
                     icon: "command",
                     title: L10n.tr("全局快捷键 ⌥M 与数字键 1–9", "Global Hotkey ⌥M & Keys 1–9"),
                     detail: L10n.tr(
-                        "随时按 ⌥M 呼出面板，按 1–9 瞬间开关对应常用设备，说「撤销」可回退操作",
-                        "Press ⌥M anytime to toggle the dashboard, 1–9 to toggle top devices, or say \"undo\" to revert"
+                        "短按 ⌥M 呼出面板，长按 ⌥M 直接说话，按 1–9 瞬间开关常用设备，说「撤销」可回退",
+                        "Tap ⌥M to toggle the dashboard, hold ⌥M to speak, 1–9 to toggle top devices, or say \"undo\" to revert"
                     )
                 )
             }

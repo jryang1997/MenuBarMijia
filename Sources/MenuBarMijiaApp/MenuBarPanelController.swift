@@ -455,11 +455,11 @@ final class MenuBarPanelController: NSObject {
 
     // MARK: - Hold to Talk
 
-    private func beginHoldToTalk() {
+    func beginHoldToTalk() {
         guard let store else { return }
+        SpeechInputController.shared.startHoldToTalk(store: store)
         showPanel()
         store.presentAssistantBar(startVoice: false)
-        SpeechInputController.shared.startHoldToTalk(store: store)
         // A microphone prompt or the first audio buffer can steal key status; re-assert the panel.
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(70))
@@ -468,7 +468,7 @@ final class MenuBarPanelController: NSObject {
         }
     }
 
-    private func endHoldToTalk() {
+    func endHoldToTalk() {
         guard let store else { return }
         SpeechInputController.shared.finishHoldToTalk(store: store)
         Task { @MainActor [weak self] in
@@ -572,14 +572,20 @@ final class MenuBarPanelController: NSObject {
            statusWindow.convertToScreen(button.convert(button.bounds, to: nil)).contains(screenPoint) {
             return
         }
-        if SpeechInputController.shared.isListening || pressTimer != nil { return }
+        if SpeechInputController.shared.isListening
+            || SpeechInputController.shared.isHoldToTalk
+            || pressTimer != nil
+            || HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown { return }
         hidePanel()
     }
 
     func handleApplicationResignActive() {
         guard isPanelVisible else { return }
         // A TCC prompt (microphone/speech) deactivates the app mid-dictation; keep the panel.
-        if SpeechInputController.shared.isListening || pressTimer != nil { return }
+        if SpeechInputController.shared.isListening
+            || SpeechInputController.shared.isHoldToTalk
+            || pressTimer != nil
+            || HotkeyAndNotificationManager.shared.isHotkeyPhysicallyDown { return }
         hidePanel()
     }
 
