@@ -232,7 +232,7 @@ extension HomeStore {
         case .demo:
             scope = "demo"
         case .homeAssistant:
-            let normalized = HAWebSocketProvider.normalizeBaseURL(serverURLString).lowercased()
+            let normalized = HAWebSocketProvider.canonicalHistoryScopeURL(serverURLString)
             scope = "ha:\(normalized)"
         case .xiaomiCloud:
             scope = miSessionScopeIdentifier ?? "mi:signed-out"

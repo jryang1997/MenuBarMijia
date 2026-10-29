@@ -284,6 +284,9 @@ public final class SensorHistory {
         self.connectionScope = normalizedScope.isEmpty ? "default" : normalizedScope
         let loaded = Self.decode(from: defaults)
         self.stored = Self.sanitized(loaded, calendar: calendar)
+        if self.connectionScope != "default" {
+            migrateUnscopedEntriesIfNeeded(to: self.connectionScope)
+        }
     }
 
     /// Switches the active connection namespace so sensors from another Home Assistant server or
@@ -292,9 +295,62 @@ public final class SensorHistory {
         let normalized = scope.trimmingCharacters(in: .whitespacesAndNewlines)
         let next = normalized.isEmpty ? "default" : normalized
         guard next != connectionScope else { return }
+        if connectionScope == "default", next != "default" {
+            migrateUnscopedEntriesIfNeeded(to: next)
+        }
         connectionScope = next
         loadingKeys.removeAll()
         revision &+= 1
+    }
+
+    /// Migrates pre-scoped sensor history keys (bare device IDs without `"::"`) into the initial
+    /// non-default connection namespace so upgrades do not hide existing Home Assistant or Xiaomi readings.
+    private func migrateUnscopedEntriesIfNeeded(to scope: String) {
+        guard !scope.isEmpty, scope != "default" else { return }
+        var didMigrate = false
+
+        let unscopedHourlyKeys = stored.hourlyByDevice.keys.filter { !$0.contains("::") }
+        for bareKey in unscopedHourlyKeys {
+            guard let legacyBuckets = stored.hourlyByDevice.removeValue(forKey: bareKey) else { continue }
+            let targetKey = "\(scope)::\(bareKey)"
+            if var existing = stored.hourlyByDevice[targetKey] {
+                for bucket in legacyBuckets where !existing.contains(where: { isSameHour($0.bucketStart, bucket.bucketStart) }) {
+                    existing.append(bucket)
+                }
+                existing.sort { $0.bucketStart < $1.bucketStart }
+                stored.hourlyByDevice[targetKey] = Array(existing.suffix(Self.retentionHours))
+            } else {
+                stored.hourlyByDevice[targetKey] = legacyBuckets
+            }
+            didMigrate = true
+        }
+
+        let unscopedDailyKeys = stored.dailyByDevice.keys.filter { !$0.contains("::") }
+        for bareKey in unscopedDailyKeys {
+            guard let legacyBuckets = stored.dailyByDevice.removeValue(forKey: bareKey) else { continue }
+            let targetKey = "\(scope)::\(bareKey)"
+            if var existing = stored.dailyByDevice[targetKey] {
+                for bucket in legacyBuckets where !existing.contains(where: { calendar.isDate($0.bucketStart, inSameDayAs: bucket.bucketStart) }) {
+                    existing.append(bucket)
+                }
+                existing.sort { $0.bucketStart < $1.bucketStart }
+                stored.dailyByDevice[targetKey] = Array(existing.suffix(Self.retentionDays))
+            } else {
+                stored.dailyByDevice[targetKey] = legacyBuckets
+            }
+            didMigrate = true
+        }
+
+        let unscopedSynced = stored.cloudSyncedDevices.filter { !$0.contains("::") }
+        for bareKey in unscopedSynced {
+            stored.cloudSyncedDevices.remove(bareKey)
+            stored.cloudSyncedDevices.insert("\(scope)::\(bareKey)")
+            didMigrate = true
+        }
+
+        if didMigrate {
+            persist()
+        }
     }
 
     // MARK: - Local Snapshot Recording

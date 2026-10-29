@@ -235,6 +235,28 @@ struct SensorHistoryTests {
         #expect(store.sensorHistory.connectionScope == sessionA.historyScopeIdentifier)
         store.miCloudRegion = .de
         #expect(store.sensorHistory.connectionScope == sessionA.historyScopeIdentifier)
+
+        // Legacy unscoped entries (pre-connectionScope builds) migrate into the initial connection's namespace.
+        let migrationSuite = "SensorHistoryTests.migration.\(UUID().uuidString)"
+        let migrationDefaults = try #require(UserDefaults(suiteName: migrationSuite))
+        defer { migrationDefaults.removePersistentDomain(forName: migrationSuite) }
+        let legacyHistory = SensorHistory(defaults: migrationDefaults, calendar: cal)
+        legacyHistory.record(devices: [makeSensor(19.5)], now: now)
+        let upgradedHistory = SensorHistory(defaults: migrationDefaults, calendar: cal)
+        upgradedHistory.setConnectionScope("ha:http://192.168.1.10:8123")
+        #expect(upgradedHistory.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 19.5)
+        upgradedHistory.setConnectionScope("ha:http://192.168.1.20:8123")
+        #expect(upgradedHistory.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == nil)
+
+        // Case-sensitive reverse-proxy URL paths stay distinct while scheme/host normalize case-insensitively.
+        #expect(
+            HAWebSocketProvider.canonicalHistoryScopeURL("HTTPS://MyHost.LOCAL:8123/HomeA/")
+                == "https://myhost.local:8123/HomeA"
+        )
+        #expect(
+            HAWebSocketProvider.canonicalHistoryScopeURL("https://myhost.local:8123/HomeA")
+                != HAWebSocketProvider.canonicalHistoryScopeURL("https://myhost.local:8123/homea")
+        )
     }
 
     @Test("MiotSynthesizer resolves temperature and humidity property keys from MIoT spec")
