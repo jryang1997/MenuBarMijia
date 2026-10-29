@@ -421,6 +421,8 @@ public final class HomeStore {
     /// Bumped to ask the command bar to start or toggle live speech recognition.
     public internal(set) var assistantVoiceRequest: Int = 0
     public internal(set) var assistantState: AssistantState = .idle
+    /// Receipt for the latest command, cleared as soon as the reply resets (#93).
+    public internal(set) var lastAssistantReceipt: AssistantExecutionReceipt?
     /// A command or suggestion request waiting for the user to allow sending it to a cloud AI service (#20).
     public internal(set) var pendingCloudConsent: PendingCloudConsent?
     public internal(set) var assistantSuggestions: [AssistantSuggestion] = []

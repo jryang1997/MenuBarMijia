@@ -464,6 +464,72 @@ struct AssistantTests {
         #expect(store.assistantState == .done("晚安"))
     }
 
+    @Test("runAssistantCommand records a local execution receipt")
+    @MainActor
+    func storeRecordsLocalReceipt() async throws {
+        let (store, _) = try await makeStore()
+        _ = await store.runAssistantCommand("打开书房灯")
+        let receipt = try #require(store.lastAssistantReceipt)
+        #expect(receipt.route == .localRule)
+        #expect(receipt.elapsedMilliseconds >= 0)
+        #expect(receipt.usedHabitContext == false)
+    }
+
+    @Test("runAssistantCommand records a model execution receipt")
+    @MainActor
+    func storeRecordsModelReceipt() async throws {
+        let (store, mock) = try await makeStore()
+        let content = #"{"actions":[{"device":"s2","op":"scene","value":null},{"device":"d4","op":"power","value":false}],"reply":"晚安"}"#
+        store.assistantResolverOverride = ModelIntentResolver(config: AssistantConfig(model: "glm-5.1"), transport: { request in
+            let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]]])
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+
+        _ = await store.runAssistantCommand("我要睡觉了")
+        let receipt = try #require(store.lastAssistantReceipt)
+        #expect(receipt.route == .aiModel)
+        #expect(receipt.elapsedMilliseconds >= 0)
+        #expect(receipt.usedHabitContext == false)
+        let executed = await mock.executedCommands
+        #expect(executed.count == 2)
+    }
+
+    @Test("A model command that receives habit context marks the receipt")
+    @MainActor
+    func storeRecordsHabitContext() async throws {
+        let (store, _) = try await makeStore()
+        store.isHabitLearningEnabled = true
+        var memory = store.userHabitMemory
+        memory.record(
+            utterance: "我要睡觉了",
+            intents: [DeviceIntent(targetId: "dev_bedside", operation: .power(false))],
+            devices: store.devices,
+            scenes: store.scenes
+        )
+        store.userHabitMemory = memory
+        let content = #"{"actions":[{"device":"s2","op":"scene","value":null},{"device":"d4","op":"power","value":false}],"reply":"晚安"}"#
+        store.assistantResolverOverride = ModelIntentResolver(config: AssistantConfig(model: "glm-5.1"), transport: { request in
+            let data = try JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": content]]]])
+            return (data, HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        })
+
+        _ = await store.runAssistantCommand("我要睡觉了")
+        let receipt = try #require(store.lastAssistantReceipt)
+        #expect(receipt.route == .aiModel)
+        #expect(receipt.usedHabitContext == true)
+        #expect(receipt.habitSummary?.isEmpty == false)
+    }
+
+    @Test("The receipt clears when the assistant reply resets")
+    @MainActor
+    func receiptClearsOnIdle() async throws {
+        let (store, _) = try await makeStore()
+        _ = await store.runAssistantCommand("打开书房灯")
+        #expect(store.lastAssistantReceipt != nil)
+        store.dismissAssistantBar()
+        #expect(store.lastAssistantReceipt == nil)
+    }
+
     @Test("runAssistantCommand rolls back and reports failure when the provider rejects")
     @MainActor
     func storeRollsBackOnFailure() async throws {

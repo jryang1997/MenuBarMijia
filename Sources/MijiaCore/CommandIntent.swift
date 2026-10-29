@@ -66,6 +66,33 @@ public enum AssistantState: Equatable, Sendable {
     case awaitingChoice(String)
 }
 
+/// How one assistant command was resolved and executed, shown next to its reply (#93).
+public struct AssistantExecutionReceipt: Equatable, Sendable {
+    public enum Route: String, Equatable, Sendable {
+        case localRule
+        case aiModel
+    }
+
+    public var route: Route
+    public var elapsedMilliseconds: Int
+    /// True when the resolver received learned habit context for this command.
+    public var usedHabitContext: Bool
+    /// The habit summary the resolver saw; nil when no habit context was used.
+    public var habitSummary: String?
+
+    public init(
+        route: Route,
+        elapsedMilliseconds: Int,
+        usedHabitContext: Bool = false,
+        habitSummary: String? = nil
+    ) {
+        self.route = route
+        self.elapsedMilliseconds = max(0, elapsedMilliseconds)
+        self.usedHabitContext = usedHabitContext
+        self.habitSummary = habitSummary
+    }
+}
+
 /// The first request to a cloud AI service waits for the user's OK, so they see once what is sent and to whom (#20).
 public struct PendingCloudConsent: Equatable, Sendable {
     /// The full command to run once allowed; nil when the user asked for proactive suggestions.
