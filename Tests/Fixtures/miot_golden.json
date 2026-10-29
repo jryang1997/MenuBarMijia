@@ -128,6 +128,14 @@
           "type": "urn:miot-spec-v2:service:power-consumption:0000780E:cuco-v3:1",
           "properties": [
             {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:power-consumption:0000002F:cuco-v3:1",
+              "format": "uint16",
+              "access": ["read"],
+              "value-range": [0, 65535, 1],
+              "comment": "耗电量（单位:0,01Kwh）"
+            },
+            {
               "iid": 6,
               "type": "urn:miot-spec-v2:property:electric-power:00000066:cuco-v3:1",
               "format": "float",
@@ -436,6 +444,7 @@
     { "did": "did_ac", "siid": 3, "piid": 2, "value": 1 },
     { "did": "did_ac", "siid": 4, "piid": 7, "value": 27.2 },
     { "did": "did_plug", "siid": 2, "piid": 1, "value": true },
+    { "did": "did_plug", "siid": 3, "piid": 1, "value": 185 },
     { "did": "did_plug", "siid": 3, "piid": 6, "value": 48.5 },
     { "did": "did_plug", "siid": 7, "piid": 1, "value": 1 },
     { "did": "did_fan", "siid": 2, "piid": 1, "value": true },
@@ -494,6 +503,7 @@
       "switchEntityId": "miot:did_plug:2",
       "isOn": true,
       "powerWatts": 48.5,
+      "energyKwh": 1.85,
       "childLockEntityId": "miot:did_plug:7",
       "isChildLocked": true
     },
@@ -571,6 +581,7 @@
     "did_plug": [
       { "did": "did_plug", "siid": 2, "piid": 1 },
       { "did": "did_plug", "siid": 3, "piid": 6 },
+      { "did": "did_plug", "siid": 3, "piid": 1 },
       { "did": "did_plug", "siid": 7, "piid": 1 }
     ],
     "did_fan": [

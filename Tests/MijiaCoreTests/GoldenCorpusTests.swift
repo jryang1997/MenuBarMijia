@@ -83,6 +83,7 @@ struct GoldenCorpusTests {
             let switchEntityId: String
             let isOn: Bool
             let powerWatts: Double?
+            let energyKwh: Double?
             let childLockEntityId: String?
             let isChildLocked: Bool
         }
@@ -177,7 +178,7 @@ struct GoldenCorpusTests {
                         switchEntityId: p.switchEntityId,
                         isOn: p.isOn,
                         powerWatts: p.powerWatts,
-                        energyKwh: nil,
+                        energyKwh: p.energyKwh,
                         childLockEntityId: p.childLockEntityId,
                         isChildLocked: p.isChildLocked
                     )

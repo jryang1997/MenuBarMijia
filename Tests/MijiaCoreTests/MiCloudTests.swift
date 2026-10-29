@@ -303,6 +303,53 @@ struct MiotSynthesizerTests {
         ])
     }
 
+    @Test("Plug cumulative energy maps explicit MIoT kWh, 0.01kWh, and Wh counters while ignoring untagged integers (#62)")
+    func plugEnergyFromSpec() {
+        let onProp = MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:on:00000006:test:1", format: "bool", access: ["read", "write"])
+        let switchService = MiotService(iid: 2, type: "urn:miot-spec-v2:service:switch:0000780C:test:1", properties: [onProp])
+
+        let centiKwhSpec = MiotDeviceSpec(type: "urn:miot-spec-v2:device:outlet:0000A002:cuco-v3:2", services: [
+            switchService,
+            MiotService(iid: 11, type: "urn:miot-spec-v2:service:power-consumption:0000780E:cuco-v3:1", properties: [
+                MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:power-consumption:0000002F:cuco-v3:1", format: "uint16", access: ["read"], comment: "耗电量（单位:0,01Kwh）"),
+            ]),
+        ])
+        let floatKwhSpec = MiotDeviceSpec(type: "urn:miot-spec-v2:device:outlet:0000A002:xiaomi-2pro:1", services: [
+            switchService,
+            MiotService(iid: 3, type: "urn:miot-spec-v2:service:power-consumption:0000780E:xiaomi-2pro:1", properties: [
+                MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:power-consumption:0000002F:xiaomi-2pro:1", format: "float", access: ["read"], unit: "kWh"),
+            ]),
+        ])
+        let whSpec = MiotDeviceSpec(type: "urn:miot-spec-v2:device:outlet:0000A002:wh-plug:1", services: [
+            switchService,
+            MiotService(iid: 3, type: "urn:miot-spec-v2:service:power-consumption:0000780E:wh-plug:1", properties: [
+                MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:power-consumption:0000002F:wh-plug:1", format: "uint32", access: ["read"], unit: "watt-hour"),
+            ]),
+        ])
+
+        let home = MiotSynthesizer.synthesize(
+            devices: [
+                MiDeviceRecord(did: "p1", name: "插座A", model: "cuco.v3", isOnline: true),
+                MiDeviceRecord(did: "p2", name: "插座B", model: "xiaomi.2pro", isOnline: true),
+                MiDeviceRecord(did: "p3", name: "插座C", model: "wh.plug", isOnline: true),
+            ],
+            rooms: [],
+            specs: ["cuco.v3": centiKwhSpec, "xiaomi.2pro": floatKwhSpec, "wh.plug": whSpec],
+            values: [
+                MiotFixtures.key("p1", 2, 1): .bool(true),
+                MiotFixtures.key("p1", 11, 1): .number(246),
+                MiotFixtures.key("p2", 2, 1): .bool(true),
+                MiotFixtures.key("p2", 3, 1): .number(3.75),
+                MiotFixtures.key("p3", 2, 1): .bool(false),
+                MiotFixtures.key("p3", 3, 1): .number(1500),
+            ]
+        )
+        let byId = Dictionary(uniqueKeysWithValues: home.devices.map { ($0.id, $0) })
+        if case .plug(let a) = byId["p1"]?.kind { #expect(a.energyKwh == 2.46) } else { Issue.record("expected plug p1") }
+        if case .plug(let b) = byId["p2"]?.kind { #expect(b.energyKwh == 3.75) } else { Issue.record("expected plug p2") }
+        if case .plug(let c) = byId["p3"]?.kind { #expect(c.energyKwh == 1.5) } else { Issue.record("expected plug p3") }
+    }
+
     @Test("Split keys of a multi-key Mesh panel become separate plugs addressed at the parent did")
     func splitPanelKeys() throws {
         let onProp = MiotProperty(iid: 1, type: "urn:miot-spec-v2:property:on:00000006:lemesh-sw2f12:1", format: "bool", access: ["read", "write", "notify"])

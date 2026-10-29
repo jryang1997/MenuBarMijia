@@ -619,6 +619,8 @@ export interface MiotProperty {
   readonly access: readonly string[];
   readonly valueRange?: readonly number[];
   readonly valueList?: readonly MiotValueListItem[];
+  readonly unit?: string;
+  readonly comment?: string;
 }
 
 export interface MiotAction {
@@ -730,6 +732,9 @@ export function parseMiotDeviceSpec(raw: unknown): MiotDeviceSpec | null {
             }))
         : undefined;
 
+      const unit = typeof pObj["unit"] === "string" ? pObj["unit"] : undefined;
+      const comment = typeof pObj["comment"] === "string" ? pObj["comment"] : undefined;
+
       properties.push({
         iid: pIid,
         type: pType,
@@ -737,6 +742,8 @@ export function parseMiotDeviceSpec(raw: unknown): MiotDeviceSpec | null {
         access,
         ...(valueRange ? { valueRange } : {}),
         ...(valueList ? { valueList } : {}),
+        ...(unit !== undefined ? { unit } : {}),
+        ...(comment !== undefined ? { comment } : {}),
       });
     }
 
@@ -1103,6 +1110,32 @@ function miotBool(val: unknown): boolean | null {
   return null;
 }
 
+/**
+ * Scale factor that converts a MIoT `power-consumption` reading into kWh (#62).
+ * Returns `null` when an integer property has neither a recognized `unit` nor an explicit
+ * scale in `comment` (e.g. "0.01kwh"), so ambiguous raw integers are never guessed.
+ */
+function energyScale(prop: MiotProperty): number | null {
+  const unit = (prop.unit ?? "").trim().toLowerCase();
+  const comment = (prop.comment ?? "")
+    .toLowerCase()
+    .replaceAll(",", ".")
+    .replaceAll(" ", "");
+  if (unit === "wh" || unit === "watt-hour" || comment.includes("0.001kwh")) {
+    return 0.001;
+  }
+  if (comment.includes("0.01kwh")) {
+    return 0.01;
+  }
+  if (unit === "kwh" || unit === "kilowatt-hour" || comment.includes("1kwh")) {
+    return 1.0;
+  }
+  if (prop.format === "float" && (unit === "" || unit === "none")) {
+    return 1.0;
+  }
+  return null;
+}
+
 export const MiotSynthesizer = {
   synthesize(
     devices: readonly MiDeviceRecord[],
@@ -1248,8 +1281,10 @@ export const MiotSynthesizer = {
     }
     if (!primaryService) return null;
 
-    const readProp = (s: MiotService, short: string) => {
-      const prop = s.properties.find((p) => miotShortName(p.type) === short && p.access.includes("read"));
+    const readProp = (s: MiotService, short: string, predicate?: (p: MiotProperty) => boolean) => {
+      const prop = s.properties.find(
+        (p) => miotShortName(p.type) === short && p.access.includes("read") && (!predicate || predicate(p))
+      );
       if (!prop) return null;
       const val = values.get(propKeyString({ did, siid: s.iid, piid: prop.iid }));
       return { service: s, prop, val };
@@ -1264,12 +1299,12 @@ export const MiotSynthesizer = {
           val: values.get(propKeyString({ did, siid: s.iid, piid: prop.iid })),
         }));
 
-    const readFirst = (services: readonly MiotService[], short: string) => {
+    const readFirst = (services: readonly MiotService[], short: string, predicate?: (p: MiotProperty) => boolean) => {
       const seen = new Set<number>();
       for (const s of services) {
         if (seen.has(s.iid)) continue;
         seen.add(s.iid);
-        const found = readProp(s, short);
+        const found = readProp(s, short, predicate);
         if (found) return found;
       }
       return null;
@@ -1468,10 +1503,17 @@ export const MiotSynthesizer = {
       primaryService.properties.some((p) => miotShortName(p.type) === "on")
     ) {
       const on = readProp(primaryService, "on");
-      const power = readFirst(
-        [...spec.services.filter((s) => miotShortName(s.type) === "power-consumption"), ...spec.services],
-        "electric-power"
-      );
+      const consumptionServices = [
+        ...spec.services.filter((s) => miotShortName(s.type) === "power-consumption"),
+        ...spec.services,
+      ];
+      const power = readFirst(consumptionServices, "electric-power");
+      const energy = readFirst(consumptionServices, "power-consumption", (p) => energyScale(p) !== null);
+      const energyScaleVal = energy ? energyScale(energy.prop) : null;
+      const energyKwh =
+        energy && typeof energy.val === "number" && Number.isFinite(energy.val) && energy.val >= 0 && energyScaleVal !== null
+          ? Math.round(energy.val * energyScaleVal * 1000) / 1000
+          : null;
       const lockSvc = spec.services.find((s) => miotShortName(s.type) === "physical-controls-locked");
       const lock = lockSvc ? readProp(lockSvc, "physical-controls-locked") : null;
 
@@ -1480,6 +1522,7 @@ export const MiotSynthesizer = {
         switchEntityId: makeMiotAddress(did, primaryService.iid),
         isOn: miotBool(on?.val) ?? false,
         powerWatts: typeof power?.val === "number" ? power.val : null,
+        ...(energyKwh !== null ? { energyKwh } : {}),
         childLockEntityId: lock ? makeMiotAddress(did, lock.service.iid) : null,
         isChildLocked: miotBool(lock?.val) ?? false,
       };
