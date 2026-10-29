@@ -22,6 +22,7 @@ public struct ControlCenterPanel: View {
     @State private var lastSwapAt: Date = .distantPast
     @State private var pressTask: Task<Void, Never>?
     @State private var pressCancelled = false
+    @State private var pendingScrollToDeviceId: String?
     @AppStorage(GroupPrefs.groupsKey) private var groupsRaw: String = "[]"
     @AppStorage(GroupPrefs.mapKey) private var groupMapRaw: String = "{}"
     @AppStorage(GroupPrefs.collapsedKey) private var collapsedRaw: String = "[]"
@@ -222,46 +223,58 @@ public struct ControlCenterPanel: View {
             Divider()
                 .overlay(Color.primary.opacity(0.07))
 
-            ScrollView(.vertical, showsIndicators: false) {
-                let sections = pageSections
-                let quickIndexMap = Dictionary(
-                    uniqueKeysWithValues: sections.flatMap(\.devices).prefix(9).enumerated().map { ($1.id, $0 + 1) }
-                )
+            ScrollViewReader { scrollProxy in
+                ScrollView(.vertical, showsIndicators: false) {
+                    let sections = pageSections
+                    let quickIndexMap = Dictionary(
+                        uniqueKeysWithValues: sections.flatMap(\.devices).prefix(9).enumerated().map { ($1.id, $0 + 1) }
+                    )
 
-                VStack(alignment: .leading, spacing: 11) {
-                    if search.isSearching {
-                        searchResultsList(results: searchResults)
-                    } else if store.filteredDevices.isEmpty {
-                        emptyStateView
-                    } else {
-                        ForEach(sections) { section in
-                            if section.title != nil {
-                                groupHeader(section)
-                            }
-                            if !collapsedGroups.contains(collapseKey(section)) {
-                                deviceCollectionView(
-                                    devices: section.devices,
-                                    showRoomBadge: store.selectedRoomId == nil,
-                                    quickIndexMap: quickIndexMap
-                                )
-                                .transition(.asymmetric(
-                                    insertion: .opacity.combined(with: .offset(y: -8)),
-                                    removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
-                                ))
+                    VStack(alignment: .leading, spacing: 11) {
+                        if search.isSearching {
+                            searchResultsList(results: searchResults)
+                        } else if store.filteredDevices.isEmpty {
+                            emptyStateView
+                        } else {
+                            ForEach(sections) { section in
+                                if section.title != nil {
+                                    groupHeader(section)
+                                }
+                                if !collapsedGroups.contains(collapseKey(section)) {
+                                    deviceCollectionView(
+                                        devices: section.devices,
+                                        showRoomBadge: store.selectedRoomId == nil,
+                                        quickIndexMap: quickIndexMap
+                                    )
+                                    .transition(.asymmetric(
+                                        insertion: .opacity.combined(with: .offset(y: -8)),
+                                        removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+                                    ))
+                                }
                             }
                         }
                     }
+                    .coordinateSpace(name: TileSpace.name)
+                    // Cards stop hit-testing in edit mode; the container must still catch the press.
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(tileDragGesture)
+                    .onPreferenceChange(TileFramesKey.self) { frames in
+                        if frames != tileFrames { tileFrames = frames }
+                    }
+                    .padding(.horizontal, 13)
+                    .padding(.top, 10)
+                    .padding(.bottom, store.undoBanner != nil || store.toastNotice != nil ? 48 : 12)
                 }
-                .coordinateSpace(name: TileSpace.name)
-                // Cards stop hit-testing in edit mode; the container must still catch the press.
-                .contentShape(Rectangle())
-                .simultaneousGesture(tileDragGesture)
-                .onPreferenceChange(TileFramesKey.self) { frames in
-                    if frames != tileFrames { tileFrames = frames }
+                .onChange(of: pendingScrollToDeviceId) { _, targetId in
+                    guard let targetId else { return }
+                    pendingScrollToDeviceId = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(80))
+                        withAnimation(AppleMotion.snappySpring) {
+                            scrollProxy.scrollTo(targetId, anchor: .center)
+                        }
+                    }
                 }
-                .padding(.horizontal, 13)
-                .padding(.top, 10)
-                .padding(.bottom, store.undoBanner != nil || store.toastNotice != nil ? 48 : 12)
             }
             .frame(maxHeight: .infinity)
 
@@ -1148,6 +1161,38 @@ public struct ControlCenterPanel: View {
             if skin.isClassic {
                 capsule
                     .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
+            }
+        }
+        .contentShape(capsule)
+        .onTapGesture {
+            handleEnvironmentChipTap(env)
+        }
+        .skinHelp(L10n.tr("点击定位并展开温湿度折线", "Click to locate and expand sensor chart"))
+    }
+
+    private func handleEnvironmentChipTap(_ env: EnvironmentReading) {
+        withAnimation(AppleMotion.snappySpring) {
+            if search.isSearching {
+                search.clear()
+            }
+            if store.hiddenDeviceIds.contains(env.id) {
+                store.unhideDevice(env.id)
+            }
+            if store.selectedRoomId != nil,
+               !store.filteredDevices.contains(where: { $0.id == env.id }) {
+                store.selectedRoomId = nil
+            }
+            for section in pageSections where section.devices.contains(where: { $0.id == env.id }) {
+                let key = collapseKey(section)
+                var set = collapsedGroups
+                if set.contains(key) {
+                    set.remove(key)
+                    collapsedRaw = GroupPrefs.encode(set)
+                }
+            }
+            store.toggleExpanded(env.id)
+            if store.expandedDeviceId == env.id {
+                pendingScrollToDeviceId = env.id
             }
         }
     }

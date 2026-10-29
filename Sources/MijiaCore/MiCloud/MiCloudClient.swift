@@ -112,6 +112,25 @@ public protocol MiCloudAPI: Sendable {
     func getProps(_ keys: [MiotPropKey]) async throws -> [MiotPropKey: JSONValue]
     func setProps(_ writes: [MiotPropWrite]) async throws
     func action(_ call: MiotActionCall) async throws
+    func sensorHistory(
+        did: String,
+        temperatureKey: String?,
+        humidityKey: String?,
+        window: SensorHistoryWindow,
+        now: Date
+    ) async throws -> [SensorHistorySample]
+}
+
+extension MiCloudAPI {
+    public func sensorHistory(
+        did: String,
+        temperatureKey: String?,
+        humidityKey: String?,
+        window: SensorHistoryWindow,
+        now: Date
+    ) async throws -> [SensorHistorySample] {
+        []
+    }
 }
 
 // MARK: - Live Client
@@ -122,6 +141,16 @@ public actor MiCloudClient: MiCloudAPI {
     private let transport: any MiHTTPTransport
     private let userAgent: String
     public static let propChunkSize = 100
+    private var resolvedHistoryRouteByMetric: [String: HistoryRoute] = [:]
+
+    private struct HistoryRoute: Equatable, Sendable {
+        enum Endpoint: Equatable, Sendable {
+            case statistics
+            case deviceData(group: String?)
+        }
+        var endpoint: Endpoint
+        var key: String
+    }
 
     public init(session: MiSession, transport: any MiHTTPTransport = URLSessionMiTransport()) {
         self.session = session
@@ -364,5 +393,342 @@ public actor MiCloudClient: MiCloudAPI {
                 throw MiCloudError.api(code: code, message: "设备未响应或离线")
             }
         }
+    }
+
+    // MARK: - Sensor History (`v2/user/statistics` + `user/get_user_device_data`)
+
+    public struct MetricSamplePoint: Equatable, Sendable {
+        public let timestamp: Date
+        public let value: Double
+        public let minValue: Double
+        public let maxValue: Double
+
+        public init(timestamp: Date, value: Double, minValue: Double? = nil, maxValue: Double? = nil) {
+            self.timestamp = timestamp
+            self.value = value
+            self.minValue = minValue ?? value
+            self.maxValue = maxValue ?? value
+        }
+    }
+
+    public func sensorHistory(
+        did: String,
+        temperatureKey: String?,
+        humidityKey: String?,
+        window: SensorHistoryWindow,
+        now: Date
+    ) async throws -> [SensorHistorySample] {
+        let timeEnd = Int(now.timeIntervalSince1970)
+        let spanSeconds = window == .last24Hours ? 25 * 3600 : 8 * 86400
+        let timeStart = max(0, timeEnd - spanSeconds)
+
+        let tempPoints = try await fetchMetricSeries(
+            did: did,
+            miotKey: temperatureKey,
+            isTemperature: true,
+            window: window,
+            timeStart: timeStart,
+            timeEnd: timeEnd
+        )
+        let humPoints = try await fetchMetricSeries(
+            did: did,
+            miotKey: humidityKey,
+            isTemperature: false,
+            window: window,
+            timeStart: timeStart,
+            timeEnd: timeEnd
+        )
+        return Self.combineMetricSeries(temperature: tempPoints, humidity: humPoints)
+    }
+
+    private func fetchMetricSeries(
+        did: String,
+        miotKey: String?,
+        isTemperature: Bool,
+        window: SensorHistoryWindow,
+        timeStart: Int,
+        timeEnd: Int
+    ) async throws -> [MetricSamplePoint] {
+        let cacheId = "\(did)|\(isTemperature ? "temp" : "hum")|\(window.rawValue)"
+        if let cachedRoute = resolvedHistoryRouteByMetric[cacheId] {
+            let pts = try await queryHistoryRoute(
+                cachedRoute,
+                did: did,
+                isTemperature: isTemperature,
+                window: window,
+                timeStart: timeStart,
+                timeEnd: timeEnd
+            )
+            if !pts.isEmpty { return pts }
+        }
+
+        let statCandidates = Self.candidateKeysForStatistics(miotKey: miotKey, isTemperature: isTemperature)
+        for key in statCandidates {
+            let route = HistoryRoute(endpoint: .statistics, key: key)
+            let pts = try await queryHistoryRoute(
+                route,
+                did: did,
+                isTemperature: isTemperature,
+                window: window,
+                timeStart: timeStart,
+                timeEnd: timeEnd
+            )
+            if !pts.isEmpty {
+                resolvedHistoryRouteByMetric[cacheId] = route
+                return pts
+            }
+        }
+
+        let dataCandidates = Self.candidateKeysForDeviceData(miotKey: miotKey, isTemperature: isTemperature)
+        let groups: [String?] = [window == .last24Hours ? "hour" : "day", "raw"]
+        for group in groups {
+            for key in dataCandidates {
+                let route = HistoryRoute(endpoint: .deviceData(group: group), key: key)
+                let pts = try await queryHistoryRoute(
+                    route,
+                    did: did,
+                    isTemperature: isTemperature,
+                    window: window,
+                    timeStart: timeStart,
+                    timeEnd: timeEnd
+                )
+                if !pts.isEmpty {
+                    resolvedHistoryRouteByMetric[cacheId] = route
+                    return pts
+                }
+            }
+        }
+        return []
+    }
+
+    private func queryHistoryRoute(
+        _ route: HistoryRoute,
+        did: String,
+        isTemperature: Bool,
+        window: SensorHistoryWindow,
+        timeStart: Int,
+        timeEnd: Int
+    ) async throws -> [MetricSamplePoint] {
+        do {
+            let result: JSONValue
+            switch route.endpoint {
+            case .statistics:
+                let dataType = window == .last24Hours ? "stat_hour_v3" : "stat_day_v3"
+                let limit = window == .last24Hours ? 48 : 14
+                result = try await request("v2/user/statistics", data: .object([
+                    "did": .string(did),
+                    "key": .string(route.key),
+                    "data_type": .string(dataType),
+                    "time_start": .number(Double(timeStart)),
+                    "time_end": .number(Double(timeEnd)),
+                    "limit": .number(Double(limit)),
+                ]))
+            case .deviceData(let group):
+                var payload: [String: JSONValue] = [
+                    "uid": .string(session.userId),
+                    "did": .string(did),
+                    "type": .string("prop"),
+                    "key": .string(route.key),
+                    "time_start": .number(Double(timeStart)),
+                    "time_end": .number(Double(timeEnd)),
+                    "limit": .number(group == "raw" ? 200 : 48),
+                ]
+                if let group {
+                    payload["group"] = .string(group)
+                }
+                result = try await request("user/get_user_device_data", data: .object(payload))
+            }
+            return Self.parseHistoryMetricPoints(result, key: route.key, isTemperature: isTemperature)
+        } catch MiCloudError.sessionExpired {
+            throw MiCloudError.sessionExpired
+        } catch {
+            return []
+        }
+    }
+
+    static func candidateKeysForStatistics(miotKey: String?, isTemperature: Bool) -> [String] {
+        var keys: [String] = []
+        if let miotKey, !miotKey.isEmpty {
+            keys.append(miotKey)
+        } else {
+            keys.append(isTemperature ? "2.1" : "2.2")
+        }
+        keys.append(isTemperature ? "4c01" : "4c08")
+        var seen: Set<String> = []
+        return keys.filter { seen.insert($0).inserted }
+    }
+
+    static func candidateKeysForDeviceData(miotKey: String?, isTemperature: Bool) -> [String] {
+        var keys: [String] = []
+        if let miotKey, !miotKey.isEmpty {
+            keys.append(miotKey)
+            keys.append("prop.\(miotKey)")
+        }
+        if isTemperature {
+            keys += ["4c01", "4100", "1004", "temperature"]
+        } else {
+            keys += ["4c08", "4102", "1006", "humidity", "relative-humidity"]
+        }
+        var seen: Set<String> = []
+        return keys.filter { seen.insert($0).inserted }
+    }
+
+    /// Parses Xiaomi Cloud `v2/user/statistics` or `user/get_user_device_data` responses into time-sorted points.
+    public static func parseHistoryMetricPoints(
+        _ result: JSONValue,
+        key: String,
+        isTemperature: Bool
+    ) -> [MetricSamplePoint] {
+        let items: [JSONValue]
+        if let array = result.arrayValue {
+            items = array
+        } else if let nested = result["list"]?.arrayValue ?? result["data"]?.arrayValue ?? result["result"]?.arrayValue {
+            items = nested
+        } else {
+            return []
+        }
+
+        var points: [MetricSamplePoint] = []
+        points.reserveCapacity(items.count)
+
+        for item in items {
+            guard let rawTime = item["time"]?.doubleValue ?? item["timestamp"]?.doubleValue,
+                  rawTime > 0,
+                  let rawValue = item["value"] else { continue }
+            let seconds = rawTime > 10_000_000_000 ? rawTime / 1000.0 : rawTime
+            let decoded = decodeHistoryValues(rawValue, key: key, isTemperature: isTemperature)
+            guard !decoded.isEmpty else { continue }
+            let lo = decoded.min()!
+            let hi = decoded.max()!
+            let avg = ((decoded.reduce(0, +) / Double(decoded.count)) * 10).rounded() / 10
+            points.append(MetricSamplePoint(
+                timestamp: Date(timeIntervalSince1970: seconds),
+                value: avg,
+                minValue: lo,
+                maxValue: hi
+            ))
+        }
+        points.sort { $0.timestamp < $1.timestamp }
+        return points
+    }
+
+    static func decodeHistoryValues(_ raw: JSONValue, key: String, isTemperature: Bool) -> [Double] {
+        let numbers = extractRawNumbers(raw, key: key)
+        let usesTenthsScale = ["4100", "4102", "1004", "1006"].contains(key.lowercased())
+        return numbers.compactMap { num -> Double? in
+            guard num.isFinite else { return nil }
+            var adjusted = num
+            if usesTenthsScale, abs(adjusted) > 85, adjusted.rounded() == adjusted {
+                adjusted /= 10.0
+            }
+            if isTemperature {
+                return SensorHistory.sanitizeTemperature(adjusted)
+            } else {
+                return SensorHistory.sanitizeHumidity(adjusted)
+            }
+        }
+    }
+
+    private static func extractRawNumbers(_ raw: JSONValue, key: String) -> [Double] {
+        switch raw {
+        case .number(let d):
+            return [d]
+        case .array(let arr):
+            return arr.flatMap { extractRawNumbers($0, key: key) }
+        case .object(let obj):
+            if let v = obj["avg"] ?? obj["value"] ?? obj["temp"] ?? obj["humidity"] {
+                return extractRawNumbers(v, key: key)
+            }
+            return []
+        case .string(let s):
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            guard !trimmed.isEmpty else { return [] }
+            if (trimmed.hasPrefix("[") && trimmed.hasSuffix("]")) || (trimmed.hasPrefix("{") && trimmed.hasSuffix("}")),
+               let data = trimmed.data(using: .utf8),
+               let parsed = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                return extractRawNumbers(parsed, key: key)
+            }
+            let lowerKey = key.lowercased()
+            if (lowerKey == "4c01" || lowerKey == "4c08"),
+               let floatVal = decodeLittleEndianFloat32Hex(trimmed) {
+                return [floatVal]
+            }
+            if ["4100", "4102", "1004", "1006"].contains(lowerKey),
+               trimmed.range(of: ".", options: .literal) == nil,
+               let int16Tenths = decodeLittleEndianInt16Hex(trimmed) {
+                return [int16Tenths]
+            }
+            if let d = Double(trimmed) {
+                return [d]
+            }
+            if let floatVal = decodeLittleEndianFloat32Hex(trimmed) {
+                return [floatVal]
+            }
+            return []
+        case .bool, .null:
+            return []
+        }
+    }
+
+    /// Decodes an 8-character hex string (e.g. `"cdccbc41"` from MiBeacon v5 `0x4C01`/`0x4C08`) as a
+    /// little-endian IEEE 754 `Float32`.
+    static func decodeLittleEndianFloat32Hex(_ hex: String) -> Double? {
+        guard hex.count == 8, hex.allSatisfy(\.isHexDigit) else { return nil }
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(4)
+        var idx = hex.startIndex
+        for _ in 0..<4 {
+            let next = hex.index(idx, offsetBy: 2)
+            guard let b = UInt8(hex[idx..<next], radix: 16) else { return nil }
+            bytes.append(b)
+            idx = next
+        }
+        let bits = UInt32(bytes[0])
+            | (UInt32(bytes[1]) << 8)
+            | (UInt32(bytes[2]) << 16)
+            | (UInt32(bytes[3]) << 24)
+        let f = Float(bitPattern: bits)
+        guard f.isFinite else { return nil }
+        return ((Double(f) * 10).rounded()) / 10
+    }
+
+    /// Decodes a 4-character hex string containing at least one a-f hex letter (or leading zero byte)
+    /// as a little-endian `Int16` scaled by 0.1 (MiBeacon v2/v3 `0x1004`/`0x1006`).
+    static func decodeLittleEndianInt16Hex(_ hex: String) -> Double? {
+        guard hex.count == 4, hex.allSatisfy(\.isHexDigit) else { return nil }
+        let hasHexLetter = hex.contains { ("a"..."f").contains($0.lowercased()) }
+        let hasTrailingZeroHighByte = hex.hasSuffix("00") || hex.hasSuffix("01") || hex.hasSuffix("02")
+        guard hasHexLetter || hasTrailingZeroHighByte else { return nil }
+        let b0 = UInt8(hex.prefix(2), radix: 16)
+        let b1 = UInt8(hex.suffix(2), radix: 16)
+        guard let b0, let b1 else { return nil }
+        let raw = Int16(bitPattern: UInt16(b0) | (UInt16(b1) << 8))
+        return Double(raw) / 10.0
+    }
+
+    static func combineMetricSeries(
+        temperature: [MetricSamplePoint],
+        humidity: [MetricSamplePoint]
+    ) -> [SensorHistorySample] {
+        var samples: [SensorHistorySample] = []
+        samples.reserveCapacity(temperature.count + humidity.count)
+        for pt in temperature {
+            samples.append(SensorHistorySample(
+                timestamp: pt.timestamp,
+                temperature: pt.value,
+                minTemperature: pt.minValue,
+                maxTemperature: pt.maxValue
+            ))
+        }
+        for pt in humidity {
+            samples.append(SensorHistorySample(
+                timestamp: pt.timestamp,
+                humidity: pt.value,
+                minHumidity: pt.minValue,
+                maxHumidity: pt.maxValue
+            ))
+        }
+        return samples
     }
 }

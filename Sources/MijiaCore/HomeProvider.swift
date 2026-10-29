@@ -56,11 +56,14 @@ public protocol HomeProvider: Sendable {
     func refreshNow() async
     /// Tells a polling provider whether the panel is open and the Mac is awake, so it can slow down or pause (#26).
     func setPollingContext(_ context: PollingContext) async
+    /// Fetches historical temperature and humidity readings for `deviceId` over `window`.
+    func fetchSensorHistory(deviceId: String, window: SensorHistoryWindow, now: Date) async -> [SensorHistorySample]
 }
 
 extension HomeProvider {
     /// Push-based providers (Home Assistant) have nothing to slow down.
     public func setPollingContext(_ context: PollingContext) async {}
+    public func fetchSensorHistory(deviceId: String, window: SensorHistoryWindow, now: Date) async -> [SensorHistorySample] { [] }
 }
 
 // MARK: - Live Home Assistant WebSocket + REST Provider

@@ -136,8 +136,15 @@ public struct DeviceCardView: View {
             ClimatePanelModule(device: device, spec: spec, store: store, showRoomBadge: showRoomBadge, forceExpanded: resolvedSize == .panel)
                 .contextMenu { contextMenuItems }
         } else if case .sensor(let spec) = device.kind, !isBentoTile {
-            SensorCardView(device: device, spec: spec, isCompact: isCompactTile, showRoomBadge: showRoomBadge)
-                .contextMenu { contextMenuItems }
+            SensorCardView(
+                device: device,
+                spec: spec,
+                store: store,
+                isCompact: isCompactTile,
+                showRoomBadge: showRoomBadge,
+                forceExpanded: resolvedSize == .panel
+            )
+            .contextMenu { contextMenuItems }
         } else {
             cardBody
         }
@@ -318,6 +325,17 @@ public struct DeviceCardView: View {
                     Label(
                         isExpanded ? L10n.tr("收起详细控制", "Collapse Controls") : L10n.tr("展开详细控制", "Expand Controls"),
                         systemImage: "slider.horizontal.3"
+                    )
+                }
+            } else if case .sensor = device.kind {
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        store.toggleExpanded(device.id)
+                    }
+                } label: {
+                    Label(
+                        isExpanded ? L10n.tr("收起温湿度折线", "Collapse Chart") : L10n.tr("展开温湿度折线", "Expand Chart"),
+                        systemImage: "chart.xyaxis.line"
                     )
                 }
             }

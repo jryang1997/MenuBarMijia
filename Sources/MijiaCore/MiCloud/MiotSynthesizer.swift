@@ -101,6 +101,20 @@ public enum MiotSynthesizer {
         return reader.touched
     }
 
+    /// MIoT `<siid>.<piid>` keys for a sensor's temperature and relative-humidity properties,
+    /// used when querying Xiaomi Cloud's statistics / history endpoints.
+    public static func sensorPropertyKeys(for device: MiDeviceRecord, spec: MiotDeviceSpec) -> (temperature: String?, humidity: String?) {
+        guard let (service, _) = primary(for: device, spec: spec) else { return (nil, nil) }
+        let scopedSpec = specForRecord(device, spec: spec)
+        let reader = MiotReader(did: device.miotDid, spec: scopedSpec, values: [:])
+        let readingServices = [service] + scopedSpec.services(named: "environment") + scopedSpec.services(named: "temperature-humidity-sensor")
+        let temp = reader.first("temperature", in: readingServices)
+        let hum = reader.first("relative-humidity", in: readingServices)
+        let tempKey = temp.map { "\($0.service.iid).\($0.property.iid)" }
+        let humKey = hum.map { "\($0.service.iid).\($0.property.iid)" }
+        return (tempKey, humKey)
+    }
+
     /// Narrows a multi-key panel spec to the switch service controlled by a split key.
     static func specForRecord(_ record: MiDeviceRecord, spec: MiotDeviceSpec) -> MiotDeviceSpec {
         guard record.splitParentDid != nil, let siid = record.splitSiid else { return spec }

@@ -384,4 +384,35 @@ public actor MiCloudProvider: HomeProvider {
         guard let api else { return }
         try? await poll(api, dids: [did])
     }
+
+    public func fetchSensorHistory(
+        deviceId: String,
+        window: SensorHistoryWindow,
+        now: Date
+    ) async -> [SensorHistorySample] {
+        guard let api else { return [] }
+        let record = devices.first { $0.did == deviceId } ?? devices.first { $0.miotDid == deviceId }
+        let did = record?.miotDid ?? deviceId
+        let keys: (temperature: String?, humidity: String?)
+        if let record, let spec = specsByModel[record.model] {
+            keys = MiotSynthesizer.sensorPropertyKeys(for: record, spec: spec)
+        } else {
+            keys = (nil, nil)
+        }
+        do {
+            return try await api.sensorHistory(
+                did: did,
+                temperatureKey: keys.temperature,
+                humidityKey: keys.humidity,
+                window: window,
+                now: now
+            )
+        } catch MiCloudError.sessionExpired {
+            report(MiCloudError.sessionExpired)
+            return []
+        } catch {
+            logger.notice("Sensor history fetch failed for \(did, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+    }
 }
