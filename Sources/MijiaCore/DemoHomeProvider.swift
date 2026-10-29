@@ -51,6 +51,20 @@ public actor MockHomeProvider: HomeProvider {
         self.snapshot = next
         continuation?.yield(.snapshotUpdated(next))
     }
+
+    private var sensorHistoryByDevice: [String: [SensorHistorySample]] = [:]
+
+    public func setSensorHistory(_ samples: [SensorHistorySample], forDevice deviceId: String) {
+        sensorHistoryByDevice[deviceId] = samples
+    }
+
+    public func fetchSensorHistory(
+        deviceId: String,
+        window: SensorHistoryWindow,
+        now: Date
+    ) async -> [SensorHistorySample] {
+        sensorHistoryByDevice[deviceId] ?? []
+    }
 }
 
 // MARK: - Demo Mode (#47)
@@ -391,5 +405,67 @@ public actor DemoHomeProvider: HomeProvider {
             }
         }
         return next
+    }
+
+    public func fetchSensorHistory(
+        deviceId: String,
+        window: SensorHistoryWindow,
+        now: Date
+    ) async -> [SensorHistorySample] {
+        guard let dev = snapshot.devices.first(where: { $0.id == deviceId }),
+              case .sensor(let spec) = dev.kind else {
+            return []
+        }
+        return Self.syntheticSamples(
+            deviceId: deviceId,
+            baseTemp: spec.temperature ?? 24.5,
+            baseHum: spec.humidity ?? 55.0,
+            window: window,
+            now: now
+        )
+    }
+
+    static func syntheticSamples(
+        deviceId: String,
+        baseTemp: Double,
+        baseHum: Double,
+        window: SensorHistoryWindow,
+        now: Date
+    ) -> [SensorHistorySample] {
+        let phase = Double(abs(deviceId.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }) % 12) * 0.5
+        let cal = Calendar.current
+        switch window {
+        case .last24Hours:
+            let comps = cal.dateComponents([.year, .month, .day, .hour], from: now)
+            let curHour = cal.date(from: comps) ?? now
+            return (0..<24).compactMap { offset -> SensorHistorySample? in
+                let deltaHours = offset - 23
+                guard let slot = cal.date(byAdding: .hour, value: deltaHours, to: curHour) else { return nil }
+                let hourOfDay = Double(cal.component(.hour, from: slot))
+                let wave = sin((hourOfDay - 6.0 + phase) / 24.0 * 2.0 * .pi)
+                let isCurrent = deltaHours == 0
+                let t = isCurrent ? baseTemp : ((baseTemp + wave * 1.6) * 10).rounded() / 10
+                let h = isCurrent ? baseHum : min(95, max(20, ((baseHum - wave * 5.5) * 10).rounded() / 10))
+                return SensorHistorySample(timestamp: slot, temperature: t, humidity: h)
+            }
+        case .last7Days:
+            let today = cal.startOfDay(for: now)
+            return (0..<7).compactMap { offset -> SensorHistorySample? in
+                let deltaDays = offset - 6
+                guard let slot = cal.date(byAdding: .day, value: deltaDays, to: today) else { return nil }
+                let wave = sin(Double(offset) * 0.95 + phase)
+                let tAvg = ((baseTemp + wave * 1.2) * 10).rounded() / 10
+                let hAvg = min(95, max(20, ((baseHum - wave * 4.5) * 10).rounded() / 10))
+                return SensorHistorySample(
+                    timestamp: slot,
+                    temperature: tAvg,
+                    minTemperature: ((tAvg - 1.4) * 10).rounded() / 10,
+                    maxTemperature: ((tAvg + 1.5) * 10).rounded() / 10,
+                    humidity: hAvg,
+                    minHumidity: max(15, ((hAvg - 5.0) * 10).rounded() / 10),
+                    maxHumidity: min(98, ((hAvg + 5.0) * 10).rounded() / 10)
+                )
+            }
+        }
     }
 }

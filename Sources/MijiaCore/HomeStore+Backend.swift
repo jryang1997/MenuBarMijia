@@ -190,7 +190,9 @@ extension HomeStore {
             let nextDevices = devicesWithAliases(merged)
             if devices != nextDevices { devices = nextDevices }
             seedDefaultFavoritesIfNeeded()
-            energyHistory.record(devices: devices, now: Date())
+            let sampleNow = Date()
+            energyHistory.record(devices: devices, now: sampleNow)
+            sensorHistory.record(devices: devices, now: sampleNow)
 
             if enableSafetyAlerts, let handler = onSafetyAlert {
                 for alert in evaluateSafetyAlerts(now: Date()) {
@@ -220,6 +222,26 @@ extension HomeStore {
 
     public func originalDeviceName(for deviceId: String) -> String? {
         rawDeviceNames[deviceId] ?? devices.first(where: { $0.id == deviceId })?.name
+    }
+
+    /// Triggers an on-demand provider fetch for `deviceId`'s historical readings when due.
+    public func requestSensorHistory(
+        for deviceId: String,
+        window: SensorHistoryWindow,
+        force: Bool = false,
+        now: Date = Date()
+    ) {
+        if !force {
+            guard sensorHistory.shouldFetchCloud(deviceId: deviceId, window: window, now: now) else { return }
+        }
+        let activeProvider = provider
+        sensorHistory.setLoading(true, deviceId: deviceId, window: window)
+        Task { @MainActor [weak self] in
+            let samples = await activeProvider.fetchSensorHistory(deviceId: deviceId, window: window, now: now)
+            guard let self else { return }
+            self.sensorHistory.setLoading(false, deviceId: deviceId, window: window)
+            self.sensorHistory.mergeCloudSamples(deviceId: deviceId, window: window, samples: samples, now: now)
+        }
     }
 
     public func applyDeviceAliases(_ overrides: [String: String]? = nil) {

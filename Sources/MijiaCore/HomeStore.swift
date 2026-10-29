@@ -205,6 +205,8 @@ public final class HomeStore {
     public var updater: AppUpdater
     /// Local energy history fed by provider snapshots (#62).
     public let energyHistory: EnergyHistory
+    /// Local + cloud merged history for temperature and humidity sensors.
+    public let sensorHistory: SensorHistory
     var updateTask: Task<Void, Never>?
     var activeUpdateAttemptID: UUID?
 
@@ -256,6 +258,7 @@ public final class HomeStore {
         self.isTestEnvironment = isTestEnvironment
         self.updater = updater ?? AppUpdater()
         self.energyHistory = EnergyHistory(defaults: ud)
+        self.sensorHistory = SensorHistory(defaults: ud)
         // ≤1.0.6 mirrored credentials into plain `UserDefaults`; move them into the Keychain before any read (#16).
         if !isTestEnvironment && ud === UserDefaults.standard {
             KeychainHelper.migratePlaintextCredentialsToKeychain(defaults: ud)

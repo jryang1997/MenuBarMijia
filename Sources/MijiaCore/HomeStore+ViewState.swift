@@ -42,7 +42,11 @@ extension HomeStore {
               let dev = devices.first(where: { $0.id == fid }) else { return }
 
         if expandedDeviceId != dev.id {
-            if delta > 0 && dev.hasDetailDrawer {
+            let canExpand: Bool = switch dev.kind {
+            case .sensor: true
+            default: dev.hasDetailDrawer
+            }
+            if delta > 0 && canExpand {
                 expandedDeviceId = dev.id
             }
             return
