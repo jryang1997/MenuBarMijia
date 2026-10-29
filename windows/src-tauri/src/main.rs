@@ -17,6 +17,61 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 static LAST_FOCUS_LOSS_MS: AtomicU64 = AtomicU64::new(0);
 static PIN_POPOVER: AtomicBool = AtomicBool::new(false);
 
+struct TrayAndHotkeyState {
+    active_shortcut: Option<Shortcut>,
+    shortcut_label: Option<String>,
+    update_version: Option<String>,
+}
+
+static TRAY_AND_HOTKEY_STATE: LazyLock<RwLock<TrayAndHotkeyState>> = LazyLock::new(|| {
+    RwLock::new(TrayAndHotkeyState {
+        active_shortcut: None,
+        shortcut_label: Some("Alt+M".to_string()),
+        update_version: None,
+    })
+});
+
+fn is_standalone_function_key(code: Code) -> bool {
+    matches!(
+        code,
+        Code::F1
+            | Code::F2
+            | Code::F3
+            | Code::F4
+            | Code::F5
+            | Code::F6
+            | Code::F7
+            | Code::F8
+            | Code::F9
+            | Code::F10
+            | Code::F11
+            | Code::F12
+            | Code::F13
+            | Code::F14
+            | Code::F15
+            | Code::F16
+            | Code::F17
+            | Code::F18
+            | Code::F19
+            | Code::F20
+    )
+}
+
+/// Validates and parses a global shortcut string (#43).
+/// Requires at least one modifier (`Ctrl`/`Alt`/`Shift`/`Super`) or a standalone `F1`–`F20` key.
+fn parse_global_shortcut(raw: &str) -> Result<(Shortcut, String), String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("快捷键不能为空".to_string());
+    }
+    let shortcut = Shortcut::from_str(trimmed)
+        .map_err(|_| format!("快捷键格式无效：{trimmed}"))?;
+    if shortcut.mods.is_empty() && !is_standalone_function_key(shortcut.key) {
+        return Err("快捷键需要包含 Ctrl / Alt / Shift / Win 修饰键，或使用 F1–F20".to_string());
+    }
+    Ok((shortcut, trimmed.to_string()))
+}
+
 /// Configured origins retain the protocol and port, so permission for one service
 /// cannot authorize another service on the same host (#29).
 static EXTRA_ALLOWED_ORIGINS: LazyLock<RwLock<HashSet<String>>> =
@@ -134,13 +189,43 @@ fn now_epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Rebuilds the tray menu, adding the "有新版本" entry only when a release is known (#39).
-fn build_tray_menu(app: &AppHandle, update_version: Option<&str>) -> tauri::Result<Menu<tauri::Wry>> {
-    let mut builder = MenuBuilder::new(app).text("toggle", "打开/隐藏控制中心 (Alt+M)");
+fn tray_labels_for_shortcut(shortcut_label: Option<&str>) -> (String, String) {
+    match shortcut_label.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(label) => (
+            format!("打开/隐藏控制中心 ({label})"),
+            format!("MenuBarMijia · 菜单栏米家 ({label})"),
+        ),
+        None => (
+            "打开/隐藏控制中心".to_string(),
+            "MenuBarMijia · 菜单栏米家".to_string(),
+        ),
+    }
+}
+
+/// Rebuilds the tray menu, adding the "有新版本" entry only when a release is known (#39)
+/// and showing the active global shortcut when enabled (#43).
+fn build_tray_menu(
+    app: &AppHandle,
+    shortcut_label: Option<&str>,
+    update_version: Option<&str>,
+) -> tauri::Result<Menu<tauri::Wry>> {
+    let (toggle_text, _) = tray_labels_for_shortcut(shortcut_label);
+    let mut builder = MenuBuilder::new(app).text("toggle", toggle_text);
     if let Some(version) = update_version {
         builder = builder.text("update", format!("有新版本 v{version}，点击查看"));
     }
     builder.text("quit", "退出 MenuBarMijia").build()
+}
+
+fn refresh_tray_chrome(app: &AppHandle, shortcut_label: Option<&str>, update_version: Option<&str>) {
+    let Some(tray) = app.tray_by_id("main-tray") else {
+        return;
+    };
+    let (_, tooltip) = tray_labels_for_shortcut(shortcut_label);
+    let _ = tray.set_tooltip(Some(tooltip));
+    if let Ok(menu) = build_tray_menu(app, shortcut_label, update_version) {
+        let _ = tray.set_menu(Some(menu));
+    }
 }
 
 /// The only external URL the frontend may open: a MenuBarMijia release page on GitHub.
@@ -212,11 +297,73 @@ fn open_release_page(url: String) -> Result<(), String> {
 
 #[tauri::command]
 fn set_update_available(app: AppHandle, version: Option<String>) -> Result<(), String> {
+    let shortcut_label = {
+        let mut guard = TRAY_AND_HOTKEY_STATE
+            .write()
+            .map_err(|_| "托盘状态不可用".to_string())?;
+        guard.update_version = version.clone();
+        guard.shortcut_label.clone()
+    };
     let tray = app
         .tray_by_id("main-tray")
         .ok_or_else(|| "托盘尚未就绪".to_string())?;
-    let menu = build_tray_menu(&app, version.as_deref()).map_err(|error| error.to_string())?;
+    let menu = build_tray_menu(&app, shortcut_label.as_deref(), version.as_deref())
+        .map_err(|error| error.to_string())?;
     tray.set_menu(Some(menu)).map_err(|error| error.to_string())
+}
+
+/// Applies the user's global shortcut preference (#43), adhering to Coding Standard #3:
+/// disabling immediately unregisters the system-wide hotkey; enabling or changing unregisters
+/// any previous hotkey before registering the new one and surfaces conflicts as `Err`.
+#[tauri::command]
+fn set_global_shortcut(app: AppHandle, enabled: bool, shortcut: String) -> Result<(), String> {
+    let (old_shortcut, update_version) = {
+        let guard = TRAY_AND_HOTKEY_STATE
+            .read()
+            .map_err(|_| "快捷键状态不可用".to_string())?;
+        (guard.active_shortcut, guard.update_version.clone())
+    };
+
+    if !enabled {
+        if let Some(old) = old_shortcut {
+            let _ = app.global_shortcut().unregister(old);
+        }
+        if let Ok(mut guard) = TRAY_AND_HOTKEY_STATE.write() {
+            guard.active_shortcut = None;
+            guard.shortcut_label = None;
+        }
+        refresh_tray_chrome(&app, None, update_version.as_deref());
+        return Ok(());
+    }
+
+    let (parsed, label) = parse_global_shortcut(&shortcut)?;
+    if old_shortcut == Some(parsed) && app.global_shortcut().is_registered(parsed) {
+        if let Ok(mut guard) = TRAY_AND_HOTKEY_STATE.write() {
+            guard.shortcut_label = Some(label.clone());
+        }
+        refresh_tray_chrome(&app, Some(&label), update_version.as_deref());
+        return Ok(());
+    }
+
+    if let Some(old) = old_shortcut {
+        let _ = app.global_shortcut().unregister(old);
+    }
+
+    if let Err(err) = app.global_shortcut().register(parsed) {
+        if let Ok(mut guard) = TRAY_AND_HOTKEY_STATE.write() {
+            guard.active_shortcut = None;
+            guard.shortcut_label = None;
+        }
+        refresh_tray_chrome(&app, None, update_version.as_deref());
+        return Err(format!("这个组合已被其他应用占用或无法注册（{err}），换一个再试。"));
+    }
+
+    if let Ok(mut guard) = TRAY_AND_HOTKEY_STATE.write() {
+        guard.active_shortcut = Some(parsed);
+        guard.shortcut_label = Some(label.clone());
+    }
+    refresh_tray_chrome(&app, Some(&label), update_version.as_deref());
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -607,13 +754,25 @@ fn toggle_main_window(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>, fr
 }
 
 fn main() {
-    let alt_m = Shortcut::new(Some(Modifiers::ALT), Code::KeyM);
+    let default_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyM);
+    if let Ok(mut guard) = TRAY_AND_HOTKEY_STATE.write() {
+        guard.active_shortcut = Some(default_shortcut);
+        guard.shortcut_label = Some("Alt+M".to_string());
+    }
 
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
-                    if shortcut == &alt_m && event.state() == ShortcutState::Pressed {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let matches = TRAY_AND_HOTKEY_STATE
+                        .read()
+                        .ok()
+                        .and_then(|guard| guard.active_shortcut)
+                        .is_some_and(|active| &active == shortcut);
+                    if matches {
                         toggle_main_window(app, None, false);
                     }
                 })
@@ -631,6 +790,7 @@ fn main() {
             set_panel_height,
             set_pin_popover,
             set_update_available,
+            set_global_shortcut,
             open_release_page
         ])
         .setup(move |app| {
@@ -639,7 +799,7 @@ fn main() {
                     *guard = read_origin_store(&path);
                 }
             }
-            let _ = app.global_shortcut().register(alt_m);
+            let _ = app.global_shortcut().register(default_shortcut);
             if let Some(main_win) = app.get_webview_window("main") {
                 position_popover(&main_win, None);
                 let win_for_event = main_win.clone();
@@ -653,7 +813,7 @@ fn main() {
                 });
             }
 
-            let menu = build_tray_menu(app.handle(), None)?;
+            let menu = build_tray_menu(app.handle(), Some("Alt+M"), None)?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .tooltip("MenuBarMijia · 菜单栏米家 (Alt+M)")
@@ -988,5 +1148,46 @@ mod tests {
         write_origin_store(&path, &origins).expect("write store");
         assert_eq!(read_origin_store(&path), origins);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn global_shortcut_parser_accepts_modified_keys_and_function_keys_only() {
+        let (alt_m, label) = parse_global_shortcut("Alt+M").expect("Alt+M is valid");
+        assert_eq!(label, "Alt+M");
+        assert_eq!(alt_m, Shortcut::new(Some(Modifiers::ALT), Code::KeyM));
+
+        let (ctrl_shift_k, _) = parse_global_shortcut("Ctrl+Shift+K").expect("Ctrl+Shift+K is valid");
+        assert_eq!(
+            ctrl_shift_k,
+            Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyK)
+        );
+
+        let (f8, _) = parse_global_shortcut("F8").expect("standalone F8 is valid");
+        assert_eq!(f8, Shortcut::new(None, Code::F8));
+
+        for invalid in ["", "   ", "M", "1", "Space", "Ctrl+", "NotAKey"] {
+            assert!(
+                parse_global_shortcut(invalid).is_err(),
+                "expected {invalid:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn tray_labels_include_shortcut_only_when_enabled() {
+        assert_eq!(
+            tray_labels_for_shortcut(Some("Ctrl+Alt+M")),
+            (
+                "打开/隐藏控制中心 (Ctrl+Alt+M)".to_string(),
+                "MenuBarMijia · 菜单栏米家 (Ctrl+Alt+M)".to_string()
+            )
+        );
+        assert_eq!(
+            tray_labels_for_shortcut(None),
+            (
+                "打开/隐藏控制中心".to_string(),
+                "MenuBarMijia · 菜单栏米家".to_string()
+            )
+        );
     }
 }
