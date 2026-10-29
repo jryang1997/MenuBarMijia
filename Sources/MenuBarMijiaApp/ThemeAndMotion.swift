@@ -707,3 +707,193 @@ public struct LiquidGlassSlider: View {
         }
     }
 }
+
+// MARK: - Horizontal Strip Wheel & Trackpad Scroll
+
+/// Routes mouse scroll-wheel and trackpad scroll gestures over registered horizontal `ScrollView`s
+/// into horizontal scrolling of their backing `NSScrollView`.
+@MainActor
+public final class HorizontalWheelScrollMonitor {
+    public static let shared = HorizontalWheelScrollMonitor()
+
+    private let scrollViews = NSHashTable<NSScrollView>.weakObjects()
+    private var localMonitor: Any?
+    private weak var activeGestureScrollView: NSScrollView?
+    private var isTrackingGesture = false
+    private var gesturePhaseEnded = false
+
+    private init() {}
+
+    public func register(_ scrollView: NSScrollView) {
+        if !scrollViews.contains(scrollView) {
+            scrollViews.add(scrollView)
+        }
+        installMonitorIfNeeded()
+    }
+
+    private func installMonitorIfNeeded() {
+        guard localMonitor == nil else { return }
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return event }
+            return self.handleScrollWheel(event)
+        }
+    }
+
+    /// Picks the dominant scroll axis (`scrollingDeltaX` when horizontal magnitude is at least
+    /// vertical magnitude, otherwise `scrollingDeltaY`).
+    public static func dominantDelta(deltaX: CGFloat, deltaY: CGFloat) -> CGFloat {
+        abs(deltaX) >= abs(deltaY) ? deltaX : deltaY
+    }
+
+    /// Converts a raw `NSEvent` scrolling delta into a horizontal point step.
+    /// Trackpads and Magic Mice report precise point deltas; notched mouse wheels report line deltas.
+    public static func horizontalStep(delta: CGFloat, hasPreciseDeltas: Bool) -> CGFloat {
+        guard abs(delta) > 0.001 else { return 0 }
+        if hasPreciseDeltas {
+            return delta
+        }
+        let scaled = delta * 16
+        if abs(scaled) < 18 {
+            return delta > 0 ? 18 : -18
+        }
+        return scaled
+    }
+
+    /// Clamps the next horizontal scroll offset into `0...maxOffsetX`.
+    public static func clampedTargetOffset(currentX: CGFloat, step: CGFloat, maxOffsetX: CGFloat) -> CGFloat {
+        guard maxOffsetX > 0 else { return 0 }
+        return min(max(0, currentX - step), maxOffsetX)
+    }
+
+    @discardableResult
+    public static func applyHorizontalScroll(
+        to scrollView: NSScrollView,
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        hasPreciseDeltas: Bool
+    ) -> Bool {
+        guard let documentView = scrollView.documentView else { return false }
+        let clipView = scrollView.contentView
+        let maxOffsetX = max(0, documentView.bounds.width - clipView.bounds.width)
+        guard maxOffsetX > 0.5 else { return false }
+
+        let dominant = dominantDelta(deltaX: deltaX, deltaY: deltaY)
+        let step = horizontalStep(delta: dominant, hasPreciseDeltas: hasPreciseDeltas)
+        guard abs(step) > 0.001 else { return false }
+
+        let currentX = clipView.bounds.origin.x
+        let targetX = clampedTargetOffset(currentX: currentX, step: step, maxOffsetX: maxOffsetX)
+        guard abs(targetX - currentX) > 0.01 else { return false }
+
+        clipView.scroll(to: NSPoint(x: targetX, y: clipView.bounds.origin.y))
+        scrollView.reflectScrolledClipView(clipView)
+        return true
+    }
+
+    private func hitScrollView(for event: NSEvent) -> NSScrollView? {
+        guard let eventWindow = event.window else { return nil }
+        let location = event.locationInWindow
+        for scrollView in scrollViews.allObjects {
+            guard scrollView.window === eventWindow,
+                  !scrollView.isHiddenOrHasHiddenAncestor,
+                  let documentView = scrollView.documentView
+            else { continue }
+            let maxOffsetX = documentView.bounds.width - scrollView.contentView.bounds.width
+            guard maxOffsetX > 0.5 else { continue }
+            let localPoint = scrollView.convert(location, from: nil)
+            if scrollView.bounds.contains(localPoint) {
+                return scrollView
+            }
+        }
+        return nil
+    }
+
+    func handleScrollWheel(_ event: NSEvent) -> NSEvent? {
+        let phase = event.phase
+        let momentumPhase = event.momentumPhase
+
+        let targetScrollView: NSScrollView?
+        if phase.isEmpty && momentumPhase.isEmpty {
+            activeGestureScrollView = nil
+            isTrackingGesture = false
+            gesturePhaseEnded = false
+            targetScrollView = hitScrollView(for: event)
+        } else {
+            if phase.contains(.began) || phase.contains(.mayBegin) {
+                activeGestureScrollView = hitScrollView(for: event)
+                isTrackingGesture = true
+                gesturePhaseEnded = false
+            } else if phase.contains(.changed) {
+                if !isTrackingGesture || gesturePhaseEnded {
+                    activeGestureScrollView = hitScrollView(for: event)
+                    isTrackingGesture = true
+                    gesturePhaseEnded = false
+                }
+            }
+
+            targetScrollView = activeGestureScrollView
+
+            if phase.contains(.ended) {
+                gesturePhaseEnded = true
+            }
+            if phase.contains(.cancelled) || momentumPhase.contains(.ended) || momentumPhase.contains(.cancelled) {
+                activeGestureScrollView = nil
+                isTrackingGesture = false
+                gesturePhaseEnded = false
+            }
+        }
+
+        guard let scrollView = targetScrollView else { return event }
+        _ = Self.applyHorizontalScroll(
+            to: scrollView,
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            hasPreciseDeltas: event.hasPreciseScrollingDeltas
+        )
+        return nil
+    }
+}
+
+private struct HorizontalWheelScrollAttachment: NSViewRepresentable {
+    func makeNSView(context: Context) -> HorizontalWheelProbeView {
+        HorizontalWheelProbeView()
+    }
+
+    func updateNSView(_ nsView: HorizontalWheelProbeView, context: Context) {
+        nsView.registerEnclosingScrollView()
+    }
+}
+
+final class HorizontalWheelProbeView: NSView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        registerEnclosingScrollView()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        registerEnclosingScrollView()
+    }
+
+    override func layout() {
+        super.layout()
+        registerEnclosingScrollView()
+    }
+
+    func registerEnclosingScrollView() {
+        guard let scrollView = enclosingScrollView else { return }
+        HorizontalWheelScrollMonitor.shared.register(scrollView)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
+extension View {
+    /// Enables horizontal scrolling via vertical or horizontal mouse wheel / trackpad gestures
+    /// when placed on the content inside a `ScrollView(.horizontal)`.
+    public func horizontalWheelScroll() -> some View {
+        background(HorizontalWheelScrollAttachment())
+    }
+}

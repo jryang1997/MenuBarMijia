@@ -509,4 +509,154 @@ struct MenuBarPanelControllerTests {
         #expect(sharedController.isPanelVisible)
         #expect(store.isShowingAssistantBar)
     }
+
+    @Test("Horizontal wheel monitor translates vertical mouse wheel and trackpad deltas into clamped horizontal scroll")
+    func horizontalWheelMonitorScrollsAndClamps() {
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: 32))
+        let documentView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 32))
+        scrollView.documentView = documentView
+
+        // Rolling the mouse wheel down (negative deltaY) moves the horizontal strip right.
+        let movedRight = HorizontalWheelScrollMonitor.applyHorizontalScroll(
+            to: scrollView,
+            deltaX: 0,
+            deltaY: -2,
+            hasPreciseDeltas: false
+        )
+        #expect(movedRight)
+        #expect(scrollView.contentView.bounds.origin.x == 32)
+
+        // Trackpad horizontal swipe right-to-left (negative deltaX) advances by exact points.
+        let movedPrecise = HorizontalWheelScrollMonitor.applyHorizontalScroll(
+            to: scrollView,
+            deltaX: -48,
+            deltaY: -4,
+            hasPreciseDeltas: true
+        )
+        #expect(movedPrecise)
+        #expect(scrollView.contentView.bounds.origin.x == 80)
+
+        // Clamps at maxOffsetX (640 - 240 = 400) and back at 0.
+        _ = HorizontalWheelScrollMonitor.applyHorizontalScroll(
+            to: scrollView,
+            deltaX: 0,
+            deltaY: -1000,
+            hasPreciseDeltas: true
+        )
+        #expect(scrollView.contentView.bounds.origin.x == 400)
+
+        _ = HorizontalWheelScrollMonitor.applyHorizontalScroll(
+            to: scrollView,
+            deltaX: 0,
+            deltaY: 1000,
+            hasPreciseDeltas: true
+        )
+        #expect(scrollView.contentView.bounds.origin.x == 0)
+
+        // Non-overflowing strip does not scroll.
+        documentView.frame = NSRect(x: 0, y: 0, width: 200, height: 32)
+        let movedWhenFitting = HorizontalWheelScrollMonitor.applyHorizontalScroll(
+            to: scrollView,
+            deltaX: 0,
+            deltaY: -3,
+            hasPreciseDeltas: false
+        )
+        #expect(!movedWhenFitting)
+    }
+
+    @Test("Classic skin room strip scrolls hidden rooms into view when selected or cycled")
+    func classicSkinRoomStripScrollsToSelectedRoom() async throws {
+        let rooms = [
+            RoomArea(id: "r1", name: "书房", sortOrder: 0),
+            RoomArea(id: "r2", name: "办公室", sortOrder: 1),
+            RoomArea(id: "r3", name: "卧室", sortOrder: 2),
+            RoomArea(id: "r4", name: "厨房", sortOrder: 3),
+            RoomArea(id: "r5", name: "客厅", sortOrder: 4),
+            RoomArea(id: "r6", name: "阳台", sortOrder: 5),
+            RoomArea(id: "r7", name: "次卧", sortOrder: 6),
+            RoomArea(id: "r8", name: "卫生间", sortOrder: 7)
+        ]
+        var base = DemoHomeProvider.defaultHome()
+        base.rooms = rooms
+        base.environmentReadings = []
+        base.scenes = []
+
+        let suite = "MenuBarPanelTests-rooms-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        guard let defaults = UserDefaults(suiteName: suite) else { return }
+        defaults.set(true, forKey: "has_completed_onboarding")
+        defaults.set(false, forKey: "automatically_checks_for_updates")
+        defaults.set(false, forKey: "show_quick_actions_bar")
+        defaults.set(AppSkin.classic.rawValue, forKey: AppSkin.storageKey)
+
+        let store = HomeStore(provider: MockHomeProvider(snapshot: base), defaultsSuiteName: suite)
+        for _ in 0..<50 where store.rooms.count < rooms.count {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(store.rooms.count == rooms.count)
+
+        let hosting = NSHostingView(
+            rootView: ControlCenterPanel(store: store)
+                .defaultAppStorage(defaults)
+                .environment(\.reduceMotionOverride, true)
+        )
+        hosting.frame = NSRect(x: 0, y: 0, width: 376, height: 560)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 376, height: 560),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        window.orderFront(nil)
+        defer {
+            window.contentView = nil
+            window.orderOut(nil)
+        }
+        window.layoutIfNeeded()
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        window.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        Self.pumpMainRunLoop()
+
+        func findRoomScrollView(in view: NSView) -> NSScrollView? {
+            if let sv = view as? NSScrollView,
+               let doc = sv.documentView,
+               doc.bounds.width > sv.contentView.bounds.width + 20,
+               sv.frame.height < 60 {
+                return sv
+            }
+            for sub in view.subviews {
+                if let found = findRoomScrollView(in: sub) {
+                    return found
+                }
+            }
+            return nil
+        }
+
+        let roomScrollView = try #require(findRoomScrollView(in: hosting))
+        #expect(roomScrollView.contentView.bounds.origin.x < 1)
+
+        store.selectedRoomId = "r8"
+        try await Task.sleep(for: .milliseconds(80))
+        Self.pumpMainRunLoop()
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        window.displayIfNeeded()
+        #expect(roomScrollView.contentView.bounds.origin.x > 40)
+
+        store.selectedRoomId = nil
+        try await Task.sleep(for: .milliseconds(80))
+        Self.pumpMainRunLoop()
+        hosting.layoutSubtreeIfNeeded()
+        hosting.displayIfNeeded()
+        window.displayIfNeeded()
+        #expect(roomScrollView.contentView.bounds.origin.x < 1)
+    }
+
+    private static func pumpMainRunLoop(_ seconds: TimeInterval = 0.05) {
+        CFRunLoopRunInMode(.defaultMode, seconds, false)
+    }
 }
