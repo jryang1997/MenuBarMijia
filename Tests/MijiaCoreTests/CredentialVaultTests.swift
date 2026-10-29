@@ -71,6 +71,10 @@ final class MemoryLegacyItems: @unchecked Sendable {
     var remaining: [String: Data] { lock.withLock { items } }
     var deletedAccounts: [String] { lock.withLock { deleted } }
 
+    func allow(_ account: String) {
+        lock.withLock { _ = unreadable.remove(account) }
+    }
+
     var legacy: CredentialVault.LegacyItems {
         CredentialVault.LegacyItems(
             accounts: { [self] in lock.withLock { items.keys.sorted() } },
@@ -190,7 +194,7 @@ struct CredentialVaultTests {
         #expect(legacy.remaining == ["ha_access_token": Data("t".utf8)])
     }
 
-    @Test("When one old item cannot be read, nothing is merged or deleted, so the next launch retries")
+    @Test("When one old item cannot be read, it stays unavailable and blocks partial writes until readable")
     func partialLegacyReadRetriesLater() {
         let storage = MemoryVaultStorage()
         let legacy = MemoryLegacyItems(
@@ -200,9 +204,25 @@ struct CredentialVaultTests {
         let vault = CredentialVault(storage: storage.storage, legacy: legacy.legacy)
 
         #expect(vault.data(for: "ha_access_token") == Data("t".utf8))
-        #expect(vault.lookup("mi_session") == .missing)
+        #expect(vault.lookup("mi_session") == .unavailable)
+        #expect(vault.lookup("absent") == .missing)
+        #expect(!vault.isLoaded)
+        #expect(!vault.set(Data("override".utf8), for: "mi_session"))
+        #expect(!vault.set(Data("new".utf8), for: "other"))
         #expect(storage.rawBlob == nil)
         #expect(legacy.deletedAccounts.isEmpty)
+
+        // Once the declined legacy item is allowed, a save completes migration and removes old items.
+        legacy.allow("mi_session")
+        #expect(vault.set(Data("new".utf8), for: "other"))
+        #expect(vault.isLoaded)
+        #expect(vault.data(for: "mi_session") == Data("s".utf8))
+        #expect(storage.storedItems == [
+            "ha_access_token": Data("t".utf8),
+            "mi_session": Data("s".utf8),
+            "other": Data("new".utf8)
+        ])
+        #expect(legacy.remaining.isEmpty)
     }
 
     @Test("Keychain storage updates in place and keeps the old value when the update is refused")

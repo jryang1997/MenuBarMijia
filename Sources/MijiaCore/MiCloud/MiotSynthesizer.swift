@@ -277,18 +277,22 @@ public enum MiotSynthesizer {
     /// Returns `nil` when an integer property has neither a recognized `unit` nor an explicit
     /// scale in `comment` (e.g. "0.01kwh"), so ambiguous raw integers are never guessed.
     static func energyScale(for property: MiotProperty) -> Double? {
-        let unit = property.unit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        let unit = (property.unit ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: ",", with: ".")
+            .replacingOccurrences(of: " ", with: "")
         let comment = (property.comment ?? "")
             .lowercased()
             .replacingOccurrences(of: ",", with: ".")
             .replacingOccurrences(of: " ", with: "")
-        if unit == "wh" || unit == "watt-hour" || comment.contains("0.001kwh") {
+        if unit == "wh" || unit == "watt-hour" || unit.contains("0.001kwh") || comment.contains("0.001kwh") {
             return 0.001
         }
-        if comment.contains("0.01kwh") {
+        if unit.contains("0.01kwh") || comment.contains("0.01kwh") {
             return 0.01
         }
-        if unit == "kwh" || unit == "kilowatt-hour" || comment.contains("1kwh") {
+        if unit == "kwh" || unit == "kilowatt-hour" || unit.contains("1kwh") || comment.contains("1kwh") {
             return 1.0
         }
         if property.format == "float", unit.isEmpty || unit == "none" {

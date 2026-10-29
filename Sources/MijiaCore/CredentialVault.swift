@@ -50,6 +50,10 @@ public final class CredentialVault: @unchecked Sendable {
     private enum State {
         case unloaded
         case loaded([String: Data])
+        /// Some 1.1.0 per-account items were read while `unreadable` ones were declined.
+        /// Readable items serve this session from memory, `unreadable` accounts report `.unavailable`,
+        /// and no vault is written until every legacy account can be read.
+        case partialLegacy(items: [String: Data], unreadable: Set<String>, allLegacyAccounts: Set<String>)
         case unavailable
     }
 
@@ -68,8 +72,16 @@ public final class CredentialVault: @unchecked Sendable {
     public func lookup(_ account: String) -> Lookup {
         lock.lock()
         defer { lock.unlock() }
-        guard let items = loadedItems(retryingUnavailable: false) else { return .unavailable }
-        return items[account].map(Lookup.value) ?? .missing
+        loadIfNeeded(retryingUnavailable: false)
+        switch state {
+        case .loaded(let items):
+            return items[account].map(Lookup.value) ?? .missing
+        case .partialLegacy(let items, let unreadable, _):
+            if unreadable.contains(account) { return .unavailable }
+            return items[account].map(Lookup.value) ?? .missing
+        case .unloaded, .unavailable:
+            return .unavailable
+        }
     }
 
     func data(for account: String) -> Data? {
@@ -83,17 +95,24 @@ public final class CredentialVault: @unchecked Sendable {
     func set(_ data: Data?, for account: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard var items = loadedItems(retryingUnavailable: true) else { return false }
-        guard items[account] != data else { return true }
+        var pendingLegacyDelete: Set<String> = []
+        loadIfNeeded(retryingUnavailable: true, completedLegacyAccounts: &pendingLegacyDelete)
+        guard case .loaded(var items) = state else { return false }
+        if items[account] == data && pendingLegacyDelete.isEmpty { return true }
         items[account] = data
-        return persist(items)
+        guard persist(items) else { return false }
+        for legacyAccount in pendingLegacyDelete {
+            legacy.delete(legacyAccount)
+        }
+        return true
     }
 
     /// Adds the value only when the account is empty; an existing credential always wins over a migrated one.
     func insertIfMissing(_ data: Data, for account: String) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard var items = loadedItems(retryingUnavailable: false) else { return false }
+        loadIfNeeded(retryingUnavailable: false)
+        guard case .loaded(var items) = state else { return false }
         guard items[account] == nil else { return true }
         items[account] = data
         return persist(items)
@@ -109,12 +128,27 @@ public final class CredentialVault: @unchecked Sendable {
 
     // MARK: - Loading
 
-    private func loadedItems(retryingUnavailable: Bool) -> [String: Data]? {
+    private func loadIfNeeded(retryingUnavailable: Bool, completedLegacyAccounts: inout Set<String>) {
         switch state {
-        case .loaded(let items):
-            return items
+        case .loaded:
+            return
+        case .partialLegacy(var items, var unreadable, let allLegacy):
+            guard retryingUnavailable else { return }
+            for account in unreadable.sorted() {
+                if let data = legacy.read(account) {
+                    items[account] = data
+                    unreadable.remove(account)
+                }
+            }
+            if unreadable.isEmpty {
+                state = .loaded(items)
+                completedLegacyAccounts = allLegacy
+            } else {
+                state = .partialLegacy(items: items, unreadable: unreadable, allLegacyAccounts: allLegacy)
+            }
+            return
         case .unavailable where !retryingUnavailable:
-            return nil
+            return
         case .unavailable, .unloaded:
             break
         }
@@ -123,38 +157,45 @@ public final class CredentialVault: @unchecked Sendable {
             // An undecodable vault is never rewritten: that would drop every credential in it.
             guard let items = Self.decode(blob) else {
                 state = .unavailable
-                return nil
+                return
             }
             state = .loaded(items)
-            return items
         case .notFound:
-            return adoptLegacyItems()
+            adoptLegacyItems()
         case .unavailable:
             state = .unavailable
-            return nil
         }
+    }
+
+    private func loadIfNeeded(retryingUnavailable: Bool) {
+        var ignored: Set<String> = []
+        loadIfNeeded(retryingUnavailable: retryingUnavailable, completedLegacyAccounts: &ignored)
     }
 
     /// Moves the 1.1.0 per-account items into a new vault. The old items are deleted only after the vault was
     /// written. When any of them cannot be read (a declined prompt), nothing is written or deleted here, so the next
-    /// launch retries the whole move; the readable ones still serve this session. A credential saved before that
-    /// retry creates the vault, after which an unread old item is left in place untouched rather than adopted.
-    private func adoptLegacyItems() -> [String: Data] {
+    /// launch retries the whole move; the readable ones still serve this session, while the unreadable ones report
+    /// `.unavailable` and block partial vault writes until they can be read.
+    private func adoptLegacyItems() {
         var items: [String: Data] = [:]
-        var complete = true
-        for account in legacy.accounts() {
+        var unreadable: Set<String> = []
+        let accounts = legacy.accounts()
+        for account in accounts {
             if let data = legacy.read(account) {
                 items[account] = data
             } else {
-                complete = false
+                unreadable.insert(account)
             }
         }
+        guard unreadable.isEmpty else {
+            state = .partialLegacy(items: items, unreadable: unreadable, allLegacyAccounts: Set(accounts))
+            return
+        }
         state = .loaded(items)
-        guard complete, !items.isEmpty, persist(items) else { return items }
+        guard !items.isEmpty, persist(items) else { return }
         for account in items.keys {
             legacy.delete(account)
         }
-        return items
     }
 
     private func persist(_ items: [String: Data]) -> Bool {

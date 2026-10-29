@@ -1116,18 +1116,22 @@ function miotBool(val: unknown): boolean | null {
  * scale in `comment` (e.g. "0.01kwh"), so ambiguous raw integers are never guessed.
  */
 function energyScale(prop: MiotProperty): number | null {
-  const unit = (prop.unit ?? "").trim().toLowerCase();
+  const unit = (prop.unit ?? "")
+    .trim()
+    .toLowerCase()
+    .replaceAll(",", ".")
+    .replaceAll(" ", "");
   const comment = (prop.comment ?? "")
     .toLowerCase()
     .replaceAll(",", ".")
     .replaceAll(" ", "");
-  if (unit === "wh" || unit === "watt-hour" || comment.includes("0.001kwh")) {
+  if (unit === "wh" || unit === "watt-hour" || unit.includes("0.001kwh") || comment.includes("0.001kwh")) {
     return 0.001;
   }
-  if (comment.includes("0.01kwh")) {
+  if (unit.includes("0.01kwh") || comment.includes("0.01kwh")) {
     return 0.01;
   }
-  if (unit === "kwh" || unit === "kilowatt-hour" || comment.includes("1kwh")) {
+  if (unit === "kwh" || unit === "kilowatt-hour" || unit.includes("1kwh") || comment.includes("1kwh")) {
     return 1.0;
   }
   if (prop.format === "float" && (unit === "" || unit === "none")) {

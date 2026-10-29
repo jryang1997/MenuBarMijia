@@ -1165,6 +1165,9 @@ mod tests {
         let (f8, _) = parse_global_shortcut("F8").expect("standalone F8 is valid");
         assert_eq!(f8, Shortcut::new(None, Code::F8));
 
+        let (ctrl_numpad1, _) = parse_global_shortcut("Ctrl+Numpad1").expect("Ctrl+Numpad1 is valid");
+        assert_eq!(ctrl_numpad1, Shortcut::new(Some(Modifiers::CONTROL), Code::Numpad1));
+
         for invalid in ["", "   ", "M", "1", "Space", "Ctrl+", "NotAKey"] {
             assert!(
                 parse_global_shortcut(invalid).is_err(),

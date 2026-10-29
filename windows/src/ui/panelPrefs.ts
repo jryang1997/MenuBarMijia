@@ -289,6 +289,8 @@ function normalizeKeyToken(raw: string): string | null {
   if (keyMatch) return keyMatch[1]!.toUpperCase();
   const digitMatch = /^digit([0-9])$/i.exec(trimmed);
   if (digitMatch) return digitMatch[1]!;
+  const numpadMatch = /^numpad([0-9])$/i.exec(trimmed);
+  if (numpadMatch) return `Numpad${numpadMatch[1]!}`;
   const fnMatch = /^f([1-9]|1[0-9]|20)$/i.exec(trimmed);
   if (fnMatch) return `F${fnMatch[1]}`;
   const special = SPECIAL_KEY_ALIASES[trimmed.toLowerCase()];
@@ -367,9 +369,13 @@ export function recordShortcutFromKeyEvent(event: KeyEventLike): RecordedShortcu
     return { kind: "modifier-only" };
   }
 
+  const rawCode = (event.code ?? "").trim();
   const keyToken =
-    (event.code ? normalizeKeyToken(event.code) : null) ??
-    (event.key === " " ? "Space" : normalizeKeyToken(event.key));
+    rawCode.length > 0
+      ? normalizeKeyToken(rawCode)
+      : event.key === " "
+        ? "Space"
+        : normalizeKeyToken(event.key ?? "");
   if (!keyToken) {
     return { kind: "invalid" };
   }

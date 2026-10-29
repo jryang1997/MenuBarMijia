@@ -443,6 +443,48 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
     assert.equal(home.devices[1]?.kind.isOn, true);
   });
 
+  it("maps MIoT plug power-consumption with explicit scale in unit or comment into energyKwh", () => {
+    const spec = parseMiotDeviceSpec({
+      type: "urn:miot-spec-v2:device:outlet:0000A002:unit-plug:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:switch:0000780C:unit-plug:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:unit-plug:1", format: "bool", access: ["read", "write"] },
+          ],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:power-consumption:0000780E:unit-plug:1",
+          properties: [
+            {
+              iid: 1,
+              type: "urn:miot-spec-v2:property:power-consumption:0000002F:unit-plug:1",
+              format: "uint32",
+              access: ["read"],
+              unit: "0.01kWh",
+            },
+          ],
+        },
+      ],
+    });
+    assert.ok(spec);
+    const home = MiotSynthesizer.synthesize(
+      [{ did: "p_unit", name: "插座", model: "unit.plug", isOnline: true, specType: null }],
+      [],
+      { "unit.plug": spec },
+      new Map<string, unknown>([
+        ["p_unit.2.1", true],
+        ["p_unit.3.1", 512],
+      ])
+    );
+    assert.equal(home.devices[0]?.kind.kind, "plug");
+    if (home.devices[0]?.kind.kind === "plug") {
+      assert.equal(home.devices[0].kind.energyKwh, 5.12);
+    }
+  });
+
   it("matches the cross-platform MIoT golden JSON corpus shared with MijiaCoreTests", () => {
     const raw = readFileSync(resolve(process.cwd(), "../Tests/Fixtures/miot_golden.json"), "utf8");
     const corpus = JSON.parse(raw) as {
