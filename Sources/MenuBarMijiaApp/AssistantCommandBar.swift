@@ -371,6 +371,9 @@ struct AssistantCommandBar: View {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Image(systemName: reply.isChoice ? "hand.tap.fill" : (reply.isError ? "xmark.octagon.fill" : "checkmark.circle.fill"))
                         .foregroundStyle(reply.isChoice ? Color.orange : (reply.isError ? Color.red : Color.green))
+                    if let receipt = reply.receipt {
+                        ExecutionRouteBadge(receipt: receipt)
+                    }
                     Text(reply.text)
                         .foregroundStyle(.primary.opacity(0.85))
                         .lineLimit(2)
@@ -726,16 +729,65 @@ struct AssistantCommandBar: View {
         }
     }
 
-    private var replyLine: (text: String, isError: Bool, isChoice: Bool)? {
+    private var replyLine: (text: String, isError: Bool, isChoice: Bool, receipt: AssistantExecutionReceipt?)? {
         if let speechError = speech.errorMessage {
-            return (speechError, true, false)
+            return (speechError, true, false, nil)
         }
         switch store.assistantState {
-        case .done(let text): return (text.isEmpty ? L10n.tr("已执行", "Done") : text, false, false)
-        case .failed(let message): return (message, true, false)
-        case .awaitingChoice(let message): return (message, false, true)
+        case .done(let text):
+            return (
+                text.isEmpty ? L10n.tr("已执行", "Done") : text,
+                false,
+                false,
+                store.lastAssistantReceipt
+            )
+        case .failed(let message): return (message, true, false, nil)
+        case .awaitingChoice(let message): return (message, false, true, nil)
         case .idle, .thinking: return nil
         }
+    }
+}
+
+/// Compact evidence of which resolver ran and how long the command took (#93).
+private struct ExecutionRouteBadge: View {
+    let receipt: AssistantExecutionReceipt
+
+    private var routeTitle: String {
+        switch receipt.route {
+        case .localRule: return L10n.tr("本地", "Local")
+        case .aiModel: return L10n.tr("AI", "AI")
+        }
+    }
+
+    private var elapsedText: String {
+        receipt.elapsedMilliseconds == 0 ? "<1ms" : "\(receipt.elapsedMilliseconds)ms"
+    }
+
+    private var accessibilityText: String {
+        var text = "\(routeTitle) · \(elapsedText)"
+        if receipt.usedHabitContext {
+            text += " · \(L10n.tr("习惯", "Habit"))"
+        }
+        return text
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(receipt.route == .localRule ? "⚡" : "🧠")
+            Text(routeTitle)
+            Text("· \(elapsedText)")
+            if receipt.usedHabitContext {
+                Text("· 💡 \(L10n.tr("习惯", "Habit"))")
+            }
+        }
+        .font(.system(size: 9.5, weight: .medium))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Capsule().fill(Color.primary.opacity(0.07)))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(accessibilityText))
+        .help(receipt.habitSummary ?? accessibilityText)
     }
 }
 
