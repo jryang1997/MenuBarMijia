@@ -224,6 +224,22 @@ extension HomeStore {
         rawDeviceNames[deviceId] ?? devices.first(where: { $0.id == deviceId })?.name
     }
 
+    /// Updates `sensorHistory.connectionScope` so sensors on different Home Assistant servers,
+    /// Xiaomi Cloud accounts, or Demo mode never share or overwrite each other's time series.
+    func syncSensorHistoryScope() {
+        let scope: String
+        switch homeBackend {
+        case .demo:
+            scope = "demo"
+        case .homeAssistant:
+            let normalized = HAWebSocketProvider.canonicalHistoryScopeURL(serverURLString)
+            scope = "ha:\(normalized)"
+        case .xiaomiCloud:
+            scope = miSessionScopeIdentifier ?? "mi:signed-out"
+        }
+        sensorHistory.setConnectionScope(scope)
+    }
+
     /// Triggers an on-demand provider fetch for `deviceId`'s historical readings when due.
     public func requestSensorHistory(
         for deviceId: String,
@@ -235,10 +251,12 @@ extension HomeStore {
             guard sensorHistory.shouldFetchCloud(deviceId: deviceId, window: window, now: now) else { return }
         }
         let activeProvider = provider
+        let requestScope = sensorHistory.connectionScope
         sensorHistory.setLoading(true, deviceId: deviceId, window: window)
         Task { @MainActor [weak self] in
             let samples = await activeProvider.fetchSensorHistory(deviceId: deviceId, window: window, now: now)
             guard let self else { return }
+            guard self.sensorHistory.connectionScope == requestScope else { return }
             self.sensorHistory.setLoading(false, deviceId: deviceId, window: window)
             self.sensorHistory.mergeCloudSamples(deviceId: deviceId, window: window, samples: samples, now: now)
         }
@@ -384,6 +402,7 @@ extension HomeStore {
         invalidateUndoContext()
         MiSessionStore.save(session, defaults: userDefaults)
         self.miSessionMaskedUserId = session.maskedUserId
+        self.miSessionScopeIdentifier = session.historyScopeIdentifier
         if let region = MiCloudRegion(rawValue: session.region.lowercased()) {
             self.miCloudRegion = region
         }
@@ -400,6 +419,7 @@ extension HomeStore {
     public func logoutMiAccount() {
         MiSessionStore.clear(defaults: userDefaults)
         self.miSessionMaskedUserId = nil
+        self.miSessionScopeIdentifier = nil
         if homeBackend == .xiaomiCloud {
             invalidateUndoContext()
             self.devices = []

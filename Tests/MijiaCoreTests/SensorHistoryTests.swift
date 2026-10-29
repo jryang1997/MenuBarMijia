@@ -121,15 +121,142 @@ struct SensorHistoryTests {
         #expect(abs(parsed[1].maxValue - 24.8) < 0.001)
         #expect(abs(parsed[2].value - 23.6) < 0.05)
 
-        // MiBeacon v2/v3 tenths-scaled integer payload ("4100" / "1004")
+        // MiBeacon v2/v3 tenths-scaled integer payload ("4100" / "1004" / "1006")
         let scaledPayload: JSONValue = .array([
             .object(["time": .number(1_760_000_000), "value": .string("[235]")]),
             .object(["time": .number(1_760_003_600), "value": .string("eb00")]), // 0x00eb = 235 -> 23.5°C
+            .object(["time": .number(1_760_007_200), "value": .number(50)]),     // 50 tenths -> 5.0°C (not 50°C)
         ])
-        let scaledParsed = MiCloudClient.parseHistoryMetricPoints(scaledPayload, key: "4100", isTemperature: true)
-        #expect(scaledParsed.count == 2)
+        let scaledParsed = MiCloudClient.parseHistoryMetricPoints(scaledPayload, key: "1004", isTemperature: true)
+        #expect(scaledParsed.count == 3)
         #expect(abs(scaledParsed[0].value - 23.5) < 0.001)
         #expect(abs(scaledParsed[1].value - 23.5) < 0.001)
+        #expect(abs(scaledParsed[2].value - 5.0) < 0.001)
+
+        // Humidity hex "b603" (0x03b6 = 950 tenths = 95.0%) must be scaled once, not twice to 9.5%.
+        let humPayload: JSONValue = .array([
+            .object(["time": .number(1_760_000_000), "value": .string("b603")]),
+        ])
+        let humParsed = MiCloudClient.parseHistoryMetricPoints(humPayload, key: "1006", isTemperature: false)
+        #expect(humParsed.count == 1)
+        #expect(abs(humParsed[0].value - 95.0) < 0.001)
+    }
+
+    @Test("Aggregates multiple raw cloud samples in the same hour/day before replacing the bucket idempotently")
+    @MainActor
+    func aggregatesSameBucketCloudSamplesIdempotently() throws {
+        let suiteName = "SensorHistoryTests.rawAgg.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let cal = Self.fixedCalendar()
+        let history = SensorHistory(defaults: defaults, calendar: cal)
+        let hourBase = Date(timeIntervalSince1970: 1_760_000_400)
+        let now = hourBase.addingTimeInterval(600)
+
+        let rawSamples = [
+            SensorHistorySample(timestamp: hourBase.addingTimeInterval(120), temperature: 20.0, humidity: 40.0),
+            SensorHistorySample(timestamp: hourBase.addingTimeInterval(300), temperature: 30.0, humidity: 60.0),
+        ]
+
+        // Merge twice to verify idempotency as well as multi-sample aggregation within the same bucket.
+        history.mergeCloudSamples(deviceId: "blt.3.sensor1", window: .last24Hours, samples: rawSamples, now: now)
+        history.mergeCloudSamples(deviceId: "blt.3.sensor1", window: .last24Hours, samples: rawSamples, now: now)
+
+        let pt24h = try #require(history.points(forDevice: "blt.3.sensor1", window: .last24Hours, now: now).last)
+        #expect(abs((pt24h.temperature ?? 0) - 25.0) < 0.001)
+        #expect(abs((pt24h.minTemperature ?? 0) - 20.0) < 0.001)
+        #expect(abs((pt24h.maxTemperature ?? 0) - 30.0) < 0.001)
+        #expect(abs((pt24h.humidity ?? 0) - 50.0) < 0.001)
+        #expect(abs((pt24h.minHumidity ?? 0) - 40.0) < 0.001)
+        #expect(abs((pt24h.maxHumidity ?? 0) - 60.0) < 0.001)
+
+        history.mergeCloudSamples(deviceId: "blt.3.sensor1", window: .last7Days, samples: rawSamples, now: now)
+        history.mergeCloudSamples(deviceId: "blt.3.sensor1", window: .last7Days, samples: rawSamples, now: now)
+
+        let pt7d = try #require(history.points(forDevice: "blt.3.sensor1", window: .last7Days, now: now).last)
+        #expect(abs((pt7d.temperature ?? 0) - 25.0) < 0.001)
+        #expect(abs((pt7d.minTemperature ?? 0) - 20.0) < 0.001)
+        #expect(abs((pt7d.maxTemperature ?? 0) - 30.0) < 0.001)
+    }
+
+    @Test("Scopes sensor history by source connection so identical entity IDs on different servers stay isolated")
+    @MainActor
+    func isolatesHistoryAcrossConnections() throws {
+        let suiteName = "SensorHistoryTests.scope.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let cal = Self.fixedCalendar()
+        let history = SensorHistory(defaults: defaults, calendar: cal, connectionScope: "ha:http://192.168.1.10:8123")
+        let now = Date(timeIntervalSince1970: 1_760_000_400)
+
+        let makeSensor = { (temp: Double) in
+            SmartDevice(
+                id: "sensor.temperature",
+                name: "客厅温度计",
+                roomId: "living",
+                roomName: "客厅",
+                model: "ha.sensor",
+                isOnline: true,
+                kind: .sensor(SensorSpec(temperature: temp, humidity: 50))
+            )
+        }
+
+        history.record(devices: [makeSensor(21.5)], now: now)
+        #expect(history.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 21.5)
+
+        // Switching to a second Home Assistant server isolates its `sensor.temperature` entity.
+        history.setConnectionScope("ha:http://192.168.1.20:8123")
+        #expect(history.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == nil)
+
+        history.record(devices: [makeSensor(28.0)], now: now)
+        #expect(history.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 28.0)
+
+        // Reloading from disk preserves both scopes independently.
+        let reloadedFirst = SensorHistory(defaults: defaults, calendar: cal, connectionScope: "ha:http://192.168.1.10:8123")
+        #expect(reloadedFirst.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 21.5)
+        let reloadedSecond = SensorHistory(defaults: defaults, calendar: cal, connectionScope: "ha:http://192.168.1.20:8123")
+        #expect(reloadedSecond.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 28.0)
+
+        // Two Xiaomi accounts sharing the same display mask (`12****89`) still produce distinct scopes.
+        let sessionA = MiSession(userId: "12345689", cUserId: "c1", ssecurity: "s1", serviceToken: "t1", region: "cn")
+        let sessionB = MiSession(userId: "12999989", cUserId: "c2", ssecurity: "s2", serviceToken: "t2", region: "cn")
+        #expect(sessionA.maskedUserId == sessionB.maskedUserId)
+        #expect(sessionA.historyScopeIdentifier != sessionB.historyScopeIdentifier)
+
+        // Changing the region picker in HomeStore before a new login keeps the active session's scope.
+        let storeSuite = "SensorHistoryTests.storeScope.\(UUID().uuidString)"
+        let storeDefaults = try #require(UserDefaults(suiteName: storeSuite))
+        defer { storeDefaults.removePersistentDomain(forName: storeSuite) }
+        MiSessionStore.save(sessionA, defaults: storeDefaults)
+        storeDefaults.set(HomeBackend.xiaomiCloud.rawValue, forKey: "home_backend")
+        let store = HomeStore(provider: DemoHomeProvider(), defaultsSuiteName: storeSuite)
+        #expect(store.sensorHistory.connectionScope == sessionA.historyScopeIdentifier)
+        store.miCloudRegion = .de
+        #expect(store.sensorHistory.connectionScope == sessionA.historyScopeIdentifier)
+
+        // Legacy unscoped entries (pre-connectionScope builds) migrate into the initial connection's namespace.
+        let migrationSuite = "SensorHistoryTests.migration.\(UUID().uuidString)"
+        let migrationDefaults = try #require(UserDefaults(suiteName: migrationSuite))
+        defer { migrationDefaults.removePersistentDomain(forName: migrationSuite) }
+        let legacyHistory = SensorHistory(defaults: migrationDefaults, calendar: cal)
+        legacyHistory.record(devices: [makeSensor(19.5)], now: now)
+        let upgradedHistory = SensorHistory(defaults: migrationDefaults, calendar: cal)
+        upgradedHistory.setConnectionScope("ha:http://192.168.1.10:8123")
+        #expect(upgradedHistory.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == 19.5)
+        upgradedHistory.setConnectionScope("ha:http://192.168.1.20:8123")
+        #expect(upgradedHistory.points(forDevice: "sensor.temperature", window: .last24Hours, now: now).last?.temperature == nil)
+
+        // Case-sensitive reverse-proxy URL paths stay distinct while scheme/host normalize case-insensitively.
+        #expect(
+            HAWebSocketProvider.canonicalHistoryScopeURL("HTTPS://MyHost.LOCAL:8123/HomeA/")
+                == "https://myhost.local:8123/HomeA"
+        )
+        #expect(
+            HAWebSocketProvider.canonicalHistoryScopeURL("https://myhost.local:8123/HomeA")
+                != HAWebSocketProvider.canonicalHistoryScopeURL("https://myhost.local:8123/homea")
+        )
     }
 
     @Test("MiotSynthesizer resolves temperature and humidity property keys from MIoT spec")

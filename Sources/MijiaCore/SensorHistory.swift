@@ -201,6 +201,35 @@ private struct SensorBucketRecord: Codable, Equatable, Sendable {
         return changed
     }
 
+    mutating func mergeReplacingMetrics(from incoming: SensorBucketRecord) -> Bool {
+        var changed = false
+        if incoming.temperatureCount > 0 {
+            if temperature != incoming.temperature
+                || minTemperature != incoming.minTemperature
+                || maxTemperature != incoming.maxTemperature
+                || temperatureCount != incoming.temperatureCount {
+                changed = true
+            }
+            temperatureSum = incoming.temperatureSum
+            temperatureCount = incoming.temperatureCount
+            minTemperature = incoming.minTemperature
+            maxTemperature = incoming.maxTemperature
+        }
+        if incoming.humidityCount > 0 {
+            if humidity != incoming.humidity
+                || minHumidity != incoming.minHumidity
+                || maxHumidity != incoming.maxHumidity
+                || humidityCount != incoming.humidityCount {
+                changed = true
+            }
+            humiditySum = incoming.humiditySum
+            humidityCount = incoming.humidityCount
+            minHumidity = incoming.minHumidity
+            maxHumidity = incoming.maxHumidity
+        }
+        return changed
+    }
+
     func toPoint() -> SensorHistoryPoint {
         SensorHistoryPoint(
             bucketStart: bucketStart,
@@ -238,14 +267,90 @@ public final class SensorHistory {
     private var stored: SensorHistoryStored
     private var lastCloudFetchAt: [String: Date] = [:]
     private var loadingKeys: Set<String> = []
+    /// Active source connection namespace (e.g. HA server URL, Xiaomi Cloud account, or `"demo"`).
+    /// Keeps identical device/entity IDs across different servers or accounts isolated.
+    public private(set) var connectionScope: String
     /// Revision counter bumped on every mutation so SwiftUI views observing `SensorHistory` re-render.
     public private(set) var revision: Int = 0
 
-    public init(defaults: UserDefaults = .standard, calendar: Calendar = .current) {
+    public init(
+        defaults: UserDefaults = .standard,
+        calendar: Calendar = .current,
+        connectionScope: String = "default"
+    ) {
         self.defaults = defaults
         self.calendar = calendar
+        let normalizedScope = connectionScope.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.connectionScope = normalizedScope.isEmpty ? "default" : normalizedScope
         let loaded = Self.decode(from: defaults)
         self.stored = Self.sanitized(loaded, calendar: calendar)
+        if self.connectionScope != "default" {
+            migrateUnscopedEntriesIfNeeded(to: self.connectionScope)
+        }
+    }
+
+    /// Switches the active connection namespace so sensors from another Home Assistant server or
+    /// backend do not display or overwrite the previous connection's history.
+    public func setConnectionScope(_ scope: String) {
+        let normalized = scope.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = normalized.isEmpty ? "default" : normalized
+        guard next != connectionScope else { return }
+        if connectionScope == "default", next != "default" {
+            migrateUnscopedEntriesIfNeeded(to: next)
+        }
+        connectionScope = next
+        loadingKeys.removeAll()
+        revision &+= 1
+    }
+
+    /// Migrates pre-scoped sensor history keys (bare device IDs without `"::"`) into the initial
+    /// non-default connection namespace so upgrades do not hide existing Home Assistant or Xiaomi readings.
+    private func migrateUnscopedEntriesIfNeeded(to scope: String) {
+        guard !scope.isEmpty, scope != "default" else { return }
+        var didMigrate = false
+
+        let unscopedHourlyKeys = stored.hourlyByDevice.keys.filter { !$0.contains("::") }
+        for bareKey in unscopedHourlyKeys {
+            guard let legacyBuckets = stored.hourlyByDevice.removeValue(forKey: bareKey) else { continue }
+            let targetKey = "\(scope)::\(bareKey)"
+            if var existing = stored.hourlyByDevice[targetKey] {
+                for bucket in legacyBuckets where !existing.contains(where: { isSameHour($0.bucketStart, bucket.bucketStart) }) {
+                    existing.append(bucket)
+                }
+                existing.sort { $0.bucketStart < $1.bucketStart }
+                stored.hourlyByDevice[targetKey] = Array(existing.suffix(Self.retentionHours))
+            } else {
+                stored.hourlyByDevice[targetKey] = legacyBuckets
+            }
+            didMigrate = true
+        }
+
+        let unscopedDailyKeys = stored.dailyByDevice.keys.filter { !$0.contains("::") }
+        for bareKey in unscopedDailyKeys {
+            guard let legacyBuckets = stored.dailyByDevice.removeValue(forKey: bareKey) else { continue }
+            let targetKey = "\(scope)::\(bareKey)"
+            if var existing = stored.dailyByDevice[targetKey] {
+                for bucket in legacyBuckets where !existing.contains(where: { calendar.isDate($0.bucketStart, inSameDayAs: bucket.bucketStart) }) {
+                    existing.append(bucket)
+                }
+                existing.sort { $0.bucketStart < $1.bucketStart }
+                stored.dailyByDevice[targetKey] = Array(existing.suffix(Self.retentionDays))
+            } else {
+                stored.dailyByDevice[targetKey] = legacyBuckets
+            }
+            didMigrate = true
+        }
+
+        let unscopedSynced = stored.cloudSyncedDevices.filter { !$0.contains("::") }
+        for bareKey in unscopedSynced {
+            stored.cloudSyncedDevices.remove(bareKey)
+            stored.cloudSyncedDevices.insert("\(scope)::\(bareKey)")
+            didMigrate = true
+        }
+
+        if didMigrate {
+            persist()
+        }
     }
 
     // MARK: - Local Snapshot Recording
@@ -260,8 +365,9 @@ public final class SensorHistory {
             let t = Self.sanitizeTemperature(spec.temperature)
             let h = Self.sanitizeHumidity(spec.humidity)
             guard t != nil || h != nil else { continue }
+            let key = scopedKey(for: device.id)
 
-            var hourly = stored.hourlyByDevice[device.id] ?? []
+            var hourly = stored.hourlyByDevice[key] ?? []
             if let idx = hourly.firstIndex(where: { isSameHour($0.bucketStart, hourStart) }) {
                 if hourly[idx].addSample(temperature: t, humidity: h) {
                     shouldPersist = true
@@ -272,9 +378,9 @@ public final class SensorHistory {
                 hourly.append(bucket)
                 shouldPersist = true
             }
-            stored.hourlyByDevice[device.id] = hourly
+            stored.hourlyByDevice[key] = hourly
 
-            var daily = stored.dailyByDevice[device.id] ?? []
+            var daily = stored.dailyByDevice[key] ?? []
             if let idx = daily.firstIndex(where: { calendar.isDate($0.bucketStart, inSameDayAs: dayStart) }) {
                 if daily[idx].addSample(temperature: t, humidity: h) {
                     shouldPersist = true
@@ -285,7 +391,7 @@ public final class SensorHistory {
                 daily.append(bucket)
                 shouldPersist = true
             }
-            stored.dailyByDevice[device.id] = daily
+            stored.dailyByDevice[key] = daily
         }
 
         guard shouldPersist else { return }
@@ -308,79 +414,90 @@ public final class SensorHistory {
             return
         }
 
-        var didChange = false
+        let key = scopedKey(for: deviceId)
+        var aggregatedIncoming: [SensorBucketRecord] = []
+
         for sample in samples {
             let t = Self.sanitizeTemperature(sample.temperature)
             let h = Self.sanitizeHumidity(sample.humidity)
             guard t != nil || h != nil else { continue }
 
+            let bucketDate: Date
             switch window {
             case .last24Hours:
-                let hourStart = startOfHour(for: sample.timestamp)
-                var hourly = stored.hourlyByDevice[deviceId] ?? []
-                if let idx = hourly.firstIndex(where: { isSameHour($0.bucketStart, hourStart) }) {
-                    if hourly[idx].addSample(
-                        temperature: t,
-                        minTemp: sample.minTemperature,
-                        maxTemp: sample.maxTemperature,
-                        humidity: h,
-                        minHum: sample.minHumidity,
-                        maxHum: sample.maxHumidity,
-                        replace: true
-                    ) {
-                        didChange = true
-                    }
-                } else {
-                    var bucket = SensorBucketRecord(bucketStart: hourStart)
-                    _ = bucket.addSample(
-                        temperature: t,
-                        minTemp: sample.minTemperature,
-                        maxTemp: sample.maxTemperature,
-                        humidity: h,
-                        minHum: sample.minHumidity,
-                        maxHum: sample.maxHumidity,
-                        replace: true
-                    )
-                    hourly.append(bucket)
-                    didChange = true
-                }
-                stored.hourlyByDevice[deviceId] = hourly
-
+                bucketDate = startOfHour(for: sample.timestamp)
             case .last7Days:
-                let dayStart = calendar.startOfDay(for: sample.timestamp)
-                var daily = stored.dailyByDevice[deviceId] ?? []
-                if let idx = daily.firstIndex(where: { calendar.isDate($0.bucketStart, inSameDayAs: dayStart) }) {
-                    if daily[idx].addSample(
-                        temperature: t,
-                        minTemp: sample.minTemperature,
-                        maxTemp: sample.maxTemperature,
-                        humidity: h,
-                        minHum: sample.minHumidity,
-                        maxHum: sample.maxHumidity,
-                        replace: true
-                    ) {
-                        didChange = true
-                    }
-                } else {
-                    var bucket = SensorBucketRecord(bucketStart: dayStart)
-                    _ = bucket.addSample(
-                        temperature: t,
-                        minTemp: sample.minTemperature,
-                        maxTemp: sample.maxTemperature,
-                        humidity: h,
-                        minHum: sample.minHumidity,
-                        maxHum: sample.maxHumidity,
-                        replace: true
-                    )
-                    daily.append(bucket)
-                    didChange = true
+                bucketDate = calendar.startOfDay(for: sample.timestamp)
+            }
+
+            if let idx = aggregatedIncoming.firstIndex(where: {
+                switch window {
+                case .last24Hours: return isSameHour($0.bucketStart, bucketDate)
+                case .last7Days: return calendar.isDate($0.bucketStart, inSameDayAs: bucketDate)
                 }
-                stored.dailyByDevice[deviceId] = daily
+            }) {
+                _ = aggregatedIncoming[idx].addSample(
+                    temperature: t,
+                    minTemp: sample.minTemperature,
+                    maxTemp: sample.maxTemperature,
+                    humidity: h,
+                    minHum: sample.minHumidity,
+                    maxHum: sample.maxHumidity,
+                    replace: false
+                )
+            } else {
+                var bucket = SensorBucketRecord(bucketStart: bucketDate)
+                _ = bucket.addSample(
+                    temperature: t,
+                    minTemp: sample.minTemperature,
+                    maxTemp: sample.maxTemperature,
+                    humidity: h,
+                    minHum: sample.minHumidity,
+                    maxHum: sample.maxHumidity,
+                    replace: false
+                )
+                aggregatedIncoming.append(bucket)
             }
         }
 
-        if !stored.cloudSyncedDevices.contains(deviceId) {
-            stored.cloudSyncedDevices.insert(deviceId)
+        guard !aggregatedIncoming.isEmpty else {
+            revision &+= 1
+            return
+        }
+
+        var didChange = false
+        switch window {
+        case .last24Hours:
+            var hourly = stored.hourlyByDevice[key] ?? []
+            for incoming in aggregatedIncoming {
+                if let idx = hourly.firstIndex(where: { isSameHour($0.bucketStart, incoming.bucketStart) }) {
+                    if hourly[idx].mergeReplacingMetrics(from: incoming) {
+                        didChange = true
+                    }
+                } else {
+                    hourly.append(incoming)
+                    didChange = true
+                }
+            }
+            stored.hourlyByDevice[key] = hourly
+
+        case .last7Days:
+            var daily = stored.dailyByDevice[key] ?? []
+            for incoming in aggregatedIncoming {
+                if let idx = daily.firstIndex(where: { calendar.isDate($0.bucketStart, inSameDayAs: incoming.bucketStart) }) {
+                    if daily[idx].mergeReplacingMetrics(from: incoming) {
+                        didChange = true
+                    }
+                } else {
+                    daily.append(incoming)
+                    didChange = true
+                }
+            }
+            stored.dailyByDevice[key] = daily
+        }
+
+        if !stored.cloudSyncedDevices.contains(key) {
+            stored.cloudSyncedDevices.insert(key)
             didChange = true
         }
 
@@ -399,6 +516,7 @@ public final class SensorHistory {
         now: Date = Date()
     ) -> [SensorHistoryPoint] {
         _ = revision
+        let key = scopedKey(for: deviceId)
         switch window {
         case .last24Hours:
             let currentHour = startOfHour(for: now)
@@ -406,7 +524,7 @@ public final class SensorHistory {
             guard let firstHour = calendar.date(byAdding: .hour, value: -(count - 1), to: currentHour) else {
                 return []
             }
-            let buckets = stored.hourlyByDevice[deviceId] ?? []
+            let buckets = stored.hourlyByDevice[key] ?? []
             var result: [SensorHistoryPoint] = []
             result.reserveCapacity(count)
             for offset in 0..<count {
@@ -425,7 +543,7 @@ public final class SensorHistory {
             guard let firstDay = calendar.date(byAdding: .day, value: -(count - 1), to: today) else {
                 return []
             }
-            let buckets = stored.dailyByDevice[deviceId] ?? []
+            let buckets = stored.dailyByDevice[key] ?? []
             var result: [SensorHistoryPoint] = []
             result.reserveCapacity(count)
             for offset in 0..<count {
@@ -477,7 +595,7 @@ public final class SensorHistory {
 
     public func hasCloudHistory(forDevice deviceId: String) -> Bool {
         _ = revision
-        return stored.cloudSyncedDevices.contains(deviceId)
+        return stored.cloudSyncedDevices.contains(scopedKey(for: deviceId))
     }
 
     public func isLoading(deviceId: String, window: SensorHistoryWindow) -> Bool {
@@ -529,8 +647,15 @@ public final class SensorHistory {
         return (value * 10).rounded() / 10
     }
 
+    private func scopedKey(for deviceId: String) -> String {
+        guard !connectionScope.isEmpty, connectionScope != "default" else {
+            return deviceId
+        }
+        return "\(connectionScope)::\(deviceId)"
+    }
+
     private func syncKey(deviceId: String, window: SensorHistoryWindow) -> String {
-        "\(deviceId)|\(window.rawValue)"
+        "\(scopedKey(for: deviceId))|\(window.rawValue)"
     }
 
     private func startOfHour(for date: Date) -> Date {

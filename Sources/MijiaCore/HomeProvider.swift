@@ -425,10 +425,36 @@ public actor HAWebSocketProvider: HomeProvider {
     public static func normalizeBaseURL(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         while s.hasSuffix("/") { s.removeLast() }
-        if !s.hasPrefix("http://") && !s.hasPrefix("https://") {
+        let lower = s.lowercased()
+        if lower.hasPrefix("https://") {
+            s = "https://" + s.dropFirst("https://".count)
+        } else if lower.hasPrefix("http://") {
+            s = "http://" + s.dropFirst("http://".count)
+        } else {
             s = "http://\(s)"
         }
         return s
+    }
+
+    /// Normalizes scheme and host case-insensitively while preserving case-sensitive reverse-proxy URL paths.
+    public static func canonicalHistoryScopeURL(_ raw: String) -> String {
+        let base = normalizeBaseURL(raw)
+        if var components = URLComponents(string: base) {
+            components.scheme = components.scheme?.lowercased()
+            components.host = components.host?.lowercased()
+            if var formatted = components.string {
+                while formatted.hasSuffix("/") { formatted.removeLast() }
+                return formatted
+            }
+        }
+        guard let schemeRange = base.range(of: "://") else { return base.lowercased() }
+        let afterScheme = base[schemeRange.upperBound...]
+        if let slashIndex = afterScheme.firstIndex(of: "/") {
+            let authority = base[..<slashIndex].lowercased()
+            let path = base[slashIndex...]
+            return authority + path
+        }
+        return base.lowercased()
     }
 
     private static func makeWebSocketURL(from baseURL: String) -> URL? {
