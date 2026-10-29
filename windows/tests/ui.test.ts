@@ -6,6 +6,7 @@ import { Window } from "happy-dom";
 import { installWindow } from "./dom.js";
 import { MenuMijiaWindowsApp } from "../src/ui/app.js";
 import { cloudFixture } from "./cloudFixture.js";
+import { MiCloudClient, MiotSynthesizer } from "../src/core/miCloudClient.js";
 
 let dom: Window;
 
@@ -273,12 +274,13 @@ describe("Windows device control and undo", () => {
 });
 
 describe("Silent Xiaomi cloud refresh (#81)", { concurrency: false }, () => {
-  async function readyCloudApp(): Promise<{
+  async function readyCloudApp(configure?: (cloud: ReturnType<typeof cloudFixture>) => void): Promise<{
     cloud: ReturnType<typeof cloudFixture>;
     triggerRefresh(): void;
     runTimerTick(): void;
   }> {
     const cloud = cloudFixture([]);
+    configure?.(cloud);
     let timerTick: (() => void) | null = null;
     const timerWindow = window as unknown as {
       setInterval: (handler: () => void, timeout?: number) => number;
@@ -313,6 +315,102 @@ describe("Silent Xiaomi cloud refresh (#81)", { concurrency: false }, () => {
       },
     };
   }
+
+  it("keeps device and room positions when cloud polling permutes the same records", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp((fixture) => {
+      const light = fixture.deviceRecords[0];
+      assert.ok(light);
+      fixture.deviceRecords.push({ ...light, did: "second-light", name: "第二盏灯" });
+      fixture.deviceRecords.push(
+        fixture.sensorRecord("sensor-bedroom", "主卧温湿度计"),
+        fixture.sensorRecord("sensor-balcony", "阳台温湿度计"),
+      );
+      fixture.roomRecords.push(
+        { id: "living", name: "客厅", dids: ["fixture-light"] },
+        { id: "study", name: "书房", dids: ["second-light"] },
+      );
+    });
+    const ids = () => Array.from(document.querySelectorAll<HTMLElement>("[data-tile-id]"), (node) => node.dataset.tileId);
+    const rooms = () => Array.from(document.querySelectorAll<HTMLElement>("[data-room]"), (node) => node.dataset.room);
+    const initialIds = ids();
+    const initialRooms = rooms();
+    const envLabels = () => Array.from(document.querySelectorAll(".cc-env-label"), (node) => node.textContent);
+    const initialEnvLabels = envLabels();
+    assert.deepEqual(initialEnvLabels, ["主卧", "阳台"]);
+    const popover = element(".cc-popover");
+    for (let i = 0; i < 4; i++) {
+      cloud.deviceRecords.reverse();
+      cloud.roomRecords.reverse();
+      cloud.values.set(2, 51 + i);
+      cloud.sensorValues.set(1, 24 + i);
+      const held = cloud.holdNextRead();
+      triggerRefresh();
+      await withTimeout(held.started, "Polling did not request properties");
+      held.release();
+      await withTimeout(held.finished, "Polling did not finish");
+      await setImmediate();
+      assert.deepEqual(ids(), initialIds, "cloud response order moved device tiles");
+      assert.deepEqual(rooms(), initialRooms, "cloud response order moved room tabs");
+      assert.deepEqual(envLabels(), initialEnvLabels, "cloud response order moved environment chips");
+      assert.match(tile("fixture-light"), new RegExp(`${51 + i}%`));
+      assert.match(textOf(".cc-env-strip"), new RegExp(`${24 + i}\\.0`));
+      assert.ok(element(".cc-popover") === popover, "order-only refresh rebuilt the panel");
+    }
+  });
+
+  it("appends new devices, removes missing devices and retains a partial custom order", async () => {
+    const { cloud, triggerRefresh } = await readyCloudApp((fixture) => {
+      const light = fixture.deviceRecords[0];
+      assert.ok(light);
+      fixture.deviceRecords.push(
+        { ...light, did: "second-light" }, { ...light, did: "third-light" },
+      );
+      const stored = localStorage.getItem("menumijia.windows.settings.v2");
+      assert.ok(stored);
+      localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+        ...JSON.parse(stored), layout: { order: ["third-light"] },
+      }));
+    });
+    const light = cloud.deviceRecords[0];
+    assert.ok(light);
+    cloud.deviceRecords.splice(0, cloud.deviceRecords.length,
+      { ...light, did: "new-light" }, { ...light, did: "third-light" }, light,
+    );
+    const held = cloud.holdNextRead();
+    triggerRefresh();
+    await withTimeout(held.started, "Polling did not request properties");
+    held.release();
+    await withTimeout(held.finished, "Polling did not finish");
+    await setImmediate();
+    assert.deepEqual(
+      Array.from(document.querySelectorAll<HTMLElement>("[data-tile-id]"), (node) => node.dataset.tileId),
+      ["third-light", "fixture-light", "new-light"],
+    );
+    const stored = localStorage.getItem("menumijia.windows.settings.v2");
+    assert.ok(stored);
+    const cached: unknown = JSON.parse(stored);
+    assert.ok(cached && typeof cached === "object" && "cachedXiaomiDevices" in cached && Array.isArray(cached.cachedXiaomiDevices));
+    assert.deepEqual(cached.cachedXiaomiDevices.map((device) => device.id), ["fixture-light", "third-light", "new-light"]);
+  });
+
+  it("retains the cached device positions on the first refresh after restart", async () => {
+    await readyCloudApp((fixture) => {
+      const light = fixture.deviceRecords[0];
+      assert.ok(light);
+      fixture.deviceRecords.push({ ...light, did: "second-light" });
+      const records = MiCloudClient.parseDeviceList({ list: [...fixture.deviceRecords].reverse() });
+      const cached = MiotSynthesizer.synthesize(records, [], {}, new Map());
+      const stored = localStorage.getItem("menumijia.windows.settings.v2");
+      assert.ok(stored);
+      localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+        ...JSON.parse(stored), cachedXiaomiDevices: cached.devices,
+      }));
+    });
+    assert.deepEqual(
+      Array.from(document.querySelectorAll<HTMLElement>("[data-tile-id]"), (node) => node.dataset.tileId),
+      ["second-light", "fixture-light"],
+    );
+  });
 
   it("keeps the current DOM when polling returns the same snapshot", async () => {
     const { cloud, triggerRefresh } = await readyCloudApp();

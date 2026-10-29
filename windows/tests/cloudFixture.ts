@@ -19,7 +19,24 @@ const spec: MiotDeviceSpec = {
   }],
 };
 
+const sensorModel = "fixture.sensor_ht";
+const sensorSpec: MiotDeviceSpec = {
+  type: "urn:miot-spec-v2:device:temperature-humidity-sensor:0000A00A:review-test:1",
+  services: [{
+    iid: 2,
+    type: "urn:miot-spec-v2:service:temperature-humidity-sensor:00007814:review-test:1",
+    properties: [
+      { iid: 1, type: "urn:miot-spec-v2:property:temperature:00000020:review-test:1", format: "float", access: ["read"] },
+      { iid: 2, type: "urn:miot-spec-v2:property:relative-humidity:0000000C:review-test:1", format: "uint8", access: ["read"] },
+    ],
+    actions: [],
+  }],
+};
+
 export function cloudFixture(intents: readonly DeviceIntent[]) {
+  const deviceRecords = [{ did: "fixture-light", name: "测试灯", model, isOnline: true, spec_type: spec.type }];
+  const roomRecords: Array<{ id: string; name: string; dids: string[] }> = [];
+  const sensorValues = new Map<number, unknown>([[1, 23], [2, 65]]);
   const values = new Map<number, unknown>([[1, true], [2, 50], [3, 4100]]);
   const writes: Array<{ piid: number; value: unknown; accepted: boolean }> = [];
   const rejectedValues = new Map<number, unknown>([[2, 80]]);
@@ -36,11 +53,13 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
     if (name !== "native_http") return;
     assert.equal(typeof args.url, "string");
     const url = String(args.url);
-    if (url.includes("/instance?")) return { status: 200, headers: {}, body: JSON.stringify(spec) };
+    if (url.includes("/instance?")) return { status: 200, headers: {}, body: JSON.stringify(url.includes("temperature-humidity-sensor") ? sensorSpec : spec) };
     if (url.includes("/instances?")) return { status: 200, headers: {}, body: JSON.stringify({ instances: [{ model, type: spec.type }] }) };
     let result: unknown = {};
     if (url.includes("device_list")) {
-      result = { list: [{ did: "fixture-light", name: "测试灯", model, isOnline: true, spec_type: spec.type }] };
+      result = { list: deviceRecords };
+    } else if (url.includes("homeroom/")) {
+      result = { homelist: [{ id: "fixture-home", name: "测试家庭", roomlist: roomRecords }] };
     } else if (url.includes("miotspec/prop/")) {
       assert.equal(typeof args.body, "string");
       const fields = new URLSearchParams(String(args.body));
@@ -69,7 +88,9 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
           if (accepted) values.set(piid, entry.value);
           return { did: "fixture-light", siid: 2, piid, code: accepted ? 0 : -704042011 };
         }
-        return { did: "fixture-light", siid: 2, piid, code: 0, value: sourceValues.get(piid) };
+        assert.ok("did" in entry && typeof entry.did === "string");
+        const props = deviceRecords.find((record) => record.did === entry.did)?.model === sensorModel ? sensorValues : sourceValues;
+        return { did: entry.did, siid: 2, piid, code: 0, value: props.get(piid) };
       });
       completedReads += 1;
       completedGate?.resolveFinished();
@@ -82,11 +103,15 @@ export function cloudFixture(intents: readonly DeviceIntent[]) {
     hasCompletedOnboarding: true,
     habitLearningEnabled: false,
     miSession: { userId: "fixture-user", cUserId: "", ssecurity: security, serviceToken: "fixture-token", passToken: "", region: "cn" },
-    cachedModelTypes: { [model]: spec.type },
+    cachedModelTypes: { [model]: spec.type, [sensorModel]: sensorSpec.type },
     learnedShortcuts: [{ phrase: "部分失败", reply: "执行测试操作", intents, learnedAt: "2026-01-01T00:00:00Z" }],
   }));
   return {
     values,
+    deviceRecords,
+    roomRecords,
+    sensorValues,
+    sensorRecord: (did: string, name: string) => ({ did, name, model: sensorModel, isOnline: true, spec_type: sensorSpec.type }),
     writes,
     completedReads: () => completedReads,
     /** Captures the next property read's values, then waits until the test releases the response. */
