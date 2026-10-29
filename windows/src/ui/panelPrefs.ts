@@ -87,7 +87,7 @@ export function nextSize(size: Exclude<TileSize, "auto">): Exclude<TileSize, "au
 }
 
 /** Sorts by the saved order; devices not in it keep their incoming order after the known ones. */
-export function applyOrder(order: readonly string[], devices: readonly SmartDevice[]): SmartDevice[] {
+export function applyOrder<T extends { readonly id: string }>(order: readonly string[], devices: readonly T[]): T[] {
   if (order.length === 0) return [...devices];
   const rank = new Map<string, number>();
   order.forEach((id, i) => { if (!rank.has(id)) rank.set(id, i); });

@@ -1040,7 +1040,7 @@ export class MenuMijiaWindowsApp {
       ]);
       const nextHomes = homeOptions(allRooms);
       if (this.cloudSnapshotIsStale(session, stateRevisionAtStart)) return;
-      this.homes = nextHomes;
+      this.homes = applyOrder(this.homes.map((home) => home.id), nextHomes);
       const { devices: rawDevices, rooms } = this.filterBySelectedHome(allDevices, allRooms);
 
       // Stage 1: Instant synthesis with cached/fallback specs so user sees their real devices immediately
@@ -1074,12 +1074,16 @@ export class MenuMijiaWindowsApp {
 
       const home = MiotSynthesizer.synthesize(rawDevices, rooms, specs, values);
       if (this.cloudSnapshotIsStale(session, stateRevisionAtStart)) return;
-      this.devices = home.devices;
-      this.environmentReadings = [...home.environmentReadings];
+      // Cloud list order is not a layout preference. Keep known devices in their
+      // displayed order, use fresh values, drop removed ids and append new ones.
+      this.devices = applyOrder(this.devices.map((device) => device.id), home.devices);
+      this.environmentReadings = applyOrder(
+        this.devices.map((device) => device.id), home.environmentReadings,
+      );
       presentationChanged =
         presentationChanged || this.cloudPresentationFingerprint() !== previousPresentation;
 
-      this.settings.cachedXiaomiDevices = home.devices;
+      this.settings.cachedXiaomiDevices = this.devices;
       const knownModelTypes = this.specResolver.exportKnownModelTypes(
         rawDevices.map((d) => d.model),
       );
