@@ -110,5 +110,17 @@ describe("panel layout prefs", () => {
       kind: "recorded",
       shortcut: "F9",
     });
+    assert.deepEqual(
+      recordShortcutFromKeyEvent({ key: "1", code: "Numpad1", ctrlKey: true }),
+      { kind: "recorded", shortcut: "Ctrl+Numpad1" },
+    );
+    assert.deepEqual(
+      recordShortcutFromKeyEvent({ key: "1", code: "NumpadEnd", ctrlKey: true }),
+      { kind: "invalid" },
+    );
+    assert.deepEqual(
+      recordShortcutFromKeyEvent({ key: "-", code: "NumpadSubtract", ctrlKey: true }),
+      { kind: "invalid" },
+    );
   });
 });

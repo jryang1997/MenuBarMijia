@@ -257,6 +257,23 @@ public final class EnergyHistory {
         sum(dailyTotals(dayCount: dayCount, now: now).map(\.kwh))
     }
 
+    /// Today's measured consumption for a single plug, or `nil` when no counter reading has been
+    /// observed for this device today. Returns `0` once the plug has been observed today and its
+    /// counter has not increased yet.
+    public func todayKwh(forDevice deviceId: String, now: Date = Date()) -> Double? {
+        let today = calendar.startOfDay(for: now)
+        if let bucket = stored.buckets.first(where: { calendar.isDate($0.day, inSameDayAs: today) }),
+           let kwh = bucket.perDevice[deviceId], kwh.isFinite, kwh >= 0 {
+            return kwh
+        }
+        guard stored.baselines[deviceId] != nil,
+              let lastSeen = stored.lastSampleAt[deviceId],
+              calendar.isDate(lastSeen, inSameDayAs: today) else {
+            return nil
+        }
+        return 0
+    }
+
     // MARK: Price and cost
 
     /// Stores the price per kWh. A non-finite or non-positive value clears it (cost stays hidden).

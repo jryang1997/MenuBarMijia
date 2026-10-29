@@ -116,6 +116,39 @@ describe("Service endpoint submission", () => {
     ]);
     assert.equal(calls.some((call) => call.command === "set_allowed_origins"), false);
   });
+
+  it("does not re-prompt a declined endpoint on unrelated background saves, but retries when settings are explicitly saved", async () => {
+    let endpointAttempts = 0;
+    const invoke = async (command: string) => {
+      if (command === "set_service_endpoints") {
+        endpointAttempts += 1;
+        throw new Error("未授权访问来源：https://api.deepseek.com:8443");
+      }
+      return undefined;
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+      assistantBaseURL: "https://api.deepseek.com:8443/v1",
+      haBaseURL: "",
+    }));
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+    assert.equal(endpointAttempts, 1);
+
+    // Unrelated settings saves (e.g. toggling interface language or background cloud refresh) must not re-prompt.
+    await click("#btn-settings");
+    await click('[data-interface-language="zh-Hans"]');
+    await setImmediate();
+    assert.equal(endpointAttempts, 1);
+
+    // Clicking "保存设置" explicitly retries endpoint authorization.
+    await click("#btn-save-settings");
+    await setImmediate();
+    assert.equal(endpointAttempts, 2);
+  });
 });
 
 describe("Windows device control and undo", () => {

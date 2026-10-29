@@ -870,7 +870,8 @@ public struct DeviceCardView: View {
     // MARK: - 4. Smart Plug (Coffee Machine) Controls
 
     private func plugDrawer(_ spec: PlugSpec) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let todayKwh = store.energyHistory.todayKwh(forDevice: device.id)
+        return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L10n.tr("实时功率", "Live Power"))
@@ -887,9 +888,22 @@ public struct DeviceCardView: View {
                     Text(L10n.tr("今日用电", "Today"))
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Text(String(format: "%.2f kWh", spec.energyKwh ?? 0))
+                    Text(todayKwh.map { String(format: "%.2f kWh", $0) } ?? "—")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .monospacedDigit()
+                }
+
+                if let totalKwh = spec.energyKwh, totalKwh.isFinite, totalKwh >= 0 {
+                    Divider().frame(height: 22)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.tr("累计电量", "Total"))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "%.2f kWh", totalKwh))
+                            .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                    }
                 }
 
                 Spacer()

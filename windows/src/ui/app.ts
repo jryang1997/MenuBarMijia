@@ -781,9 +781,9 @@ export class MenuMijiaWindowsApp {
     }
   }
 
-  private saveSettings(): void {
+  private saveSettings(forceSubmitEndpoints = false): void {
     writeSettingsForStorage(this.settings);
-    this.submitServiceEndpoints();
+    this.submitServiceEndpoints(forceSubmitEndpoints);
     void this.persistCredentials();
   }
 
@@ -805,20 +805,16 @@ export class MenuMijiaWindowsApp {
     applyTemperatureUnit(locale, this.settings.temperatureUnit);
   }
 
-  private submitServiceEndpoints(): void {
+  private submitServiceEndpoints(force = false): void {
     const assistantUrl = this.settings.assistantBaseURL.trim();
     const haUrl = this.settings.haBaseURL.trim();
     const serialized = `${assistantUrl}\n${haUrl}`;
-    if (serialized === this.lastSubmittedEndpoints) return;
+    if (!force && serialized === this.lastSubmittedEndpoints) return;
+    this.lastSubmittedEndpoints = serialized;
     const invoke = window.__TAURI_INTERNALS__?.invoke;
-    if (!invoke) {
-      this.lastSubmittedEndpoints = serialized;
-      return;
-    }
+    if (!invoke) return;
     void invoke("set_service_endpoints", { assistantUrl, haUrl }).then(
-      () => {
-        this.lastSubmittedEndpoints = serialized;
-      },
+      () => undefined,
       () => undefined,
     );
   }
@@ -3695,7 +3691,7 @@ export class MenuMijiaWindowsApp {
       this.pendingCloudConsent = null;
       if (!this.settings.cloudConsentEndpoints.includes(pending.endpoint)) {
         this.settings.cloudConsentEndpoints.push(pending.endpoint);
-        this.saveSettings();
+        this.saveSettings(true);
       }
       void this.handleNaturalCommand(pending.utterance, true);
     });
@@ -3850,7 +3846,7 @@ export class MenuMijiaWindowsApp {
       const fallbackModel = inferredPreset.defaultModel || "gpt-4o-mini";
       if (modelEl) this.settings.assistantModel = modelEl.value.trim() || fallbackModel;
       if (habitEl) this.settings.habitLearningEnabled = habitEl.checked;
-      this.saveSettings();
+      this.saveSettings(true);
       this.activeSheet = "none";
       this.isRecordingHotkey = false;
       this.hotkeyNeedsHint = false;

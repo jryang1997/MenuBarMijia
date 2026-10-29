@@ -546,5 +546,29 @@ struct EnergyHistoryTests {
         #expect(history.recordingStartedAt == nil)
         #expect(history.hasMeasuredConsumption == false)
         #expect(history.totalKwh(dayCount: 7, now: testDate(0, 9)) == 0)
+        #expect(history.todayKwh(forDevice: "plug_heater", now: testDate(0, 9)) == nil)
+    }
+
+    @Test("todayKwh(forDevice:) returns 0 at baseline, the measured daily delta today, and nil on unobserved days")
+    @MainActor
+    func perDeviceTodayKwh() throws {
+        let (defaults, suite) = try makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let history = EnergyHistory(defaults: defaults, calendar: testCalendar)
+
+        // Before any reading, todayKwh is nil.
+        #expect(history.todayKwh(forDevice: "plug_a", now: testDate(0, 9)) == nil)
+
+        // First observation today with a large lifetime counter (250 kWh) only sets the baseline -> 0 today.
+        history.record(devices: [testPlug("plug_a", "插座A", kwh: 250.0)], now: testDate(0, 10))
+        #expect(history.todayKwh(forDevice: "plug_a", now: testDate(0, 10)) == 0)
+
+        // Second observation today (+0.35 kWh) records 0.35 kWh for today, not 250.35 kWh.
+        history.record(devices: [testPlug("plug_a", "插座A", kwh: 250.35)], now: testDate(0, 12))
+        let today = try #require(history.todayKwh(forDevice: "plug_a", now: testDate(0, 12)))
+        #expect(abs(today - 0.35) < 1e-9)
+
+        // Tomorrow before any observation of plug_a, todayKwh is nil rather than claiming 0.
+        #expect(history.todayKwh(forDevice: "plug_a", now: testDate(1, 8)) == nil)
     }
 }

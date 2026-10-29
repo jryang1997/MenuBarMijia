@@ -170,6 +170,36 @@
         }
       ]
     },
+    "cuco.plug.cp2d": {
+      "type": "urn:miot-spec-v2:device:outlet:0000A002:cuco-cp2d:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:switch:0000780C:cuco-cp2d:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:on:00000006:cuco-cp2d:1",
+              "format": "bool",
+              "access": ["read", "write"]
+            }
+          ]
+        },
+        {
+          "iid": 3,
+          "type": "urn:miot-spec-v2:service:power-consumption:0000780E:cuco-cp2d:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:power-consumption:0000002F:cuco-cp2d:1",
+              "format": "uint32",
+              "access": ["read"],
+              "unit": "0.01kWh"
+            }
+          ]
+        }
+      ]
+    },
     "dmaker.fan.p5": {
       "type": "urn:miot-spec-v2:device:fan:0000A005:dmaker-p5:1",
       "services": [
@@ -384,6 +414,12 @@
       "isOnline": true
     },
     {
+      "did": "did_plug_unit",
+      "name": "计量插座",
+      "model": "cuco.plug.cp2d",
+      "isOnline": true
+    },
+    {
       "did": "did_fan",
       "name": "卧室落地扇",
       "model": "dmaker.fan.p5",
@@ -447,6 +483,8 @@
     { "did": "did_plug", "siid": 3, "piid": 1, "value": 185 },
     { "did": "did_plug", "siid": 3, "piid": 6, "value": 48.5 },
     { "did": "did_plug", "siid": 7, "piid": 1, "value": 1 },
+    { "did": "did_plug_unit", "siid": 2, "piid": 1, "value": true },
+    { "did": "did_plug_unit", "siid": 3, "piid": 1, "value": 512 },
     { "did": "did_fan", "siid": 2, "piid": 1, "value": true },
     { "did": "did_fan", "siid": 2, "piid": 2, "value": 2 },
     { "did": "did_fan", "siid": 2, "piid": 3, "value": 1 },
@@ -506,6 +544,15 @@
       "energyKwh": 1.85,
       "childLockEntityId": "miot:did_plug:7",
       "isChildLocked": true
+    },
+    "did_plug_unit": {
+      "kind": "plug",
+      "switchEntityId": "miot:did_plug_unit:2",
+      "isOn": true,
+      "powerWatts": null,
+      "energyKwh": 5.12,
+      "childLockEntityId": null,
+      "isChildLocked": false
     },
     "did_fan": {
       "kind": "fan",
@@ -583,6 +630,10 @@
       { "did": "did_plug", "siid": 3, "piid": 6 },
       { "did": "did_plug", "siid": 3, "piid": 1 },
       { "did": "did_plug", "siid": 7, "piid": 1 }
+    ],
+    "did_plug_unit": [
+      { "did": "did_plug_unit", "siid": 2, "piid": 1 },
+      { "did": "did_plug_unit", "siid": 3, "piid": 1 }
     ],
     "did_fan": [
       { "did": "did_fan", "siid": 2, "piid": 1 },
