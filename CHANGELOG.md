@@ -1,5 +1,19 @@
 # 更新记录
 
+## 1.1.4
+
+### 新功能与体验提升
+- **温湿度传感器 24 小时 / 7 天历史折线图（[#90](https://github.com/jryang1997/MenuBarMijia/pull/90), [#92](https://github.com/jryang1997/MenuBarMijia/pull/92)）**：点击传感器卡片或顶部环境胶囊即可展开分时段温湿度趋势折线图，自动拉取米家云统计与蓝牙网关历史记录，融合本机采样并按家庭连接源隔离存储；展示最新、最高、最低、均值与悬停读数。
+- **macOS 按住说话（`⌥M` 全局快捷键 + 菜单栏图标长按）（[#89](https://github.com/jryang1997/MenuBarMijia/pull/89), [#95](https://github.com/jryang1997/MenuBarMijia/pull/95)）**：长按 `⌥M` 或菜单栏图标即可直接唤起语音聆听，松开自动发送执行；修复 macOS 26+ 系统级状态栏长按手势触发兼容问题。
+- **指令栏执行路径与耗时回执胶囊（[#94](https://github.com/jryang1997/MenuBarMijia/pull/94)）**：指令执行完成后在回复旁展示 `⚡ 本地 · <耗时>` 或 `🧠 AI · <耗时>` 胶囊，命中个人习惯记忆时附带 `💡 习惯` 标记与悬停摘要。
+- **Windows 自定义全局快捷键与冲突检测（[#43](https://github.com/jryang1997/MenuBarMijia/issues/43), [#86](https://github.com/jryang1997/MenuBarMijia/pull/86), [#87](https://github.com/jryang1997/MenuBarMijia/pull/87)）**：支持在设置中录制自定义快捷键、重启保持，并在快捷键被其他软件占用时给出冲突提示与重试入口。
+- **米家云插座累计电量映射（[#62](https://github.com/jryang1997/MenuBarMijia/issues/62), [#85](https://github.com/jryang1997/MenuBarMijia/pull/85)）**：macOS 与 Windows 双端解析 MIoT `power-consumption` 累计电量（kWh / 0.01kWh / Wh），接入 7 天用电统计与电费估算。
+
+### 界面与稳定性修复
+- **macOS 房间横条鼠标滚轮横滑与自动居中（[#91](https://github.com/jryang1997/MenuBarMijia/pull/91)）**：指针悬停在顶部横条时支持普通鼠标竖向滚轮平滑横向滚动，点选或快捷键切换房间时自动滚动居中。
+- **macOS 经典皮肤深浅色外观修复（[#88](https://github.com/jryang1997/MenuBarMijia/pull/88)）**：修复经典皮肤在强制深色/浅色设置下面板材质与背景色未跟随切换的问题。
+- **Windows 控制面板防裁切优化**：加宽面板布局并允许顶部环境、快捷场景与房间胶囊自动折行，避免多设备下控件被裁切。
+
 ## 1.1.3
 
 ### Windows 修复
