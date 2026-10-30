@@ -332,6 +332,7 @@ struct SensorCardView: View {
                 }
             } else if let summary = historySummary {
                 HStack(spacing: 8) {
+                    statBadge(label: L10n.tr("最新", "Latest"), value: formatMetric(summary.latest, kind: selectedMetric))
                     statBadge(label: L10n.tr("最高", "High"), value: formatMetric(summary.max, kind: selectedMetric))
                     statBadge(label: L10n.tr("最低", "Low"), value: formatMetric(summary.min, kind: selectedMetric))
                     statBadge(label: L10n.tr("均值", "Avg"), value: formatMetric(summary.average, kind: selectedMetric))

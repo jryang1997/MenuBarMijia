@@ -702,13 +702,14 @@ public actor MiCloudClient: MiCloudAPI {
         return ((Double(f) * 10).rounded()) / 10
     }
 
-    /// Decodes a 4-character hex string containing at least one a-f hex letter (or leading zero byte)
+    /// Decodes a 4-character hex string containing at least one a-f hex letter (or little-endian high byte `00`–`03`)
     /// as a little-endian `Int16` scaled by 0.1 (MiBeacon v2/v3 `0x1004`/`0x1006`).
+    /// Excludes `"1000"` so a decimal 100.0% humidity reading (`1000` tenths) is not misread as `0x0010` (`1.6%`).
     static func decodeLittleEndianInt16Hex(_ hex: String) -> Double? {
-        guard hex.count == 4, hex.allSatisfy(\.isHexDigit) else { return nil }
+        guard hex.count == 4, hex != "1000", hex.allSatisfy(\.isHexDigit) else { return nil }
         let hasHexLetter = hex.contains { ("a"..."f").contains($0.lowercased()) }
-        let hasTrailingZeroHighByte = hex.hasSuffix("00") || hex.hasSuffix("01") || hex.hasSuffix("02")
-        guard hasHexLetter || hasTrailingZeroHighByte else { return nil }
+        let hasValidLittleEndianHighByte = hex.hasSuffix("00") || hex.hasSuffix("01") || hex.hasSuffix("02") || hex.hasSuffix("03")
+        guard hasHexLetter || hasValidLittleEndianHighByte else { return nil }
         let b0 = UInt8(hex.prefix(2), radix: 16)
         let b1 = UInt8(hex.suffix(2), radix: 16)
         guard let b0, let b1 else { return nil }

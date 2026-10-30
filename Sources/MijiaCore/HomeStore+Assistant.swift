@@ -243,7 +243,7 @@ extension HomeStore {
         setAssistantState(.thinking)
 
         let plan: IntentPlan
-        var usedHabitContext = false
+        var habitSummary: String?
         if let local = LocalIntentParser.parse(utterance, devices: devices, scenes: scenes) {
             plan = local
         } else if homeBackend == .demo {
@@ -266,7 +266,9 @@ extension HomeStore {
             }
             let resolver = makeAssistantResolver(config: config)
             let context = buildAssistantContext()
-            usedHabitContext = !context.habitSummary.isEmpty
+            if !context.habitSummary.isEmpty {
+                habitSummary = context.habitSummary
+            }
             do {
                 plan = try await resolver.resolve(utterance, devices: devices, scenes: scenes, context: context)
             } catch {
@@ -299,7 +301,8 @@ extension HomeStore {
             recordedUtterance: utterance,
             origin: origin,
             receiptStartedAt: startedAt,
-            usedHabitContext: usedHabitContext
+            usedHabitContext: habitSummary != nil,
+            habitSummary: habitSummary
         )
     }
 
@@ -496,7 +499,8 @@ extension HomeStore {
         recordedUtterance: String?,
         origin: AssistantExecutionOrigin,
         receiptStartedAt: Date? = nil,
-        usedHabitContext: Bool = false
+        usedHabitContext: Bool = false,
+        habitSummary: String? = nil
     ) async -> IntentPlan {
         let context = controlContextID
         let previousSnapshot = devices
@@ -595,7 +599,7 @@ extension HomeStore {
                     route: plan.source == .local ? .localRule : .aiModel,
                     elapsedMilliseconds: elapsedMilliseconds(since: start),
                     usedHabitContext: usedHabitContext,
-                    habitSummary: usedHabitContext ? plan.reply : nil
+                    habitSummary: usedHabitContext ? habitSummary : nil
                 )
             }
             setAssistantState(.done(plan.reply), receipt: receipt)

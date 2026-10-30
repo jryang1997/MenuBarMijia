@@ -518,6 +518,8 @@ struct AssistantTests {
         #expect(receipt.route == .aiModel)
         #expect(receipt.usedHabitContext == true)
         #expect(receipt.habitSummary?.isEmpty == false)
+        #expect(receipt.habitSummary != "晚安")
+        #expect(receipt.habitSummary?.contains("主卧床头灯") == true)
     }
 
     @Test("The receipt clears when the assistant reply resets")

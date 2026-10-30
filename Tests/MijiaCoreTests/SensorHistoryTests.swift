@@ -133,13 +133,20 @@ struct SensorHistoryTests {
         #expect(abs(scaledParsed[1].value - 23.5) < 0.001)
         #expect(abs(scaledParsed[2].value - 5.0) < 0.001)
 
-        // Humidity hex "b603" (0x03b6 = 950 tenths = 95.0%) must be scaled once, not twice to 9.5%.
+        // Humidity hex "b603" (0x03b6 = 950 tenths = 95.0%), all-digit high-humidity hex "2003" (0x0320 = 80.0%)
+        // and "8403" (0x0384 = 90.0%), plus decimal "1000" (1000 tenths = 100.0%) must all scale once.
         let humPayload: JSONValue = .array([
             .object(["time": .number(1_760_000_000), "value": .string("b603")]),
+            .object(["time": .number(1_760_003_600), "value": .string("2003")]),
+            .object(["time": .number(1_760_007_200), "value": .string("8403")]),
+            .object(["time": .number(1_760_010_800), "value": .string("1000")]),
         ])
         let humParsed = MiCloudClient.parseHistoryMetricPoints(humPayload, key: "1006", isTemperature: false)
-        #expect(humParsed.count == 1)
+        #expect(humParsed.count == 4)
         #expect(abs(humParsed[0].value - 95.0) < 0.001)
+        #expect(abs(humParsed[1].value - 80.0) < 0.001)
+        #expect(abs(humParsed[2].value - 90.0) < 0.001)
+        #expect(abs(humParsed[3].value - 100.0) < 0.001)
     }
 
     @Test("Aggregates multiple raw cloud samples in the same hour/day before replacing the bucket idempotently")
