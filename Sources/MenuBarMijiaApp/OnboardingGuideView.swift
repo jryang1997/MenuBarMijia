@@ -288,7 +288,7 @@ public struct OnboardingGuideView: View {
             }
         }
         .padding(11)
-        .glassTile(isActive: isBackendConnected, accent: .green, cornerRadius: 12)
+        .glassTile(isActive: isBackendConnected, cornerRadius: 12)
     }
 
     // MARK: - Step 2: AI Decision Model
@@ -386,7 +386,7 @@ public struct OnboardingGuideView: View {
             }
         }
         .padding(11)
-        .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+        .glassTile(isActive: false, cornerRadius: 12)
     }
 
     private func persistOnboardingAssistantDraft() {
@@ -467,7 +467,7 @@ public struct OnboardingGuideView: View {
             }
         }
         .padding(11)
-        .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+        .glassTile(isActive: false, cornerRadius: 12)
     }
 
     // MARK: - Footer

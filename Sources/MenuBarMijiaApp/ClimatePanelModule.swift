@@ -4,8 +4,6 @@ import MijiaCore
 /// Full-width air-conditioner panel: power, target temperature stepper with a range gauge, and
 /// mode chips on one card, so the common controls need no drawer.
 struct ClimatePanelModule: View {
-    @Environment(\.appSkin) private var skin
-    @Environment(\.skinPalette) private var palette
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.effectiveReduceMotion) private var reduceMotion
     @Namespace private var modeNamespace
@@ -20,16 +18,11 @@ struct ClimatePanelModule: View {
 
     private var isRunning: Bool { device.isOnline && spec.isOn && spec.hvacMode != "off" }
 
-    private var accent: Color {
-        skin.isClassic ? DevicePalette.accentColor(for: device) : palette.accent
-    }
+    private var accent: Color { DevicePalette.accentColor(for: device) }
 
-    private var modeColor: Color {
-        spec.hvacMode == "heat" ? Color(red: 0.95, green: 0.42, blue: 0.18) : Color(red: 0.12, green: 0.58, blue: 0.96)
-    }
-
-    private var fg: Color { skin.isClassic ? .primary : (isRunning ? palette.activeText : palette.fg) }
-    private var muted: Color { skin.isClassic ? .secondary : palette.muted }
+    /// A running unit sits on the bright platter, so its text flips to platter ink.
+    private var fg: Color { PanelLook.ink(isActive: isRunning) }
+    private var muted: Color { PanelLook.secondaryInk(isActive: isRunning) }
 
     private var isExpanded: Bool { forceExpanded || store.expandedDeviceId == device.id }
 
@@ -56,13 +49,13 @@ struct ClimatePanelModule: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 10)
-        .glassTile(isActive: isRunning, accent: accent, cornerRadius: 16)
+        .glassTile(isActive: isRunning, cornerRadius: DesignTokens.Radius.card)
         .opacity(device.isOnline ? 1 : 0.58)
         .disabled(!device.isOnline)
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: isRunning)
     }
 
-    // MARK: Strip: power badge · name (tap to expand) · − temp +
+    // MARK: Strip: power badge，name (tap to expand)，− temp +
 
     private var strip: some View {
         HStack(spacing: 8) {
@@ -72,55 +65,52 @@ struct ClimatePanelModule: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(isRunning ? (skin.isClassic ? AnyShapeStyle(modeColor) : AnyShapeStyle(palette.accentGradient)) : AnyShapeStyle(skin.isClassic ? Color.primary.opacity(0.08) : palette.chip))
+                        .fill(isRunning ? AnyShapeStyle(accent) : AnyShapeStyle(Color.primary.opacity(0.08)))
                         .frame(width: 32, height: 32)
                         .shadowIf(isRunning, color: accent.opacity(0.4), radius: 6)
                     Image(systemName: spec.hvacMode == "heat" ? "flame.fill" : "snowflake")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isRunning ? (skin.isClassic ? Color.white : palette.onAccent) : muted)
-                        .rotationEffect(.degrees(isRunning && !reduceMotion && spec.hvacMode != "heat" ? 180 : 0))
-                        .animation(.spring(response: 0.8, dampingFraction: 0.6), value: isRunning)
+                        .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
+                        .foregroundStyle(isRunning ? Color.white : muted)
+
                 }
             }
-            .buttonStyle(PressableCardButtonStyle(scaleAmount: 0.88))
+            .buttonStyle(PressableCardButtonStyle())
             .accessibilityLabel(Text(isRunning
                 ? L10n.tr("关闭 \(device.name)", "Turn off \(device.name)")
                 : L10n.tr("打开 \(device.name)", "Turn on \(device.name)")))
-            .skinHelp(isRunning ? L10n.tr("关闭空调", "Turn off") : L10n.tr("打开空调", "Turn on"))
+            .panelHelp(isRunning ? L10n.tr("关闭空调", "Turn off") : L10n.tr("打开空调", "Turn on"))
 
             Button {
                 withAnimation(AppleMotion.snappySpring) { store.toggleExpanded(device.id) }
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(device.name)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                         .foregroundStyle(fg)
                         .lineLimit(1)
                     HStack(spacing: 3) {
-                        Text(showRoomBadge ? "\(L10n.displayRoomName(device.roomName)) · \(statusLine)" : statusLine)
+                        Text(showRoomBadge ? "\(L10n.displayRoomName(device.roomName))，\(statusLine)" : statusLine)
                             .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
-                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                     .foregroundStyle(muted)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .skinHelp(L10n.tr("展开模式与风速", "Show modes and fan speed"))
+            .panelHelp(L10n.tr("展开模式与风速", "Show modes and fan speed"))
 
             stepButton(symbol: "minus", delta: -L10n.celsiusStep(spec.step))
 
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(L10n.temperatureValue(spec.targetTemperature))
-                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .font(.system(size: DesignTokens.TypeSize.reading, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText(value: spec.targetTemperature))
                 Text(L10n.temperatureSymbol)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    .font(.system(size: DesignTokens.TypeSize.title, weight: .semibold, design: .rounded))
                     .foregroundStyle(muted)
             }
             .foregroundStyle(fg)
@@ -136,7 +126,7 @@ struct ClimatePanelModule: View {
         if let cur = spec.currentTemperature {
             parts.append(L10n.format("室温 %@", "Room %@", L10n.temperature(cur, fractionDigits: 1)))
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: L10n.tr("，", ", "))
     }
 
     private var gauge: some View {
@@ -147,16 +137,13 @@ struct ClimatePanelModule: View {
                 Capsule(style: .continuous)
                     .fill(Color.primary.opacity(0.08))
                 Capsule(style: .continuous)
-                    .fill(LinearGradient(
-                        colors: [Color(red: 0.30, green: 0.66, blue: 1.0), Color(red: 1.0, green: 0.56, blue: 0.24)],
-                        startPoint: .leading, endPoint: .trailing
-                    ))
+                    .fill(isRunning ? accent : Color.secondary)
                     .opacity(isRunning ? 1 : 0.35)
                     .frame(width: max(6, geo.size.width * progress))
             }
         }
         .frame(height: 4)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: spec.targetTemperature)
+        .animation(reduceMotion ? nil : AppleMotion.pressFeedback, value: spec.targetTemperature)
     }
 
     private func stepButton(symbol: String, delta: Double) -> some View {
@@ -166,7 +153,7 @@ struct ClimatePanelModule: View {
             }
         } label: {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: DesignTokens.TypeSize.body, weight: .bold))
                 .foregroundStyle(fg)
                 .frame(width: 28, height: 28)
                 .adaptiveGlass(in: Circle(), interactive: true)
@@ -191,16 +178,16 @@ struct ClimatePanelModule: View {
                     }
                 } label: {
                     HStack(spacing: 3) {
-                        Image(systemName: symbol(for: mode)).font(.system(size: 9.5, weight: .semibold))
-                        Text(SmartDevice.localizeHVACMode(mode)).font(.system(size: 11, weight: selected ? .semibold : .medium))
+                        Image(systemName: symbol(for: mode)).font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                        Text(SmartDevice.localizeHVACMode(mode)).font(.system(size: DesignTokens.TypeSize.caption, weight: selected ? .semibold : .medium))
                     }
-                    .foregroundStyle(selected ? (skin.isClassic ? Color.white : palette.onAccent) : muted)
+                    .foregroundStyle(selected ? Color.white : muted)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
                     .background {
                         if selected {
                             Capsule(style: .continuous)
-                                .fill(skin.isClassic ? AnyShapeStyle(modeColor) : AnyShapeStyle(palette.accentGradient))
+                                .fill(accent)
                                 .matchedGeometryEffect(id: "mode", in: modeNamespace)
                         }
                     }
@@ -217,7 +204,7 @@ struct ClimatePanelModule: View {
     private func optionRow(icon: String, options: [String], current: String?, onSelect: @escaping (String) -> Void) -> some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                 .foregroundStyle(muted)
                 .frame(width: 14)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -226,7 +213,7 @@ struct ClimatePanelModule: View {
                         Button(Self.localizeOption(option)) {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { onSelect(option) }
                         }
-                        .buttonStyle(PillActionButtonStyle(isSelected: option == current, tintColor: skin.isClassic ? modeColor : .accentColor))
+                        .buttonStyle(PillActionButtonStyle(isSelected: option == current, tintColor: accent))
                     }
                 }
                 .padding(6)

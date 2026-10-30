@@ -335,10 +335,10 @@ struct MijiaCoreTests {
         #expect(store.favoriteDevices.map(\.id) == ["dev_1", "dev_3", "dev_2"])
         #expect(store.hiddenDevices.isEmpty)
 
-        // Toggle compact grid mode
-        #expect(store.isCompactGridMode == false)
-        store.isCompactGridMode = true
+        // Compact two-column tiles are the default (#64) and still toggle off
         #expect(store.isCompactGridMode == true)
+        store.isCompactGridMode = false
+        #expect(store.isCompactGridMode == false)
     }
 
     @Test("Slice 4: Dynamic menu bar metrics (temp+humidity, total power) and SafetyAlert evaluation")

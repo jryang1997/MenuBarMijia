@@ -115,9 +115,6 @@ extension EnvironmentValues {
 struct LayoutEditable: ViewModifier {
     @Environment(\.isEditingLayout) private var editing
     @Environment(\.effectiveReduceMotion) private var reduceMotion
-    @Environment(\.appSkin) private var skin
-    @Environment(\.skinPalette) private var palette
-
     let deviceId: String
     let size: TileSize
     let isDragging: Bool
@@ -138,14 +135,14 @@ struct LayoutEditable: ViewModifier {
                     Button(action: onCycleSize) {
                         Image(systemName: size.symbol)
                             .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(skin.isClassic ? Color.white : palette.onAccent)
+                            .foregroundStyle(Color.white)
                             .frame(width: 20, height: 20)
-                            .background(Circle().fill(skin.isClassic ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(palette.accentGradient)))
+                            .background(Circle().fill(Color.accentColor))
                             .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
                     }
                     .buttonStyle(PressableCardButtonStyle(scaleAmount: 0.85))
                     .accessibilityLabel(Text(L10n.tr("切换卡片大小，当前 \(size.title)", "Change card size, currently \(size.title)")))
-                    .skinHelp(L10n.tr("切换卡片大小：\(size.title)", "Card size: \(size.title)"))
+                    .panelHelp(L10n.tr("切换卡片大小：\(size.title)", "Card size: \(size.title)"))
                     .offset(x: 5, y: -5)
                     .transition(.scale.combined(with: .opacity))
                 }
@@ -301,8 +298,6 @@ final class LayoutUIState {
 
 /// Inline name prompt shown over the panel for creating or renaming a group.
 struct GroupNamePrompt: View {
-    @Environment(\.appSkin) private var skin
-    @Environment(\.skinPalette) private var palette
     let title: String
     @State var name: String
     var placeholder: String = L10n.tr("例如：灯光、电器、环境", "e.g. Lights, Appliances")
@@ -312,7 +307,6 @@ struct GroupNamePrompt: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        let p = palette
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.system(size: 13, weight: .semibold))
             TextField(placeholder, text: $name)
@@ -341,12 +335,12 @@ struct GroupNamePrompt: View {
         .frame(width: 280)
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(skin.isClassic ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(p.background.first ?? .white))
+                .fill(.regularMaterial)
                 .shadow(color: .black.opacity(0.3), radius: 20, y: 8)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(skin.isClassic ? Color.primary.opacity(0.1) : p.line, lineWidth: 1)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
         }
         .onAppear { focused = true }
     }

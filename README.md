@@ -25,6 +25,7 @@ English | [简体中文](README.zh-CN.md)
 </p>
 
 <p align="center">
+  <a href="https://jryang1997.github.io/menubarmijia-web/">Official website</a> ·
   <a href="https://github.com/jryang1997/MenuBarMijia/releases/latest">Download latest</a> ·
   <a href="#quick-start">Install & Connect</a> ·
   <a href="#features--platform-matrix">Platform Comparison</a> ·
@@ -115,7 +116,7 @@ The macOS version is built natively in Swift 6, while the Windows 11 client is a
 | **URL Scheme Control** | ✅ Supported | — Not yet | `menumijia://toggle` calls require confirmation by default; direct control can be enabled in settings |
 | **Sensor Trend Line Charts** | ✅ 24h / 7d trends | ⚠️ Real-time value only | macOS charts temperature or humidity over selectable periods; Windows shows current readings |
 | **Smart Plug Energy Logs** | ✅ Supported | — No history yet | macOS counts changes in cumulative hardware readings; missing data is not estimated |
-| **Visual Themes & Skins** | ✅ 9 skins + 4 heights | ✅ 9 skins | Classic, Frost, Night Flight, Liquid Glass, Bento, Capsule, etc. |
+| **Visual Look** | ✅ One system look + 4 heights | ✅ Control Center design | macOS keeps system materials only: devices that are on sit on a bright platter, everything else is glass. |
 | **Code Signing & Integrity** | ⚠️ Self-signed + Ed25519 updates | ⚠️ Unsigned package | macOS requires manual Gatekeeper approval; Windows shows SmartScreen prompt |
 
 ---

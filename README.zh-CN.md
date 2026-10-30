@@ -25,6 +25,7 @@
 </p>
 
 <p align="center">
+  <a href="https://jryang1997.github.io/menubarmijia-web/">官方网站</a> ·
   <a href="https://github.com/jryang1997/MenuBarMijia/releases/latest">下载最新版本</a> ·
   <a href="#快速开始">安装与连接</a> ·
   <a href="#功能概览与双端对照">平台能力对照</a> ·
@@ -115,7 +116,7 @@ MenuBarMijia 的 macOS 版本采用 Swift 6 原生开发，Windows 11 版本基�
 | **URL Scheme 控制** | ✅ 支持 | — 暂不支持 | `menumijia://toggle` 等调用默认需确认，可在设置中允许直接执行 |
 | **传感器历史折线图** | ✅ 24h / 7d 趋势 | ⚠️ 基础读数显示 | macOS 可切换温度或湿度及时间范围，Windows 显示基础读数 |
 | **插座电量统计** | ✅ 支持 | — 暂不支持历史统计 | macOS 仅统计插座上报的真实累计电量增量，无数据不凭空估算 |
-| **视觉主题皮肤** | ✅ 9 套主题 + 4 档高度 | ✅ 9 套主题 | 支持经典、霜白、夜航、液态玻璃、便当格、胶囊等 |
+| **界面外观** | ✅ 一套系统外观 + 4 档高度 | ✅ 控制中心风格 | macOS 只用系统材质：开启的设备落在亮色磁贴上，其余是玻璃。 |
 | **安装签名与更新机制** | ⚠️ 本地签名 + Ed25519 验签更新 | ⚠️ 未签名安装包 | macOS 需手动允许首次打开；Windows 首次安装有 SmartScreen 提示 |
 
 ---

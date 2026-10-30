@@ -11,9 +11,9 @@ struct UpdateSection: View {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L10n.tr("版本 \(UpdateChecker.bundleVersion)", "Version \(UpdateChecker.bundleVersion)"))
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     Text(statusSubtitle)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(store.updateState.isFailure ? Color.red : Color.secondary)
                         .lineLimit(2)
                 }
@@ -24,10 +24,10 @@ struct UpdateSection: View {
             if case .downloading(_, let progress) = store.updateState {
                 if let fraction = progress.fractionCompleted {
                     ProgressView(value: fraction)
-                        .controlSize(.small)
+                        .controlSize(.regular)
                 } else {
                     ProgressView()
-                        .controlSize(.small)
+                        .controlSize(.regular)
                 }
             }
 
@@ -35,35 +35,35 @@ struct UpdateSection: View {
                !release.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ScrollView(.vertical, showsIndicators: true) {
                     Text(release.notes.trimmingCharacters(in: .whitespacesAndNewlines))
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 84)
                 .padding(8)
-                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.inset, style: .continuous))
             }
 
             Divider().overlay(Color.primary.opacity(0.06))
 
             HStack {
                 Text(L10n.tr("自动检查更新", "Check for Updates Automatically"))
-                    .font(.system(size: 12))
+                    .font(.system(size: DesignTokens.TypeSize.body))
                 Spacer()
                 Toggle(
-                    "",
+                    L10n.tr("自动检查更新", "Check for Updates Automatically"),
                     isOn: Binding(
                         get: { store.automaticallyChecksForUpdates },
                         set: { store.automaticallyChecksForUpdates = $0 }
                     )
                 )
                 .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
+                .toggleStyle(.glass)
+                .controlSize(.regular)
             }
         }
         .padding(12)
-        .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+        .glassTile(isActive: false, cornerRadius: DesignTokens.Radius.card)
     }
 
     private var statusSubtitle: String {

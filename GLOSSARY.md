@@ -81,5 +81,5 @@ macOS 原生通知，覆盖四类情况：插座持续开启 45 分钟且**实�
 _Avoid_: Alarm（警报）、Push notification（远程推送）
 
 **ViewPreference（本地视图偏好）**：
-仅作用于当前 Mac 客户端的展示配置（包括星标常用置顶、自定义分组 `DeviceGroup`、长按拖拽排序与分页面卡片尺寸 `TileSize`、隐藏特定设备、隐藏离线设备、面板皮肤 `AppSkin` 与高度 `PanelHeight`、菜单栏常驻指标选择），存储在本地且不回写远端数据源。
+仅作用于当前 Mac 客户端的展示配置（包括星标常用置顶、自定义分组 `DeviceGroup`、长按拖拽排序与分页面卡片尺寸 `TileSize`、隐藏特定设备、隐藏离线设备、面板高度 `PanelHeight`、菜单栏常驻指标选择），存储在本地且不回写远端数据源。
 _Avoid_: Device config（设备配置）、Profile（档案）

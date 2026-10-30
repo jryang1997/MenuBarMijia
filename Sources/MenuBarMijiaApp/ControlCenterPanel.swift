@@ -5,8 +5,7 @@ import MijiaCore
 
 public struct ControlCenterPanel: View {
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AppSkin.storageKey) private var skinRaw: String = AppSkin.classic.rawValue
-    @AppStorage(AppSkin.climatePanelKey) private var climatePanelModule: Bool = true
+    @AppStorage(PanelPrefs.climatePanelKey) private var climatePanelModule: Bool = true
     @AppStorage(DeviceLayoutPrefs.storageKey) private var tileSizesRaw: String = "{}"
     @AppStorage(DeviceLayoutPrefs.orderKey) private var orderRaw: String = "[]"
     @State private var isEditingLayout = false
@@ -51,14 +50,10 @@ public struct ControlCenterPanel: View {
 
     private static let panelWidth: CGFloat = 376
     private var panelHeight: CGFloat { (PanelHeight(rawValue: panelHeightRaw) ?? .standard).points }
-    private var skin: AppSkin { AppSkin(rawValue: skinRaw) ?? .classic }
     private var appearance: AppAppearance { AppAppearance(rawValue: appearanceRaw) ?? .system }
-    /// The panel sets `skinRoot` on its own body, so it cannot read that environment back;
-    /// resolve the effective scheme and palette locally (#51).
+    /// The panel sets `panelRoot` on its own body, so it cannot read that environment back;
+    /// resolve the effective scheme locally (#51).
     private var effectiveScheme: ColorScheme { appearance.colorScheme ?? colorScheme }
-    private var palette: SkinPalette { skin.palette(for: effectiveScheme) }
-    private var skinAccentFill: AnyShapeStyle { skin.isClassic ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(palette.accentGradient) }
-    private var skinOnAccent: Color { skin.isClassic ? .white : palette.onAccent }
 
     public init(store: HomeStore) {
         self.store = store
@@ -119,7 +114,6 @@ public struct ControlCenterPanel: View {
             }
         }
         .frame(width: Self.panelWidth, height: panelHeight)
-        .onChange(of: skinRaw) { _, _ in syncMenuBarWindowSize() }
         .onChange(of: panelHeightRaw) { _, _ in syncMenuBarWindowSize() }
         .onChange(of: store.lastAssistantActionAt) { _, date in
             UndoAvailabilityTracker.shared.syncAction(at: date)
@@ -142,20 +136,16 @@ public struct ControlCenterPanel: View {
                 SoundFeedback.playFailure()
             }
         }
-        // Open animation: drop in from the menu bar with a slight scale and fade.
-        .scaleEffect(isPresented || reduceMotion ? 1 : 0.94, anchor: .top)
-        .offset(y: isPresented || reduceMotion ? 0 : -10)
-        .opacity(isPresented || reduceMotion ? 1 : 0)
-        .blur(radius: isPresented || reduceMotion ? 0 : 6)
+        // Frequently opened utility: show immediately, including keyboard invocation.
         .onReceive(NotificationCenter.default.publisher(for: MenuBarPanelController.didShowNotification)) { _ in
             UndoAvailabilityTracker.shared.syncAction(at: store.lastAssistantActionAt)
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { isPresented = true }
+            isPresented = true
         }
         .onAppear {
             UndoAvailabilityTracker.shared.syncAction(at: store.lastAssistantActionAt)
             SettingsWindowOpener.shared.open = { openSettings() }
             syncMenuBarWindowSize()
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { isPresented = true }
+            isPresented = true
         }
         // The panel tree survives a close, so a half-typed query would come back on the next open.
         .onReceive(NotificationCenter.default.publisher(for: MenuBarPanelController.didHideNotification)) { _ in
@@ -170,8 +160,9 @@ public struct ControlCenterPanel: View {
         // Mi cloud polls every 6 s only while the panel is on screen (#26).
         .onChange(of: isPresented) { _, visible in store.setPanelVisible(visible) }
         .onDisappear { store.setPanelVisible(false) }
+        .transaction { if reduceMotion { $0.disablesAnimations = true } }
         .environment(\.isEditingLayout, isEditingLayout)
-        .skinRoot(skin)
+        .panelRoot()
         .task {
             await store.checkForUpdatesIfNeeded()
         }
@@ -300,10 +291,10 @@ public struct ControlCenterPanel: View {
     }
 
     private var searchBar: some View {
-        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.inset, style: .continuous)
         return HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                 .foregroundStyle(.secondary)
 
             TextField(
@@ -314,7 +305,7 @@ public struct ControlCenterPanel: View {
                 )
             )
             .textFieldStyle(.plain)
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: DesignTokens.TypeSize.body, weight: .medium))
             .focused($isSearchFieldFocused)
             .onSubmit { submitSearch() }
             .onChange(of: isSearchFieldFocused) { _, focused in search.isFieldFocused = focused }
@@ -325,7 +316,7 @@ public struct ControlCenterPanel: View {
                     search.focusRequest &+= 1
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -333,14 +324,14 @@ public struct ControlCenterPanel: View {
             }
 
             Text(searchCountLabel)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .background(shape.fill(Color.primary.opacity(0.06)))
-        .overlay(shape.strokeBorder(Color.accentColor.opacity(isSearchFieldFocused ? 0.55 : 0.16), lineWidth: 0.8))
+        .overlay(shape.strokeBorder(Color.accentColor.opacity(isSearchFieldFocused ? 0.55 : 0.16), lineWidth: DesignTokens.hairline))
         .onChange(of: search.focusRequest) { _, _ in
             Task { @MainActor in isSearchFieldFocused = true }
         }
@@ -348,7 +339,7 @@ public struct ControlCenterPanel: View {
             if search.focusRequest > 0 { Task { @MainActor in isSearchFieldFocused = true } }
         }
         .accessibilityElement(children: .contain)
-        .skinHelp(L10n.tr(
+        .panelHelp(L10n.tr(
             "打字即可过滤；⌘F 聚焦搜索框，↑↓ 选择，回车开关，→ 展开详情，Esc 清空后再按 Esc 关闭面板",
             "Type to filter; ⌘F focuses the field, ↑↓ selects, Return toggles, → expands, Esc clears, then closes"
         ))
@@ -384,20 +375,20 @@ public struct ControlCenterPanel: View {
         if results.isEmpty {
             VStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 20))
+                    .font(.system(size: DesignTokens.TypeSize.reading))
                     .foregroundStyle(.secondary)
                 Text(L10n.tr("没有匹配的设备", "No matching devices"))
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                     .foregroundStyle(.primary)
                 if PanelSearch.kind(of: search.query, devices: store.devices, scenes: store.scenes) == .command {
                     Text(L10n.tr("回车把这句交给助手执行", "Press Return to run this as a command"))
-                        .font(.system(size: 11))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                 } else {
                     Text(search.query.isEmpty
                         ? L10n.tr("输入设备名、房间或拼音首字母", "Type a device, room or pinyin initials")
                         : L10n.tr("试试房间名「书房」或首字母「sfd」", "Try a room (书房) or initials (sfd)"))
-                        .font(.system(size: 11))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -409,7 +400,7 @@ public struct ControlCenterPanel: View {
             )
             VStack(alignment: .leading, spacing: 7) {
                 Text(L10n.tr("搜索结果", "Results"))
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .padding(.leading, 3)
 
@@ -517,7 +508,7 @@ public struct ControlCenterPanel: View {
 
     private func groupHeader(_ section: PageSection) -> some View {
         let collapsed = collapsedGroups.contains(collapseKey(section))
-        let accent = skin.isClassic ? Color.accentColor : palette.accent
+        let accent = Color.accentColor
         return Button {
             withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) {
                 var set = collapsedGroups
@@ -527,14 +518,14 @@ public struct ControlCenterPanel: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8.5, weight: .bold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .bold))
                     .rotationEffect(.degrees(collapsed ? -90 : 0))
                     .foregroundStyle(hoveredHeader == section.id ? accent : Color.secondary)
                 Text(section.title ?? "")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(hoveredHeader == section.id ? accent : Color.secondary)
                 Text("\(section.devices.count)")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText(value: Double(section.devices.count)))
                     .foregroundStyle(.secondary.opacity(0.8))
@@ -809,7 +800,7 @@ public struct ControlCenterPanel: View {
                 draggingId = nil
             }
         } label: {
-            Text(L10n.tr("完成", "Done")).font(.system(size: 12, weight: .semibold))
+            Text(L10n.tr("完成", "Done")).font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
         }
         .buttonStyle(PillActionButtonStyle(isSelected: true))
         .keyboardShortcut(.defaultAction)
@@ -835,19 +826,6 @@ public struct ControlCenterPanel: View {
     /// Column span out of 6 for each device: half = 3, full/panel = 6; Bento alternates 4+2 and 2+2+2.
     private func spans(for devices: [SmartDevice]) -> [String: Int] {
         var result: [String: Int] = [:]
-        if skin == .bento && store.isCompactGridMode {
-            var pattern: [Int] = []
-            for dev in devices {
-                if store.expandedDeviceId == dev.id || usesClimatePanel(dev) {
-                    result[dev.id] = 6
-                    pattern = []
-                    continue
-                }
-                if pattern.isEmpty { pattern = result.count % 2 == 0 ? [4, 2] : [2, 2, 2] }
-                result[dev.id] = pattern.removeFirst()
-            }
-            return result
-        }
         for dev in devices {
             let size = tileSize(dev)
             result[dev.id] = (size == .half && store.expandedDeviceId != dev.id) ? 3 : 6
@@ -876,7 +854,6 @@ public struct ControlCenterPanel: View {
             return d
         }
         let spanMap = spans(for: ordered)
-        let bento = skin == .bento && store.isCompactGridMode
         // Every card is its own child keyed by device id, so a reorder slides cards instead of rebuilding rows.
         TileFlowLayout(spacing: 7) {
             ForEach(Array(ordered.enumerated()), id: \.element.id) { index, dev in
@@ -887,19 +864,18 @@ public struct ControlCenterPanel: View {
                     showRoomBadge: showRoomBadge,
                     isCompactTile: span < 6,
                     quickIndex: quickIndexMap[dev.id],
-                    isBentoTile: bento && span < 6
+                    isBentoTile: false
                 )
-                .frame(height: bento && span < 6 ? 92 : nil)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .modifier(editable(dev))
                 .overlay {
                     if highlightId == dev.id {
                         RoundedRectangle(
-                            cornerRadius: skin.isClassic ? 14 : (palette.capsuleTiles ? 26 : palette.tileRadius),
+                            cornerRadius: PanelLook.tileRadius,
                             style: .continuous
                         )
                         .strokeBorder(
-                            skin.isClassic ? Color.accentColor.opacity(0.85) : palette.accent.opacity(0.85),
+                            Color.accentColor.opacity(0.85),
                             lineWidth: 1.6
                         )
                         .allowsHitTesting(false)
@@ -916,41 +892,48 @@ public struct ControlCenterPanel: View {
                         )
                     }
                 }
-                .staggerIn(index)
                 .layoutValue(key: TileSpanKey.self, value: span)
             }
         }
         .animation(.spring(response: 0.38, dampingFraction: 0.78), value: ordered.map { "\($0.id):\(spanMap[$0.id] ?? 6)" })
-        .id(skin.isClassic ? "rows" : "rows_\(store.selectedRoomId ?? "all")")
+        .id("rows")
     }
 
     // MARK: - 1. Hero Header & Live Environment Chips
 
     private var topHeroHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        if skin.isClassic {
-                            Image(systemName: store.activeDeviceCount > 0 ? "house.fill" : "house")
-                                .font(.system(size: 13.5, weight: .semibold))
-                                .foregroundStyle(
-                                    store.activeDeviceCount > 0
-                                        ? (skin.isClassic ? (effectiveScheme == .dark ? Color.orange : Color(red: 0.86, green: 0.42, blue: 0.04)) : palette.accent)
-                                        : Color.secondary
-                                )
-                        }
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .center, spacing: 9) {
+                Image(systemName: "house.fill")
+                    .font(.system(size: DesignTokens.TypeSize.title, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        Circle().fill(
+                            LinearGradient(
+                                colors: [
+                                    DesignTokens.Brand.homeTop,
+                                    DesignTokens.Brand.homeBottom
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                    )
+                    .shadow(color: Color.orange.opacity(0.35), radius: 4, y: 1)
 
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
                         homeTitle
 
                         if store.homeBackend == .demo {
-                            Text(L10n.tr("演示模式", "Demo"))
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.orange)
+                            Text(L10n.tr("演示预览", "Demo"))
+                                .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
+                                .foregroundStyle(.secondary)
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.16), in: Capsule(style: .continuous))
-                                .skinHelp(L10n.tr(
+                                .padding(.vertical, 1.5)
+                                .background(Color.primary.opacity(0.07), in: Capsule(style: .continuous))
+                                .panelHelp(L10n.tr(
                                     "正在使用内置虚拟设备，完全离线，不联网。可在设置里切回真实账号。",
                                     "Using built-in virtual devices, fully offline. Switch back to a real account in Settings."
                                 ))
@@ -958,12 +941,13 @@ public struct ControlCenterPanel: View {
                     }
 
                     Text(statusSummaryText)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
                 }
 
-                Spacer()
+                Spacer(minLength: 6)
 
                 Button {
                     withAnimation(AppleMotion.snappySpring) {
@@ -971,16 +955,16 @@ public struct ControlCenterPanel: View {
                     }
                 } label: {
                     Image(systemName: "mic.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .foregroundStyle(Color.primary.opacity(0.78))
                         .frame(width: 26, height: 24)
                         .adaptiveGlass(in: Capsule(style: .continuous), interactive: true)
-                        .listeningPulse(SpeechInputController.shared.isListening, color: skin.isClassic ? .accentColor : palette.accent)
+                        .listeningPulse(SpeechInputController.shared.isListening, color: .accentColor)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(L10n.tr("语音指令", "Voice command")))
                 .accessibilityHint(Text(L10n.tr("点击后直接说话控制设备", "Click, then speak to control devices")))
-                .skinHelp(L10n.tr("语音指令：点击直接说话控制设备（快捷键 V）", "Voice command: click to speak (shortcut V)"))
+                .panelHelp(L10n.tr("语音指令：点击直接说话控制设备（快捷键 V）", "Voice command: click to speak (shortcut V)"))
 
                 Button {
                     withAnimation(AppleMotion.snappySpring) {
@@ -992,39 +976,39 @@ public struct ControlCenterPanel: View {
                     }
                 } label: {
                     Image(systemName: "sparkles")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(store.isShowingAssistantBar ? skinOnAccent : Color.primary.opacity(0.78))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                        .foregroundStyle(store.isShowingAssistantBar ? Color.white : Color.primary.opacity(0.78))
                         .frame(width: 26, height: 24)
                         .background {
                             if store.isShowingAssistantBar {
                                 Capsule(style: .continuous)
-                                    .fill(skinAccentFill)
-                                    .shadowIf(!skin.isClassic && (palette.neumorphic || palette.glow), color: palette.accent.opacity(0.32), radius: 4, y: 1.5)
+                                    .fill(Color.accentColor)
+                                    .shadow(color: Color.accentColor.opacity(0.35), radius: 4, y: 1.5)
                             }
                         }
                         .modifier(
-                            SkinChipSurface(
+                            ChipSurface(
                                 shape: Capsule(style: .continuous),
-                                tint: store.isShowingAssistantBar ? .accentColor.opacity(0.45) : nil,
+                                tint: nil,
                                 interactive: true,
                                 clear: false,
-                                isHidden: !skin.isClassic && store.isShowingAssistantBar
+                                isHidden: store.isShowingAssistantBar
                             )
                         )
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(L10n.tr("AI 指令", "AI command")))
                 .accessibilityHint(Text(L10n.tr("用一句话控制设备", "Control devices with natural language")))
-                .skinHelp(L10n.tr("AI 指令：用一句话控制设备（快捷键 /）", "AI command: control devices with natural language (shortcut /)"))
+                .panelHelp(L10n.tr("AI 指令：用一句话控制设备（快捷键 /）", "AI command: control devices with natural language (shortcut /)"))
 
                 if isEditingLayout {
                     doneEditingButton
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else if !store.allOffTargets.isEmpty {
-                    // Every skin asks for a 0.6 s hold, and the label says what will be switched off (#23).
+                    // The label says what will be switched off (#23); a hold confirms.
                     let count = store.allOffTargets.count
                     HoldToConfirmButton(
-                        title: store.allOffRoomName.map { L10n.tr("全关·\($0)", "All Off · \($0)") } ?? L10n.tr("全关", "All Off"),
+                        title: store.allOffRoomName.map { L10n.tr("全关 \($0)", "All Off \($0)") } ?? L10n.tr("全关", "All Off"),
                         count: count,
                         onConfirm: {
                             withAnimation(AppleMotion.snappySpring) { store.turnAllOff() }
@@ -1041,23 +1025,7 @@ public struct ControlCenterPanel: View {
                 }
             }
 
-            if !store.environmentReadings.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    AdaptiveGlassContainer(spacing: 6) {
-                        HStack(spacing: 6) {
-                            ForEach(store.environmentReadings) { env in
-                                environmentChip(env)
-                            }
-                            if store.totalPowerWatts >= 1 {
-                                powerChip(watts: store.totalPowerWatts)
-                            }
-                        }
-                        .horizontalWheelScroll()
-                    }
-                    .padding(6)
-                }
-                .padding(-6)
-            }
+            environmentStatusLine
         }
     }
 
@@ -1077,7 +1045,7 @@ public struct ControlCenterPanel: View {
                         store.selectMiHome(home.id)
                     } label: {
                         Label(
-                            "\(home.name)  ·  \(home.deviceCount)",
+                            "\(home.name)  \(home.deviceCount)",
                             systemImage: store.selectedMiHomeId == home.id ? "checkmark" : ""
                         )
                     }
@@ -1085,10 +1053,10 @@ public struct ControlCenterPanel: View {
             } label: {
                 HStack(spacing: 4) {
                     Text(selectedHomeTitle)
-                        .font(.system(size: skin.isClassic ? 15 : 17, weight: .bold))
+                        .font(.system(size: DesignTokens.TypeSize.title, weight: .bold))
                         .tracking(-0.2)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9.5, weight: .bold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .bold))
                         .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -1096,10 +1064,10 @@ public struct ControlCenterPanel: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .skinHelp(L10n.tr("切换家庭", "Switch home"))
+            .panelHelp(L10n.tr("切换家庭", "Switch home"))
         } else {
             Text(store.homeName)
-                .font(.system(size: skin.isClassic ? 15 : 17, weight: .bold))
+                .font(.system(size: DesignTokens.TypeSize.title, weight: .bold))
                 .tracking(-0.2)
         }
     }
@@ -1111,67 +1079,57 @@ public struct ControlCenterPanel: View {
         return store.homeName
     }
 
-    private func powerChip(watts: Double) -> some View {
-        let capsule = Capsule(style: .continuous)
-        return HStack(spacing: 4) {
-            Image(systemName: "bolt.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(effectiveScheme == .dark ? Color.green : Color(red: 0.08, green: 0.54, blue: 0.22))
+    /// One quiet line instead of a row of capsules: 客厅 25.5°C · 52% ⚡ 18W.
+    @ViewBuilder
+    private var environmentStatusLine: some View {
+        // One representative reading keeps the line quiet: the selected room's sensor first.
+        let selectedRoomName = store.rooms.first { $0.id == store.selectedRoomId }?.name
+        let reading = store.environmentReadings.first { env in
+            selectedRoomName != nil && env.roomName == selectedRoomName
+        } ?? store.environmentReadings.first
+        let watts = store.totalPowerWatts
 
-            Text(String(format: "%.0fW", watts))
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 4.5)
-        .adaptiveGlass(in: capsule)
-        .overlay {
-            if skin.isClassic {
-                capsule
-                    .strokeBorder(Color.white.opacity(effectiveScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
-            }
-        }
-    }
-
-    private func environmentChip(_ env: EnvironmentReading) -> some View {
-        let capsule = Capsule(style: .continuous)
-        return HStack(spacing: 5) {
-            Image(systemName: "thermometer.medium")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(effectiveScheme == .dark ? Color.teal : Color(red: 0.04, green: 0.48, blue: 0.52))
-
-            Text(L10n.displayRoomName(env.label))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.88))
-
-            if let t = env.temperature {
-                Text(L10n.temperatureValue(t, fractionDigits: 1) + "°")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(.primary)
+        if let reading, reading.temperature != nil || reading.humidity != nil || watts >= 1 {
+            HStack(spacing: 6) {
+                Button {
+                    handleEnvironmentChipTap(reading)
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(L10n.displayRoomName(reading.label))
+                            .foregroundStyle(.secondary)
+                        if let t = reading.temperature {
+                            Text(L10n.temperatureValue(t, fractionDigits: 1) + "°")
+                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.primary)
+                        }
+                        if let h = reading.humidity {
+                            Text(String(format: "%.0f%%", h))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .monospacedDigit()
-            }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .panelHelp(L10n.tr("点击定位并展开温湿度折线", "Click to locate and expand sensor chart"))
 
-            if let h = env.humidity {
-                Text(String(format: "· %.0f%%", h))
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.primary.opacity(0.68))
-                    .monospacedDigit()
+                if watts >= 1 {
+                    Text("·").foregroundStyle(.secondary.opacity(0.6))
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(String(format: "%.0fW", watts))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                    }
+                }
+
+                Spacer(minLength: 0)
             }
+            .lineLimit(1)
         }
-        .padding(.horizontal, 9.5)
-        .padding(.vertical, 4.5)
-        .adaptiveGlass(in: capsule)
-        .overlay {
-            if skin.isClassic {
-                capsule
-                    .strokeBorder(Color.white.opacity(effectiveScheme == .dark ? 0.20 : 0.48), lineWidth: 0.7)
-            }
-        }
-        .contentShape(capsule)
-        .onTapGesture {
-            handleEnvironmentChipTap(env)
-        }
-        .skinHelp(L10n.tr("点击定位并展开温湿度折线", "Click to locate and expand sensor chart"))
     }
 
     private func handleEnvironmentChipTap(_ env: EnvironmentReading) {
@@ -1203,75 +1161,79 @@ public struct ControlCenterPanel: View {
 
     private var statusSummaryText: String {
         if isEditingLayout {
-            return L10n.tr("拖动卡片排序 · 点角标改大小", "Drag to reorder · tap badge to resize")
+            return L10n.tr("拖动卡片排序，点角标改大小", "Drag to reorder, tap badge to resize")
         }
         if store.activeDeviceCount > 0 {
             return L10n.tr(
-                "\(store.activeDeviceCount) 台设备开启中 · 共 \(store.onlineDeviceCount) 台在线",
-                "\(store.activeDeviceCount) active · \(store.onlineDeviceCount) online"
+                "\(store.activeDeviceCount) 台设备开启， \(store.onlineDeviceCount) 台在线",
+                "\(store.activeDeviceCount) active, \(store.onlineDeviceCount) online"
             )
         }
         return L10n.tr(
-            "全屋设备待机 · \(store.onlineDeviceCount) 台实时在线",
-            "All standby · \(store.onlineDeviceCount) online"
+            "全屋设备待机， \(store.onlineDeviceCount) 台实时在线",
+            "All standby, \(store.onlineDeviceCount) online"
         )
     }
 
     // MARK: - 1B. Quick Actions & HA Scenes Strip
 
+    /// Scene strip: equal-width glass pills, four across when there are four or fewer.
     private var quickActionsAndScenesBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            AdaptiveGlassContainer(spacing: 6) {
-                HStack(spacing: 6) {
-                    ForEach(QuickAction.allCases) { action in
-                        Button {
-                            withAnimation(AppleMotion.snappySpring) {
-                                store.executeQuickAction(action)
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: action.sfSymbolName)
-                                    .font(.system(size: 10.5, weight: .semibold))
-                                    .foregroundStyle(
-                                        effectiveScheme == .dark
-                                            ? Color.orange
-                                            : Color(red: 0.82, green: 0.38, blue: 0.04)
-                                    )
-                                Text(action.title)
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                        }
-                        .buttonStyle(PillActionButtonStyle())
-                    }
-
-                    if !store.scenes.isEmpty {
-                        Divider()
-                            .frame(height: 14)
-                            .padding(.horizontal, 2)
-
-                        ForEach(store.scenes) { scene in
-                            Button {
-                                withAnimation(AppleMotion.snappySpring) {
-                                    _ = store.triggerScene(scene)
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: scene.iconName)
-                                        .font(.system(size: 10.5, weight: .semibold))
-                                        .foregroundStyle(Color.accentColor)
-                                    Text(scene.name)
-                                        .font(.system(size: 11, weight: .medium))
-                                }
-                            }
-                            .buttonStyle(PillActionButtonStyle())
-                        }
-                    }
+        let itemCount = QuickAction.allCases.count + store.scenes.count
+        return Group {
+            if itemCount <= 4 {
+                scenePillRow(expand: true)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    scenePillRow(expand: false)
+                        .horizontalWheelScroll()
                 }
-                .horizontalWheelScroll()
             }
-            .padding(6)
         }
-        .padding(-6)
+    }
+
+    private func scenePillRow(expand: Bool) -> some View {
+        HStack(spacing: 6) {
+            ForEach(QuickAction.allCases) { action in
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        store.executeQuickAction(action)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: action.sfSymbolName)
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                            .foregroundStyle(DesignTokens.active)
+                        Text(action.title)
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillActionButtonStyle())
+                .frame(maxWidth: expand ? .infinity : nil)
+            }
+
+            ForEach(store.scenes) { scene in
+                Button {
+                    withAnimation(AppleMotion.snappySpring) {
+                        _ = store.triggerScene(scene)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: scene.iconName)
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                        Text(scene.name)
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PillActionButtonStyle())
+                .frame(maxWidth: expand ? .infinity : nil)
+            }
+        }
     }
 
     // MARK: - 2. Room Filter Strip & Grid Toggle
@@ -1300,173 +1262,127 @@ public struct ControlCenterPanel: View {
 
     private var roomFilterBar: some View {
         HStack(spacing: 6) {
-            if skin.isClassic {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        AdaptiveGlassContainer(spacing: 5) {
-                            HStack(spacing: 0) {
-                                Color.clear.frame(width: 0, height: 1).id("roomsStart")
-                                roomPillsRow
-                                    .padding(.trailing, 10)
-                                    .padding(.leading, 6)
-                                    .padding(.vertical, 6)
-                            }
-                            .horizontalWheelScroll()
-                        }
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 2) {
+                        Color.clear.frame(width: 0, height: 1).id("roomsStart")
+                        roomPillsRow
+                            .padding(.vertical, 3)
+                            .padding(.horizontal, 4)
                     }
-                    .defaultScrollAnchor(.leading)
-                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                    .onChange(of: isPresented) { _, shown in
-                        guard shown else { return }
-                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
-                    }
-                    .onAppear {
-                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
-                    }
-                    .onChange(of: store.selectedRoomId) { _, id in
-                        scrollRoomStrip(using: proxy, roomId: id, animated: true)
-                    }
-                    .onChange(of: roomScrollTrigger) { _, _ in
-                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
-                    }
+                    .horizontalWheelScroll()
                 }
-                .padding(.leading, -6)
-                .padding(.vertical, -6)
+                .defaultScrollAnchor(.leading)
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                // The menu-bar window restores a stale horizontal offset on reopen; snap back to
+                // the start (or the selected room) so the first pill is not half scrolled out.
+                .onChange(of: isPresented) { _, shown in
+                    guard shown else { return }
+                    scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                }
+                .onAppear {
+                    scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
+                }
+                .onChange(of: store.selectedRoomId) { _, id in
+                    scrollRoomStrip(using: proxy, roomId: id, animated: true)
+                }
+                .onChange(of: roomScrollTrigger) { _, _ in
+                    scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
+                }
                 .mask(
                     LinearGradient(
                         stops: [
-                            .init(color: .black, location: 0.0),
-                            .init(color: .black, location: 0.91),
-                            .init(color: .clear, location: 1.0)
+                            .init(color: .black.opacity(0.0), location: 0.0),
+                            .init(color: .black, location: 0.035),
+                            .init(color: .black, location: 0.86),
+                            .init(color: .black.opacity(0.0), location: 1.0)
                         ],
-                        startPoint: .leading,
-                        endPoint: .trailing
+                        startPoint: .leading, endPoint: .trailing
                     )
                 )
-            } else {
-                // The track sits outside the scroll view and clips it, so the first pill's rounded
-                // edge can never be cut by the scroll view's own bounds or offset.
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 0) {
-                            Color.clear.frame(width: 0, height: 1).id("roomsStart")
-                            // Extra side inset keeps the end pills clear of the track's curved ends.
-                            roomPillsRow.padding(.vertical, 3).padding(.horizontal, 6)
-                        }
-                        .horizontalWheelScroll()
-                    }
-                    .defaultScrollAnchor(.leading)
-                    .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-                    // The menu-bar window restores a stale horizontal offset on reopen; snap back to
-                    // the start (or the selected room) so the first pill is not half scrolled out.
-                    // Only on a real reopen: any window becoming key (menus, submenus) used to rerun this
-                    // and re-layout the strip while a context menu was open.
-                    .onChange(of: isPresented) { _, shown in
-                        guard shown else { return }
-                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
-                    }
-                    .onAppear {
-                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: false)
-                    }
-                    // Keep the chosen room fully visible; tapping a half-hidden one slides it in.
-                    .onChange(of: store.selectedRoomId) { _, id in
-                        scrollRoomStrip(using: proxy, roomId: id, animated: true)
-                    }
-                    .onChange(of: roomScrollTrigger) { _, _ in
-                        scrollRoomStrip(using: proxy, roomId: store.selectedRoomId, animated: true)
-                    }
-                    // Soft fade at both ends instead of letters being sliced by the track edge.
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .black.opacity(0.0), location: 0.0),
-                                .init(color: .black, location: 0.035),
-                                .init(color: .black, location: 0.86),
-                                .init(color: .black.opacity(0.0), location: 1.0)
-                            ],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                    )
-                }
-                .clipShape(Capsule(style: .continuous))
-                .background(Capsule(style: .continuous).fill(palette.chip))
-                .overlay(Capsule(style: .continuous).stroke(palette.line, lineWidth: 0.8))
+            }
+            .background(segmentedTrack, in: Capsule(style: .continuous))
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(segmentedTrackRim, lineWidth: DesignTokens.hairline)
+            }
+            .clipShape(Capsule(style: .continuous))
+
+            gridToggleButtons
+        }
+    }
+
+    private var segmentedTrack: Color {
+        effectiveScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.055)
+    }
+
+    private var segmentedTrackRim: Color {
+        effectiveScheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.04)
+    }
+
+    private var gridToggleButtons: some View {
+        HStack(spacing: 5) {
+            toggleChip(
+                isOn: store.isCompactGridMode,
+                onSymbol: "rectangle.grid.2x2.fill",
+                offSymbol: "rectangle.grid.1x2.fill",
+                onLabel: L10n.tr("紧凑双列视图", "Compact two-column view"),
+                help: store.isCompactGridMode
+                    ? L10n.tr("当前：双列紧凑磁贴（点击切换单列）", "2-column compact tiles (click for single column)")
+                    : L10n.tr("点击切换双列紧凑磁贴视图", "Switch to 2-column compact tiles")
+            ) {
+                store.isCompactGridMode.toggle()
             }
 
-            AdaptiveGlassContainer(spacing: 5) {
-                HStack(spacing: 5) {
-                    Button {
-                        withAnimation(AppleMotion.snappySpring) {
-                            store.isCompactGridMode.toggle()
-                        }
-                    } label: {
-                        Image(systemName: store.isCompactGridMode ? "rectangle.grid.2x2.fill" : "rectangle.grid.1x2.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(store.isCompactGridMode ? skinOnAccent : Color.primary.opacity(0.78))
-                            .frame(width: 26, height: 24)
-                            .background {
-                                if store.isCompactGridMode {
-                                    Capsule(style: .continuous)
-                                        .fill(skinAccentFill)
-                                        .shadowIf(!skin.isClassic && (palette.neumorphic || palette.glow), color: palette.accent.opacity(0.32), radius: 4, y: 1.5)
-                                }
-                            }
-                            .modifier(
-                                SkinChipSurface(
-                                    shape: Capsule(style: .continuous),
-                                    tint: store.isCompactGridMode ? .accentColor.opacity(0.45) : nil,
-                                    interactive: true,
-                                    clear: false,
-                                    isHidden: !skin.isClassic && store.isCompactGridMode
-                                )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text(L10n.tr("紧凑双列视图", "Compact two-column view")))
-                    .accessibilityAddTraits(store.isCompactGridMode ? AccessibilityTraits.isSelected : [])
-                    .skinHelp(
-                        store.isCompactGridMode
-                            ? L10n.tr("当前：双列紧凑磁贴（点击切换单列）", "2-column compact tiles (click for single column)")
-                            : L10n.tr("点击切换双列紧凑磁贴视图", "Switch to 2-column compact tiles")
-                    )
-
-                    Button {
-                        withAnimation(AppleMotion.snappySpring) {
-                            store.hideOfflineDevices.toggle()
-                        }
-                    } label: {
-                        Image(systemName: store.hideOfflineDevices ? "wifi" : "wifi.slash")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(store.hideOfflineDevices ? skinOnAccent : Color.primary.opacity(0.78))
-                            .frame(width: 26, height: 24)
-                            .background {
-                                if store.hideOfflineDevices {
-                                    Capsule(style: .continuous)
-                                        .fill(skinAccentFill)
-                                        .shadowIf(!skin.isClassic && (palette.neumorphic || palette.glow), color: palette.accent.opacity(0.32), radius: 4, y: 1.5)
-                                }
-                            }
-                            .modifier(
-                                SkinChipSurface(
-                                    shape: Capsule(style: .continuous),
-                                    tint: store.hideOfflineDevices ? .accentColor.opacity(0.45) : nil,
-                                    interactive: true,
-                                    clear: false,
-                                    isHidden: !skin.isClassic && store.hideOfflineDevices
-                                )
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text(L10n.tr("只显示在线设备", "Show online devices only")))
-                    .accessibilityAddTraits(store.hideOfflineDevices ? AccessibilityTraits.isSelected : [])
-                    .skinHelp(
-                        store.hideOfflineDevices
-                            ? L10n.tr("当前只显示在线设备（点击显示全部）", "Showing online devices only (click to show all)")
-                            : L10n.tr("点击隐藏未通电/离线设备", "Hide offline/unplugged devices")
-                    )
-                }
+            toggleChip(
+                isOn: store.hideOfflineDevices,
+                onSymbol: "wifi",
+                offSymbol: "wifi.slash",
+                onLabel: L10n.tr("只显示在线设备", "Show online devices only"),
+                help: store.hideOfflineDevices
+                    ? L10n.tr("当前只显示在线设备（点击显示全部）", "Showing online devices only (click to show all)")
+                    : L10n.tr("点击隐藏未通电/离线设备", "Hide offline/unplugged devices")
+            ) {
+                store.hideOfflineDevices.toggle()
             }
         }
+    }
+
+    private func toggleChip(
+        isOn: Bool,
+        onSymbol: String,
+        offSymbol: String,
+        onLabel: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            withAnimation(AppleMotion.snappySpring) { action() }
+        } label: {
+            Image(systemName: isOn ? onSymbol : offSymbol)
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                .foregroundStyle(isOn ? Color.white : Color.primary.opacity(0.78))
+                .frame(width: 26, height: 24)
+                .background {
+                    if isOn {
+                        Capsule(style: .continuous)
+                            .fill(Color.accentColor)
+                    }
+                }
+                .modifier(
+                    ChipSurface(
+                        shape: Capsule(style: .continuous),
+                        tint: nil,
+                        interactive: true,
+                        clear: false,
+                        isHidden: isOn
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(onLabel))
+        .accessibilityAddTraits(isOn ? AccessibilityTraits.isSelected : [])
+        .panelHelp(help)
     }
 
     private func selectRoom(_ roomId: String?, animation: Animation) {
@@ -1482,45 +1398,34 @@ public struct ControlCenterPanel: View {
     @ViewBuilder
     private func roomPill(title: String, roomId: String?) -> some View {
         let isSelected = (store.selectedRoomId == roomId)
-        if skin.isClassic {
-            classicRoomPill(title: title, roomId: roomId, isSelected: isSelected)
-        } else {
-            let p = palette
-            Button {
-                selectRoom(roomId, animation: .spring(response: 0.4, dampingFraction: 0.72))
-            } label: {
-                Text(title)
-                    .font(.system(size: 11.5, weight: isSelected ? .semibold : .medium))
-                    .foregroundStyle(isSelected ? p.onAccent : p.muted)
-                    .padding(.horizontal, 10.5)
-                    .padding(.vertical, 5)
-                    .background {
-                        if isSelected {
-                            Capsule(style: .continuous)
-                                .fill(p.accentGradient)
-                                .matchedGeometryEffect(id: "roomPill", in: roomPillNamespace)
-                        }
-                    }
-                    .contentShape(Capsule(style: .continuous))
-            }
-            .buttonStyle(PressableCardButtonStyle(scaleAmount: 0.94))
-        }
-    }
-
-    private func classicRoomPill(title: String, roomId: String?, isSelected: Bool) -> some View {
-        Button(title) {
+        return Button {
             selectRoom(roomId, animation: AppleMotion.snappySpring)
+        } label: {
+            Text(title)
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? PanelLook.platterInk : Color.secondary)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 5)
+                .background {
+                    if isSelected {
+                        Capsule(style: .continuous)
+                            .fill(PanelLook.tileFill(scheme: effectiveScheme, isActive: true))
+                            .shadow(color: .black.opacity(effectiveScheme == .dark ? 0.28 : 0.10), radius: 2, y: 1)
+                    }
+                }
+                .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(PillActionButtonStyle(isSelected: isSelected, tintColor: .accentColor))
+        .buttonStyle(.plain)
+        .animation(AppleMotion.snappySpring, value: isSelected)
     }
 
     private func sectionHeader(_ title: String, count: Int) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("\(count)")
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary.opacity(0.80))
                 .monospacedDigit()
             Spacer()
@@ -1532,7 +1437,7 @@ public struct ControlCenterPanel: View {
     private var emptyStateView: some View {
         VStack(spacing: 8) {
             Image(systemName: "sparkles")
-                .font(.system(size: 22))
+                .font(.system(size: DesignTokens.TypeSize.reading))
                 .foregroundStyle(.secondary)
             if case .disconnected = store.connectionStatus {
                 Text(
@@ -1540,14 +1445,14 @@ public struct ControlCenterPanel: View {
                         ? L10n.tr("尚未登录米家云端账号", "Not signed in to Xiaomi Cloud")
                         : L10n.tr("尚未连接到 Home Assistant", "Not connected to Home Assistant")
                 )
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                     .foregroundStyle(.primary)
                 Text(
                     store.homeBackend == .xiaomiCloud
                         ? L10n.tr("无需额外部署服务器，使用手机「米家」App 扫码即可同步设备", "Scan with the Mi Home app on your phone to sync devices without a server")
                         : L10n.tr("点击下方按钮配置服务器地址与令牌，或切换为手机米家扫码直连", "Configure your server URL and token below, or switch to Xiaomi Cloud QR login")
                 )
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                 HStack(spacing: 8) {
@@ -1572,7 +1477,7 @@ public struct ControlCenterPanel: View {
                         ? L10n.tr("该房间暂无通电在线的设备", "No online devices in this room")
                         : L10n.tr("正在同步设备列表…", "Syncing devices…")
                 )
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .medium))
                     .foregroundStyle(.secondary)
                 if store.hideOfflineDevices {
                     Button(L10n.tr("显示离线设备", "Show Offline Devices")) {
@@ -1592,7 +1497,7 @@ public struct ControlCenterPanel: View {
 
     /// The app never moves the token to a new address by itself; it asks here first.
     private func haAddressSuggestionBanner(_ instance: HADiscoveredInstance) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
         let place = instance.locationName.isEmpty || instance.locationName == "Home Assistant"
             ? instance.hostAndPort
             : "\(instance.locationName)（\(instance.hostAndPort)）"
@@ -1601,12 +1506,12 @@ public struct ControlCenterPanel: View {
                 L10n.tr("连不上 Home Assistant。发现了 \(place)，要切换过去吗？", "Can't reach Home Assistant. Found \(place). Switch to it?"),
                 systemImage: "questionmark.circle.fill"
             )
-            .font(.system(size: 11.5, weight: .medium))
+            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
             Text(L10n.tr(
                 "切换后会把访问令牌发给这个地址。不认识这个地址就点「不切换」。",
                 "Switching sends your access token to this address. If you don't recognize it, choose Don't Switch."
             ))
-            .font(.system(size: 11))
+            .font(.system(size: DesignTokens.TypeSize.caption))
             .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button(L10n.tr("切换", "Switch")) {
@@ -1629,14 +1534,14 @@ public struct ControlCenterPanel: View {
     @ViewBuilder
     private var overlayNotifications: some View {
         if let banner = store.undoBanner {
-            let bannerShape = RoundedRectangle(cornerRadius: 13, style: .continuous)
+            let bannerShape = RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
             HStack(spacing: 10) {
                 Image(systemName: "moon.stars.fill")
                     .foregroundStyle(.orange)
-                    .font(.system(size: 12))
+                    .font(.system(size: DesignTokens.TypeSize.body))
 
                 Text(banner.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .medium))
 
                 Spacer()
 
@@ -1645,7 +1550,7 @@ public struct ControlCenterPanel: View {
                         store.undoTurnAllOff()
                     }
                 }
-                .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: Color(red: 0.90, green: 0.44, blue: 0.08)))
+                .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: DesignTokens.active))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -1667,10 +1572,10 @@ public struct ControlCenterPanel: View {
             HStack(spacing: 6) {
                 Image(systemName: toast.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(toast.isError ? .orange : .green)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
 
                 Text(toast.message)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                     .lineLimit(1)
             }
             .padding(.horizontal, 12)
@@ -1687,13 +1592,13 @@ public struct ControlCenterPanel: View {
     private var footerBar: some View {
         HStack(spacing: 8) {
             BreathingDot(
-                color: skin.isClassic ? statusDotColor : (statusDotColor == .green ? palette.ok : statusDotColor),
-                animate: !skin.isClassic && statusDotColor == .green
+                color: statusDotColor,
+                animate: statusDotColor == .green
             )
             .id(statusDotColor)
 
             Text(statusFooterLabel)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
@@ -1715,13 +1620,13 @@ public struct ControlCenterPanel: View {
                                 ? "arrow.triangle.2.circlepath.circle.fill"
                                 : "arrow.down.circle.fill"
                         )
-                        .font(.system(size: 10.5, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         Text(
                             store.updateState.isReadyToRelaunch
                                 ? L10n.tr("重启更新 v\(release.version)", "Relaunch v\(release.version)")
                                 : "v\(release.version)"
                         )
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .monospacedDigit()
                     }
                 }
@@ -1731,7 +1636,7 @@ public struct ControlCenterPanel: View {
                         tintColor: store.updateState.isReadyToRelaunch ? .green : .accentColor
                     )
                 )
-                .skinHelp(
+                .panelHelp(
                     store.updateState.isReadyToRelaunch
                         ? L10n.tr("点击立即重启并完成 v\(release.version) 更新", "Click to relaunch and finish updating to v\(release.version)")
                         : L10n.tr("发现新版本 v\(release.version)，点击前往更新", "New version v\(release.version) available")
@@ -1747,14 +1652,14 @@ public struct ControlCenterPanel: View {
                     Task { await UndoAvailabilityTracker.shared.performUndo(store: store) }
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .foregroundStyle(.primary.opacity(0.72))
                         .frame(width: 24, height: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(L10n.tr("撤销上一步", "Undo last action")))
-                .skinHelp(L10n.tr("撤销上一步（10 分钟内有效）", "Undo the last assistant action (valid for 10 minutes)"))
+                .panelHelp(L10n.tr("撤销上一步（10 分钟内有效）", "Undo the last assistant action (valid for 10 minutes)"))
             }
 
             // #60: the panel has no visible search field until you type, so the footer advertises it.
@@ -1763,41 +1668,41 @@ public struct ControlCenterPanel: View {
                     search.begin()
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .foregroundStyle(.primary.opacity(0.72))
                         .frame(width: 24, height: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(L10n.tr("搜索设备", "Search devices")))
-                .skinHelp(L10n.tr("搜索设备、房间或拼音首字母（⌘F）", "Search devices, rooms or pinyin initials (⌘F)"))
+                .panelHelp(L10n.tr("搜索设备、房间或拼音首字母（⌘F）", "Search devices, rooms or pinyin initials (⌘F)"))
             }
 
             Button {
                 store.refreshNow()
             } label: {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(.primary.opacity(0.72))
                     .frame(width: 24, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(L10n.tr("立即同步", "Refresh now")))
-            .skinHelp(L10n.tr("立即同步最新状态", "Refresh device states now"))
+            .panelHelp(L10n.tr("立即同步最新状态", "Refresh device states now"))
 
             Button {
                 presentSettingsWindow()
             } label: {
                 Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                     .foregroundStyle(.primary.opacity(0.72))
                     .frame(width: 24, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(L10n.tr("打开设置", "Open Settings")))
-            .skinHelp(L10n.tr("偏好设置与连接配置（⌘,）", "Preferences & connection settings (⌘,)"))
+            .panelHelp(L10n.tr("偏好设置与连接配置（⌘,）", "Preferences & connection settings (⌘,)"))
         }
     }
 
@@ -1818,10 +1723,10 @@ public struct ControlCenterPanel: View {
         switch store.connectionStatus {
         case .connected:
             if store.homeBackend == .demo {
-                return L10n.tr("演示模式 · 内置虚拟设备（完全离线）", "Demo Mode · Built-in virtual devices (offline)")
+                return L10n.tr("虚拟设备，离线运行", "Virtual devices, offline")
             }
             if store.homeBackend == .xiaomiCloud {
-                return L10n.tr("\(store.serverHostSummary) · Miot 直连", "\(store.serverHostSummary) · MIoT Direct")
+                return L10n.tr("\(store.serverHostSummary)，Miot 直连", "\(store.serverHostSummary), MIoT Direct")
             }
             return L10n.tr("HA 实时连接 (\(store.serverHostSummary))", "HA Live (\(store.serverHostSummary))")
         case .connecting:
