@@ -101,7 +101,10 @@ if ! cmp -s Resources/AppIcon/AppIcon-Dark.svg docs/assets/logo-dark.svg || ! cm
     exit 1
 fi
 
-python3 scripts/check_design_tokens.py
+# The design-token scan only reads macOS UI sources; Linux runners have no python3.
+if command -v python3 >/dev/null 2>&1; then
+    python3 scripts/check_design_tokens.py
+fi
 
 if [ "${1:-}" = "--lint-only" ]; then
     echo "✅ 密钥与机械性编码规范检查通过！"
