@@ -64,7 +64,7 @@ public enum MiotSynthesizer {
             let roomId = DeviceSynthesizer.normalizedRoomId(for: roomName, fallback: room.map { "mi_room_\($0.id)" } ?? "other")
             let name = DeviceSynthesizer.cleanDeviceName(record.name, roomName: roomName, model: record.model)
 
-            smartDevices.append(SmartDevice(
+            let device = SmartDevice(
                 id: record.did,
                 name: name,
                 roomId: roomId,
@@ -72,18 +72,11 @@ public enum MiotSynthesizer {
                 model: record.model,
                 isOnline: record.isOnline,
                 kind: kind
-            ))
+            )
+            smartDevices.append(device)
 
-            if case .sensor(let s) = kind, s.temperature != nil || s.humidity != nil {
-                let label = name.replacingOccurrences(of: "温湿度计", with: "").trimmingCharacters(in: .whitespaces)
-                readings.append(EnvironmentReading(
-                    id: record.did,
-                    label: label.isEmpty ? roomName : label,
-                    roomName: roomName,
-                    temperature: s.temperature,
-                    humidity: s.humidity,
-                    battery: s.battery
-                ))
+            if let reading = device.environmentReading {
+                readings.append(reading)
             }
         }
 

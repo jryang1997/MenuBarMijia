@@ -387,6 +387,16 @@ public enum DeviceKind: Equatable, Sendable {
     case tv(TVSpec)
     case camera(CameraSpec)
     case sensor(SensorSpec)
+
+    /// Dedicated sensors sort ahead of air purifiers and AC return-air thermistors (#103).
+    public var environmentReadingPriority: Int {
+        switch self {
+        case .sensor: return 0
+        case .fan: return 1
+        case .climate: return 2
+        default: return 3
+        }
+    }
 }
 
 // MARK: - Unified SmartDevice
@@ -453,6 +463,48 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return s.powerWatts != nil || s.energyKwh != nil || s.childLockEntityId != nil
         case .sensor:
             return false
+        }
+    }
+
+    /// Ambient temperature / humidity reading exposed by this device for the menu bar and status strip (#103).
+    /// Offline devices or devices without a live reading are excluded.
+    public var environmentReading: EnvironmentReading? {
+        guard isOnline else { return nil }
+        switch kind {
+        case .sensor(let s):
+            guard s.temperature != nil || s.humidity != nil else { return nil }
+            let stripped = name.replacingOccurrences(of: "温湿度计", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            return EnvironmentReading(
+                id: id,
+                label: stripped.isEmpty ? roomName : stripped,
+                roomName: roomName,
+                temperature: s.temperature,
+                humidity: s.humidity,
+                battery: s.battery
+            )
+        case .fan(let f):
+            guard f.temperature != nil || f.humidity != nil else { return nil }
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            return EnvironmentReading(
+                id: id,
+                label: trimmed.isEmpty ? roomName : trimmed,
+                roomName: roomName,
+                temperature: f.temperature,
+                humidity: f.humidity
+            )
+        case .climate(let c):
+            guard let temp = c.currentTemperature else { return nil }
+            let trimmed = name.trimmingCharacters(in: .whitespaces)
+            return EnvironmentReading(
+                id: id,
+                label: trimmed.isEmpty ? roomName : trimmed,
+                roomName: roomName,
+                temperature: temp,
+                humidity: nil
+            )
+        default:
+            return nil
         }
     }
 

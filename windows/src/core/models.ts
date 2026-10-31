@@ -266,6 +266,70 @@ export function isDeviceActiveOn(device: SmartDevice): boolean {
   }
 }
 
+/** Dedicated sensors sort ahead of air purifiers and AC return-air thermistors (#103). */
+export function environmentReadingPriority(kind: DeviceKind): number {
+  switch (kind.kind) {
+    case "sensor":
+      return 0;
+    case "fan":
+      return 1;
+    case "climate":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+/**
+ * Ambient temperature / humidity reading exposed by this device for the status strip and menu bar (#103).
+ * Offline devices or devices without a live reading are excluded.
+ */
+export function deviceEnvironmentReading(device: SmartDevice): EnvironmentReading | null {
+  if (!device.isOnline) return null;
+  switch (device.kind.kind) {
+    case "sensor": {
+      if (device.kind.temperature === null && device.kind.humidity === null) return null;
+      const stripped = device.name.replace("温湿度计", "").replace(t("温湿度计"), "").trim();
+      return {
+        id: device.id,
+        label: stripped || device.roomName,
+        roomName: device.roomName,
+        temperature: device.kind.temperature,
+        humidity: device.kind.humidity,
+        battery: device.kind.battery,
+      };
+    }
+    case "fan": {
+      const temperature = device.kind.temperature ?? null;
+      const humidity = device.kind.humidity ?? null;
+      if (temperature === null && humidity === null) return null;
+      const trimmed = device.name.trim();
+      return {
+        id: device.id,
+        label: trimmed || device.roomName,
+        roomName: device.roomName,
+        temperature,
+        humidity,
+        battery: null,
+      };
+    }
+    case "climate": {
+      if (device.kind.currentTemperature === null) return null;
+      const trimmed = device.name.trim();
+      return {
+        id: device.id,
+        label: trimmed || device.roomName,
+        roomName: device.roomName,
+        temperature: device.kind.currentTemperature,
+        humidity: null,
+        battery: null,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 export function localizeNightShot(mode: string): string {
   switch (mode.trim().toLowerCase()) {
     case "off":

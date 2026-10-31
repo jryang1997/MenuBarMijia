@@ -63,7 +63,9 @@ import {
   type SmartDevice,
   allOffTargets,
   cloudRefreshDue,
+  deviceEnvironmentReading,
   deviceStatusSummary,
+  environmentReadingPriority,
   isDeviceActiveOn,
   joinsAllOff,
   joinsAllOffByDefault,
@@ -1211,20 +1213,20 @@ export class MenuMijiaWindowsApp {
 
   private get computedEnvironmentReadings(): EnvironmentReading[] {
     if (this.environmentReadings.length > 0) return this.environmentReadings;
-    const out: EnvironmentReading[] = [];
-    for (const d of this.devices) {
-      if (d.kind.kind === "sensor" && (d.kind.temperature !== null || d.kind.humidity !== null)) {
+    const out: Array<{ reading: EnvironmentReading; priority: number; index: number }> = [];
+    for (let i = 0; i < this.devices.length; i++) {
+      const d = this.devices[i]!;
+      const reading = deviceEnvironmentReading(d);
+      if (reading) {
         out.push({
-          id: d.id,
-          label: d.name.replace(t("温湿度计"), "").trim() || d.roomName,
-          roomName: d.roomName,
-          temperature: d.kind.temperature,
-          humidity: d.kind.humidity,
-          battery: d.kind.battery,
+          reading,
+          priority: environmentReadingPriority(d.kind),
+          index: i,
         });
       }
     }
-    return out;
+    out.sort((a, b) => a.priority - b.priority || a.index - b.index);
+    return out.map((item) => item.reading);
   }
 
   private async refreshXiaomiDevices(silent = false): Promise<void> {

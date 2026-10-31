@@ -24,7 +24,7 @@ extension HomeStore {
         var opts: [MenuBarMetricOption] = [
             MenuBarMetricOption(id: "auto:primary", title: L10n.tr("自动（第一个温度传感器）", "Auto (First Temp Sensor)"))
         ]
-        for env in environmentReadings {
+        for env in environmentReadings where env.temperature != nil {
             opts.append(MenuBarMetricOption(id: "temp:\(env.id)", title: L10n.tr("\(env.label) · 温度", "\(env.label) · Temp")))
             if env.humidity != nil {
                 opts.append(MenuBarMetricOption(id: "temp_hum:\(env.id)", title: L10n.tr("\(env.label) · 温湿度", "\(env.label) · Temp & Humidity")))
@@ -34,6 +34,18 @@ extension HomeStore {
         opts.append(MenuBarMetricOption(id: "active:count", title: L10n.tr("开启设备数量", "Active Device Count")))
         opts.append(MenuBarMetricOption(id: "icon:only", title: L10n.tr("仅显示图标", "Icon Only")))
         return opts
+    }
+
+    /// The environment reading selected for `menuBarTargetId` (`temp:<id>` / `temp_hum:<id>`),
+    /// falling back to the first reading with a temperature, or the first reading overall (#103).
+    public var preferredEnvironmentReading: EnvironmentReading? {
+        for prefix in ["temp:", "temp_hum:"] where menuBarTargetId.hasPrefix(prefix) {
+            let targetId = String(menuBarTargetId.dropFirst(prefix.count))
+            if let match = environmentReadings.first(where: { $0.id == targetId && $0.temperature != nil }) {
+                return match
+            }
+        }
+        return environmentReadings.first(where: { $0.temperature != nil }) ?? environmentReadings.first
     }
 
     public var hiddenDevices: [SmartDevice] {
@@ -82,7 +94,9 @@ extension HomeStore {
         let sensorReading = { (prefix: String) -> EnvironmentReading? in
             guard self.menuBarTargetId.hasPrefix(prefix) else { return nil }
             let sensorId = String(self.menuBarTargetId.dropFirst(prefix.count))
-            return self.environmentReadings.first(where: { $0.id == sensorId }) ?? self.environmentReadings.first
+            return self.environmentReadings.first(where: { $0.id == sensorId && $0.temperature != nil })
+                ?? self.environmentReadings.first(where: { $0.temperature != nil })
+                ?? self.environmentReadings.first
         }
 
         if let env = sensorReading("temp:"), let t = env.temperature {

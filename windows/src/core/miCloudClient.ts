@@ -1,11 +1,13 @@
 import { MiCloudCrypto } from "./miCloudCrypto.js";
-import type {
-  DeviceCommand,
-  DeviceKind,
-  EnvironmentReading,
-  RoomCategory,
-  SmartDevice,
-  SynthesizedHome,
+import {
+  deviceEnvironmentReading,
+  environmentReadingPriority,
+  type DeviceCommand,
+  type DeviceKind,
+  type EnvironmentReading,
+  type RoomCategory,
+  type SmartDevice,
+  type SynthesizedHome,
 } from "./models.js";
 
 export interface HttpRequest {
@@ -1283,7 +1285,7 @@ export const MiotSynthesizer = {
       const roomName = room?.name.trim() || "全屋";
       const roomId = room ? `room_${room.id}` : "other";
 
-      smartDevices.push({
+      const smartDevice: SmartDevice = {
         id: record.did,
         name: record.name,
         roomId,
@@ -1291,19 +1293,39 @@ export const MiotSynthesizer = {
         model: record.model,
         isOnline: record.isOnline,
         kind: built,
-      });
+      };
+      smartDevices.push(smartDevice);
 
-      if (built.kind === "sensor" && (built.temperature !== null || built.humidity !== null)) {
-        readings.push({
-          id: record.did,
-          label: record.name.replace("温湿度计", "").trim() || roomName,
-          roomName,
-          temperature: built.temperature,
-          humidity: built.humidity,
-          battery: built.battery,
-        });
+      const reading = deviceEnvironmentReading(smartDevice);
+      if (reading) {
+        readings.push(reading);
       }
     }
+
+    const roomOrderByName = new Map<string, number>();
+    rooms.forEach((r, idx) => {
+      const name = r.name.trim() || "全屋";
+      if (!roomOrderByName.has(name)) roomOrderByName.set(name, idx);
+    });
+    const firstSeenRoom = new Map<string, number>();
+    for (const d of smartDevices) {
+      if (!firstSeenRoom.has(d.roomName)) firstSeenRoom.set(d.roomName, firstSeenRoom.size);
+    }
+    const fallbackBase = roomOrderByName.size + 1;
+    const roomOrder = (name: string): number =>
+      roomOrderByName.get(name) ?? fallbackBase + (firstSeenRoom.get(name) ?? 999);
+    const priorityById = new Map<string, number>(
+      smartDevices.map((d) => [d.id, environmentReadingPriority(d.kind)])
+    );
+    readings.sort((a, b) => {
+      const pa = priorityById.get(a.id) ?? 0;
+      const pb = priorityById.get(b.id) ?? 0;
+      if (pa !== pb) return pa - pb;
+      const ra = roomOrder(a.roomName);
+      const rb = roomOrder(b.roomName);
+      if (ra !== rb) return ra - rb;
+      return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+    });
 
     const roomCounts = new Map<string, { name: string; count: number }>();
     for (const dev of smartDevices) {

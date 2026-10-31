@@ -662,4 +662,87 @@ struct MijiaCoreTests {
         ])
         #expect(MiotSynthesizer.supportedServiceName(for: plainLight) == "light")
     }
+
+    @Test("Issue #103: menu-bar and environment readings include online climate and air-purifier temperatures while excluding offline devices")
+    @MainActor
+    func environmentReadingsIncludeClimateAndAirPurifierAndExcludeOffline() async throws {
+        let areas = [
+            HAAreaEntry(area_id: "living", name: "客厅"),
+            HAAreaEntry(area_id: "study", name: "书房"),
+            HAAreaEntry(area_id: "bed", name: "主卧"),
+        ]
+        let devices = [
+            HADeviceEntry(id: "dev_ac_living", area_id: "living", name: "客厅空调", model: "xiaomi.aircondition.mc5"),
+            HADeviceEntry(id: "dev_ac_offline", area_id: "bed", name: "主卧空调", model: "xiaomi.aircondition.mc5"),
+            HADeviceEntry(id: "dev_airp_study", area_id: "study", name: "米家空气净化器 4 Lite", model: "zhimi.airp.rma3"),
+        ]
+        let entities = [
+            HAEntityEntry(entity_id: "climate.living_ac", device_id: "dev_ac_living"),
+            HAEntityEntry(entity_id: "climate.bed_ac", device_id: "dev_ac_offline"),
+            HAEntityEntry(entity_id: "fan.study_airp", device_id: "dev_airp_study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_temperature", device_id: "dev_airp_study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_humidity", device_id: "dev_airp_study"),
+        ]
+        let states: [String: HAEntityState] = [
+            "climate.living_ac": HAEntityState(
+                entityId: "climate.living_ac",
+                state: "cool",
+                attributes: [
+                    "temperature": .number(25),
+                    "current_temperature": .number(26.8),
+                ]
+            ),
+            "climate.bed_ac": HAEntityState(
+                entityId: "climate.bed_ac",
+                state: "unavailable",
+                attributes: [
+                    "temperature": .number(26),
+                    "current_temperature": .number(28.0),
+                ]
+            ),
+            "fan.study_airp": HAEntityState(entityId: "fan.study_airp", state: "on"),
+            "sensor.study_airp_temperature": HAEntityState(
+                entityId: "sensor.study_airp_temperature",
+                state: "24.3",
+                attributes: ["device_class": .string("temperature")]
+            ),
+            "sensor.study_airp_humidity": HAEntityState(
+                entityId: "sensor.study_airp_humidity",
+                state: "51",
+                attributes: ["device_class": .string("humidity")]
+            ),
+        ]
+
+        let home = DeviceSynthesizer.synthesize(areas: areas, devices: devices, entities: entities, states: states)
+        #expect(home.environmentReadings.map(\.id) == ["dev_airp_study", "dev_ac_living"])
+        #expect(home.environmentReadings.map(\.label) == ["米家空气净化器 4 Lite", "客厅空调"])
+
+        let mock = MockHomeProvider(snapshot: home)
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.issue103.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let optionIds = store.availableMenuBarOptions.map(\.id)
+        #expect(optionIds.contains("temp:dev_airp_study"))
+        #expect(optionIds.contains("temp_hum:dev_airp_study"))
+        #expect(optionIds.contains("temp:dev_ac_living"))
+        #expect(!optionIds.contains("temp_hum:dev_ac_living"))
+        #expect(!optionIds.contains("temp:dev_ac_offline"))
+
+        L10n.$overrideTemperatureUnit.withValue(.celsius) {
+            // Default auto:primary uses the first reading with a temperature (air purifier when no standalone sensor exists).
+            #expect(store.menuBarText == "24.3°C")
+            #expect(store.preferredEnvironmentReading?.id == "dev_airp_study")
+
+            // Selecting the AC explicitly switches both menuBarText and preferredEnvironmentReading to the AC.
+            store.menuBarTargetId = "temp:dev_ac_living"
+            #expect(store.menuBarText == "26.8°C")
+            #expect(store.preferredEnvironmentReading?.id == "dev_ac_living")
+
+            // Selecting temp_hum on the air purifier shows both temperature and humidity.
+            store.menuBarTargetId = "temp_hum:dev_airp_study"
+            #expect(store.menuBarText == "24.3°C 51%")
+        }
+    }
 }
