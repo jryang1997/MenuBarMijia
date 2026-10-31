@@ -484,7 +484,15 @@ fn sweep_stale_update_installers() {
     }
 }
 
-fn launch_installer(installer_path: &std::path::Path) -> Result<std::process::Child, String> {
+fn elevated_launch_powershell_command(is_msi: bool) -> &'static str {
+    if is_msi {
+        "Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', $env:MIJIA_INSTALLER_PATH) -Verb RunAs -ErrorAction Stop"
+    } else {
+        "Start-Process -FilePath $env:MIJIA_INSTALLER_PATH -Verb RunAs -ErrorAction Stop"
+    }
+}
+
+fn launch_installer(installer_path: &std::path::Path) -> Result<(), String> {
     let is_msi = installer_path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -497,21 +505,37 @@ fn launch_installer(installer_path: &std::path::Path) -> Result<std::process::Ch
         std::process::Command::new(installer_path)
     };
     match cmd.spawn() {
-        Ok(child) => Ok(child),
+        Ok(mut child) => {
+            std::thread::sleep(Duration::from_millis(250));
+            if let Ok(Some(status)) = child.try_wait() {
+                if !status.success() {
+                    return Err(format!("安装程序未能正常启动（退出码 {:?}）", status.code()));
+                }
+            }
+            Ok(())
+        }
         Err(err) if err.raw_os_error() == Some(740) => {
-            // ERROR_ELEVATION_REQUIRED (740): invoke ShellExecute via PowerShell Start-Process so UAC can prompt.
-            std::process::Command::new("powershell")
+            // ERROR_ELEVATION_REQUIRED (740): invoke ShellExecute with -Verb RunAs so UAC prompts
+            // and wait for Start-Process to finish spawning the elevated installer (or fail if declined).
+            let status = std::process::Command::new("powershell")
                 .args([
                     "-NoProfile",
                     "-NonInteractive",
                     "-WindowStyle",
                     "Hidden",
                     "-Command",
-                    "Start-Process -FilePath $env:MIJIA_INSTALLER_PATH",
+                    elevated_launch_powershell_command(is_msi),
                 ])
                 .env("MIJIA_INSTALLER_PATH", installer_path)
-                .spawn()
-                .map_err(|e| format!("启动安装程序失败：{e}"))
+                .status()
+                .map_err(|e| format!("启动安装程序失败：{e}"))?;
+            if !status.success() {
+                return Err(format!(
+                    "启动安装程序失败（未获管理员授权或启动被取消，退出码 {:?}）",
+                    status.code()
+                ));
+            }
+            Ok(())
         }
         Err(err) => Err(format!("启动安装程序失败：{err}")),
     }
@@ -629,20 +653,9 @@ async fn install_update(app: AppHandle, asset: InstallerAssetPayload) -> Result<
     std::fs::write(&installer_path, &bytes)
         .map_err(|err| format!("写入临时安装程序失败：{err}"))?;
 
-    let mut child = match launch_installer(&installer_path) {
-        Ok(child) => child,
-        Err(err) => {
-            let _ = std::fs::remove_file(&installer_path);
-            return Err(err);
-        }
-    };
-
-    std::thread::sleep(Duration::from_millis(250));
-    if let Ok(Some(status)) = child.try_wait() {
-        if !status.success() {
-            let _ = std::fs::remove_file(&installer_path);
-            return Err(format!("安装程序未能正常启动（退出码 {:?}）", status.code()));
-        }
+    if let Err(err) = launch_installer(&installer_path) {
+        let _ = std::fs::remove_file(&installer_path);
+        return Err(err);
     }
 
     let app_for_exit = app.clone();
@@ -1642,5 +1655,10 @@ mod tests {
         .is_err());
         assert!(verify_ed25519_signature("", UPDATE_SIGNING_PUBLIC_KEY_BASE64, b"payload").is_err());
         assert!(verify_ed25519_signature("not-base64!", UPDATE_SIGNING_PUBLIC_KEY_BASE64, b"payload").is_err());
+
+        assert!(elevated_launch_powershell_command(false).contains("-Verb RunAs"));
+        assert!(elevated_launch_powershell_command(false).contains("-ErrorAction Stop"));
+        assert!(elevated_launch_powershell_command(true).contains("msiexec.exe"));
+        assert!(elevated_launch_powershell_command(true).contains("-Verb RunAs"));
     }
 }
