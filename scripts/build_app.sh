@@ -288,12 +288,18 @@ generate_app_intents_metadata() {
     local resources="$APP_DIR/Contents/Resources/Metadata.appintents"
     rm -rf "$resources"
 
+    if [ "${SKIP_APP_INTENTS:-0}" = "1" ] && [ "$SIGN_IDENTITY" = "-" ]; then
+        echo "⚠️ 已跳过 App Intents 元数据生成（SKIP_APP_INTENTS=1，仅限本机 ad-hoc 自用）"
+        return 0
+    fi
+
     if [ ! -f "$resources/extract.actionsdata" ]; then
         echo "ℹ️ 生成 App Intents 元数据（xcodebuild ExtractAppIntentsMetadata）..."
         if ! generate_app_intents_metadata_via_xcode; then
             echo "❌ 无法生成 App Intents 元数据（Metadata.appintents）。" >&2
             echo "   缺了它，快捷指令 / Siri / Spotlight 看不到任何动作，属于 #57 的交付缺失，已中止打包。" >&2
             echo "   排查：xcode-select -p 必须指向完整 Xcode；xcodebuild -list 应列出 ${APP_INTENTS_MODULE}。" >&2
+            echo "   （若仅本机自用且只安装了 Command Line Tools，可运行 SKIP_APP_INTENTS=1 bash scripts/build_app.sh 跳过）" >&2
             exit 1
         fi
     fi

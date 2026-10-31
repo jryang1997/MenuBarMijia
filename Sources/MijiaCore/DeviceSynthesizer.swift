@@ -255,7 +255,8 @@ public enum DeviceSynthesizer {
             guard eid.hasPrefix("light.") || eid.hasPrefix("climate.")
                     || eid.hasPrefix("fan.") || eid.hasPrefix("vacuum.")
                     || eid.hasPrefix("camera.") || eid.hasPrefix("switch.")
-                    || eid.hasPrefix("media_player.") || eid.hasPrefix("sensor.") else { continue }
+                    || eid.hasPrefix("media_player.") || eid.hasPrefix("sensor.")
+                    || eid.hasPrefix("button.") else { continue }
             let entity = entityById[eid]
             guard entity?.disabled_by == nil, entity?.hidden_by == nil else { continue }
             if let deviceId = entity?.device_id, registeredDeviceIds.contains(deviceId) { continue }
@@ -860,6 +861,34 @@ public enum DeviceSynthesizer {
                     SensorSpec(
                         battery: bVal,
                         statusText: "守护中"
+                    )
+                )
+            )
+        }
+
+        // 9. Standalone Action Button (e.g. Home Assistant Wake on LAN button.* entities, #100)
+        let primaryButtons = entities.filter { entity in
+            guard entity.entity_id.hasPrefix("button."), entity.entity_category == nil else { return false }
+            if let devClass = states[entity.entity_id]?.attributes["device_class"]?.stringValue,
+               devClass == "restart" || devClass == "update" || devClass == "identify" {
+                return false
+            }
+            let objectId = entity.entity_id.dropFirst("button.".count)
+            return objectId.firstMatch(of: #/(?:^|_)(?:reboot|restart|reset|identify|calibrate)(?:_|$)/#) == nil
+        }
+        if let btn = primaryButtons.first(where: { $0.entity_id.contains("wake_on_lan") }) ?? primaryButtons.first,
+           let st = states[btn.entity_id] {
+            return SmartDevice(
+                id: deviceId,
+                name: name,
+                roomId: roomId,
+                roomName: roomName,
+                model: model,
+                isOnline: st.state != "unavailable",
+                kind: .plug(
+                    PlugSpec(
+                        switchEntityId: btn.entity_id,
+                        isOn: false
                     )
                 )
             )

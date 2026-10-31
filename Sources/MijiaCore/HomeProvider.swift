@@ -463,6 +463,9 @@ public actor HAWebSocketProvider: HomeProvider {
             if primaryEid.hasPrefix("camera.") {
                 return ("camera", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
             }
+            if primaryEid.hasPrefix("button.") {
+                return ("button", "press", ["entity_id": primaryEid])
+            }
             return ("switch", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
 
         case .setSelectOption(let eid, let option):
@@ -503,6 +506,9 @@ public actor HAWebSocketProvider: HomeProvider {
             ])
 
         case .activateScene(let eid):
+            if eid.hasPrefix("button.") {
+                return ("button", "press", ["entity_id": eid])
+            }
             let domain = eid.hasPrefix("script.") ? "script" : "scene"
             return (domain, "turn_on", ["entity_id": eid])
         }

@@ -531,6 +531,13 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             }
             return "fan.floor.fill"
         case .plug(let s):
+            if s.switchEntityId.hasPrefix("button.") {
+                if s.switchEntityId.contains("wake_on_lan") || name.contains("电脑")
+                    || name.localizedCaseInsensitiveContains("pc") || name.localizedCaseInsensitiveContains("mac") {
+                    return "desktopcomputer"
+                }
+                return "power.circle.fill"
+            }
             if name.contains("咖啡") {
                 return s.isOn ? "cup.and.heat.waves.fill" : "cup.and.saucer.fill"
             }
@@ -623,6 +630,9 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return parts.joined(separator: " · ")
 
         case .plug(let s):
+            if s.switchEntityId.hasPrefix("button.") {
+                return L10n.tr("点击触发", "Tap to trigger")
+            }
             if !s.isOn { return L10n.tr("已关闭", "Off") }
             if let w = s.powerWatts {
                 if w >= 1 {

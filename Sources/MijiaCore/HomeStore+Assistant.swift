@@ -770,6 +770,10 @@ extension HomeStore {
             return AssistantEffect(updated: updated, command: .setFanPower(entityId: s.entityId, isOn: on), restore: [restore])
 
         case (.power(let on), .plug(var s)):
+            if s.switchEntityId.hasPrefix("button.") {
+                guard on else { return nil }
+                return AssistantEffect(updated: updated, command: .pressButton(entityId: s.switchEntityId), restore: [])
+            }
             let restore = DeviceCommand.setSwitch(entityId: s.switchEntityId, isOn: s.isOn)
             s.isOn = on
             updated.kind = .plug(s)
