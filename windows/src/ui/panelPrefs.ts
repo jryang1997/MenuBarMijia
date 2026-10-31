@@ -7,20 +7,26 @@ import { t } from "../core/i18n.js";
 
 export type AppSkin = "classic" | "frost" | "night" | "glass" | "soft" | "bento" | "neon" | "capsule" | "dawn";
 
+export type AppAppearance = "system" | "light" | "dark";
+
+export const APPEARANCES: ReadonlyArray<{ readonly id: AppAppearance; readonly title: string }> = [
+  { id: "system", get title() { return t("跟随系统"); } },
+  { id: "light", get title() { return t("浅色"); } },
+  { id: "dark", get title() { return t("深色"); } },
+];
+
+export function resolveAppearance(preference: AppAppearance, systemPrefersLight = false): "light" | "dark" {
+  if (preference === "light") return "light";
+  if (preference === "dark") return "dark";
+  return systemPrefersLight ? "light" : "dark";
+}
+
 /**
  * Skin ids stay stable (they are persisted); `title` is a getter so it is translated in whatever
  * language is active when the panel renders, not at module load (#52).
  */
 export const SKINS: ReadonlyArray<{ readonly id: AppSkin; readonly title: string }> = [
   { id: "classic", get title() { return t("经典"); } },
-  { id: "frost", get title() { return t("霜白"); } },
-  { id: "night", get title() { return t("夜航"); } },
-  { id: "glass", get title() { return t("液态玻璃"); } },
-  { id: "soft", get title() { return t("柔雾"); } },
-  { id: "bento", get title() { return t("便当格"); } },
-  { id: "neon", get title() { return t("霓虹夜"); } },
-  { id: "capsule", get title() { return t("胶囊"); } },
-  { id: "dawn", get title() { return t("晨光"); } },
 ];
 
 export type PanelHeight = "compact" | "standard" | "tall" | "max";

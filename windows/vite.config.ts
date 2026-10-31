@@ -29,8 +29,11 @@ export default defineConfig({
   },
   clearScreen: false,
   server: {
-    port: 1420,
+    host: process.env.DISABLE_HMR === "true" ? "0.0.0.0" : undefined,
+    port: process.env.PORT ? Number(process.env.PORT) : process.env.DISABLE_HMR === "true" ? 3000 : 1420,
     strictPort: true,
+    allowedHosts: true,
+    hmr: process.env.DISABLE_HMR === "true" ? false : undefined,
   },
   build: {
     target: "es2022",

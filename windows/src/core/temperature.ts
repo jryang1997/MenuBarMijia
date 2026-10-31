@@ -61,14 +61,24 @@ export function toCelsius(displayValue: number, unit: TemperatureUnit = currentU
   return unit === "fahrenheit" ? ((displayValue - 32) * 5) / 9 : displayValue;
 }
 
+function resolveFractionDigits(celsius: number, unit: TemperatureUnit, fractionDigits?: number): number {
+  if (fractionDigits !== undefined) {
+    return Math.max(0, Math.trunc(fractionDigits));
+  }
+  if (unit === "celsius" && Math.abs(celsius - Math.round(celsius)) >= 0.05) {
+    return 1;
+  }
+  return 0;
+}
+
 /** Digits only, for places that draw the degree mark separately. */
-export function formatTemperatureValue(celsius: number, unit: TemperatureUnit = currentUnit, fractionDigits = 0): string {
-  const digits = Math.max(0, Math.trunc(fractionDigits));
+export function formatTemperatureValue(celsius: number, unit: TemperatureUnit = currentUnit, fractionDigits?: number): string {
+  const digits = resolveFractionDigits(celsius, unit, fractionDigits);
   return toDisplayTemperature(celsius, unit).toFixed(digits);
 }
 
-/** Digits plus unit symbol, e.g. `24°C` or `75°F`. */
-export function formatTemperature(celsius: number, unit: TemperatureUnit = currentUnit, fractionDigits = 0): string {
+/** Digits plus unit symbol, e.g. `24°C`, `25.5°C`, or `75°F`. */
+export function formatTemperature(celsius: number, unit: TemperatureUnit = currentUnit, fractionDigits?: number): string {
   return `${formatTemperatureValue(celsius, unit, fractionDigits)}${temperatureSymbol(unit)}`;
 }
 

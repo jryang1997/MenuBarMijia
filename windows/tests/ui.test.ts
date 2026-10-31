@@ -1480,4 +1480,73 @@ describe("Air purifier support (#98)", () => {
     const chipLabels = Array.from(document.querySelectorAll(".cc-env-label"), (node) => node.textContent);
     assert.deepEqual(chipLabels, ["客厅", "书房空净"]);
   });
+
+  it("reuses the outer popover element and clears is-opening so clicks do not replay the drop-in animation", async () => {
+    startDemo();
+    const root = element("#app");
+    const initialPopover = element(".cc-popover");
+    assert.equal(root.classList.contains("is-opening"), true);
+
+    await click('[data-toggle-device="light.living_ceiling"]');
+    assert.equal(root.classList.contains("is-opening"), false);
+    assert.equal(element(".cc-popover"), initialPopover);
+  });
+
+  it("displays 0.5°C increments on every single AC step click in Celsius mode", async () => {
+    localStorage.setItem(
+      "menumijia.windows.settings.v2",
+      JSON.stringify({
+        connectionMode: "demo",
+        hasCompletedOnboarding: true,
+        interfaceLanguage: "zh-Hans",
+        temperatureUnit: "celsius",
+      }),
+    );
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+
+    const tempEl = () => element(".cc-climate .cc-climate-temp");
+    assert.equal(tempEl().textContent, "25°C");
+
+    await click('[data-acstep="climate.living_ac:1"]');
+    assert.equal(tempEl().textContent, "25.5°C");
+
+    await click('[data-acstep="climate.living_ac:1"]');
+    assert.equal(tempEl().textContent, "26°C");
+
+    await click('[data-acstep="climate.living_ac:-1"]');
+    assert.equal(tempEl().textContent, "25.5°C");
+
+    await click('[data-acstep="climate.living_ac:-1"]');
+    assert.equal(tempEl().textContent, "25°C");
+
+    await click('[data-acstep="climate.living_ac:-1"]');
+    assert.equal(tempEl().textContent, "24.5°C");
+  });
+
+  it("switches between light (daylight) and dark appearance in Settings and via the footer toggle", async () => {
+    startDemo();
+    const popover = () => element(".cc-popover");
+    const startedLight = popover().classList.contains("scheme-light");
+
+    // Quick toggle in the footer flips between Light (daylight) and Dark mode.
+    await click("#btn-toggle-appearance");
+    assert.equal(popover().classList.contains(startedLight ? "scheme-dark" : "scheme-light"), true);
+    assert.equal(element("#app").dataset.scheme, startedLight ? "dark" : "light");
+
+    // Settings sheet exposes System / Light / Dark segmented options.
+    await click("#btn-settings");
+    await click('[data-appearance="light"]');
+    assert.equal(popover().classList.contains("scheme-light"), true);
+    assert.equal(element("#app").dataset.scheme, "light");
+    assert.equal(element('[data-appearance="light"]').getAttribute("aria-pressed"), "true");
+
+    await click('[data-appearance="dark"]');
+    assert.equal(popover().classList.contains("scheme-dark"), true);
+    assert.equal(element("#app").dataset.scheme, "dark");
+    assert.equal(element('[data-appearance="dark"]').getAttribute("aria-pressed"), "true");
+
+    const saved = JSON.parse(localStorage.getItem("menumijia.windows.settings.v2") ?? "{}") as Record<string, unknown>;
+    assert.equal(saved["appearance"], "dark");
+  });
 });

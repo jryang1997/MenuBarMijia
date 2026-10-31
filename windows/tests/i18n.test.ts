@@ -140,6 +140,8 @@ describe("temperature units (#52)", () => {
     applyTemperatureUnit("en-US", "celsius");
     assert.equal(getTemperatureUnit(), "celsius");
     assert.equal(formatTemperature(24), "24°C");
+    assert.equal(formatTemperature(25.5), "25.5°C");
+    assert.equal(formatTemperatureValue(24.5), "24.5");
     assert.equal(formatTemperatureValue(26.5, undefined, 1), "26.5");
     assert.equal(temperatureSymbol(), "°C");
 

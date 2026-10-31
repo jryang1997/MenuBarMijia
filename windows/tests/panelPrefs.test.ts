@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { SmartDevice } from "../src/core/models.js";
 import {
   DEFAULT_GLOBAL_SHORTCUT,
+  SKINS,
   applyOrder,
   chosenSize,
   comfort,
@@ -30,6 +31,10 @@ const climate = (id: string): SmartDevice => ({
 });
 
 describe("panel layout prefs", () => {
+  it("exposes only the default classic skin", () => {
+    assert.deepEqual(SKINS.map((s) => s.id), ["classic"]);
+  });
+
   it("page-scoped size overrides the all-pages default", () => {
     const prefs = emptyLayoutPrefs();
     prefs.tileSizes = { a: "full", "客厅|a": "panel" };
