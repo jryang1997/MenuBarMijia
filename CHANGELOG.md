@@ -1,15 +1,26 @@
 # 更新记录
 
+## 1.1.5
+
+### 新功能与体验提升
+- **Windows / Web 端界面重构与刷新防闪烁调优（[#108](https://github.com/jryang1997/MenuBarMijia/pull/108)）**：
+  - **浅色 / 深色 / 跟随系统外观模式与毛玻璃控制中心样式**：统一收敛为经典系统毛玻璃质感与激活白卡（platter）设计，新增「跟随系统 / 浅色 / 深色」三档外观设置与底栏太阳/月亮一键切换按钮（`#btn-toggle-appearance`），实时响应系统深浅色切换。
+  - **面板刷新重绘调优**：`renderNow()` 复用已挂载的外层 `.cc-popover` 容器并清除 `is-opening`，消除点击设备开关、步进温度或云端轮询重绘时反复触发整窗下拉与卡片入场动画的问题；同时保留设置抽屉 `.cc-sheet` 滚动位置，切换选项不再跳回顶部。
+  - **0.5°C 空调步进温度精度显示**：摄氏度模式下自动识别并保留 `0.5°C` 小数（如 `25°C → 25.5°C → 26°C`），双端（Windows 与 macOS `L10n.temperature`）同步生效。
+- **macOS 系统毛玻璃视觉统一（[#99](https://github.com/jryang1997/MenuBarMijia/pull/99)）**：移除多套自定义皮肤，统一采用原生系统玻璃材质与卡片层级。
+- **Home Assistant `button.*`（Wake on LAN 局域网唤醒等）独立设备支持（[#100](https://github.com/jryang1997/MenuBarMijia/issues/100), [#107](https://github.com/jryang1997/MenuBarMijia/pull/107)）**：支持将 Home Assistant 中的主功能 `button.*` 实体（含独立配置的 WOL 唤醒按钮，自动排除重启/升级/识别等辅助诊断按钮与已禁用设备）合成为可点击卡片，采用瞬时触发语义（不残留常亮开机状态、不推入关机撤销队列），快捷指令、URL 与 AI 助手统一播报「已触发 / Triggered」。
+- **菜单栏环境温度来源扩展与优先级（[#103](https://github.com/jryang1997/MenuBarMijia/issues/103), [#105](https://github.com/jryang1997/MenuBarMijia/pull/105), [#106](https://github.com/jryang1997/MenuBarMijia/pull/106)）**：当房间没有独立温湿度传感器时，支持回退读取空气净化器或空调内置温湿度并展示在顶部环境横条与 macOS 菜单栏，严格保持「独立温湿度计 > 空气净化器 > 空调」优先级，不受卡片拖拽排序影响。
+- **双端应用内一键校验更新（[#102](https://github.com/jryang1997/MenuBarMijia/pull/102)）**：Windows 与 macOS 支持在设置中直接下载更新包，完成 SHA-256 与离线 Ed25519 签名校验后直接启动安装或原位替换重启。
+- **米家空气净化器支持（`zhimi.airp.rma3` 等全系 MIoT 空净）（[#98](https://github.com/jryang1997/MenuBarMijia/issues/98), [#101](https://github.com/jryang1997/MenuBarMijia/pull/101)）**：支持米家云直连与 Home Assistant 空气净化器设备卡片，卡片副标题与展开抽屉实时显示 PM2.5 浓度、空气质量等级（优/良/污染分级）、温湿度与滤芯剩余寿命；支持自动 / 睡眠 / 最爱模式切换与 1–100% 风速滑块调节（调节风速时自动联动 `air-purifier-favorite` 挡位并切入最爱模式），支持中英文语音/文字控制与一键撤销。
+  - **修复油烟机/晾衣架/浴霸/风扇灯被误显示成「裸灯卡片」（[#98](https://github.com/jryang1997/MenuBarMijia/issues/98) 延伸）**：非照明类设备类型在回退时跳过 `light` 副服务（诚实进入「未显示设备」列表），可写 `on` 兜底也不再冒充插座；`video-doorbell` 品类的开关/夜视/移动侦测控制同步接入。
+- **智能摄像机支持、实时画面悬浮小窗与 macOS 原生画中画（[#97](https://github.com/jryang1997/MenuBarMijia/issues/97), [#101](https://github.com/jryang1997/MenuBarMijia/pull/101), [#104](https://github.com/jryang1997/MenuBarMijia/pull/104)）**：
+  - 把米家云端与 Home Assistant（`camera.*`）摄像机纳入设备卡片，点击即可弹出置顶实时画面悬浮小窗（`CameraLivePanelController`），并提供镜头休眠/唤醒、夜视模式、移动侦测开关与一键撤销；摄像机默认不参与「全关」。
+  - **macOS 低延迟 fMP4 硬件解码与原生画中画（PiP）**：通过内置本地 BSD UDP 中继与 `go2rtc` 流式 fMP4 管线直连 `AVPlayer` 硬件解码，支持原生 `AVPictureInPictureController` 画中画悬浮播放。
+  - **Windows 端私有 P2P 直连与会话保温**：内置 MISS CS2/TUTK 密钥协商与局域网 UDP 打洞中继（`start_xiaomi_camera_bridge`），通过无窗口 `ffmpeg-silent.exe` 转码送到常驻 `<img>`；点「关闭画面」/Esc 只隐藏小窗并保温 P2P 会话 120 秒，再次点开秒出画面，超时或彻底关闭时向摄像机下发 `stop-stream` 释放单会话。
+
 ## 1.1.4
 
 ### 新功能与体验提升
-- **修复摄像机实时画面卡在首帧（[#97](https://github.com/jryang1997/MenuBarMijia/issues/97) 回归）**：实测定位根因——摄像机的单 P2P 会话**承载过视频后需要一分多钟才能被它自己回收**（实测：新开会话 326 fps 正常推流；关掉再立刻重开，无论间隔 0.3 秒还是 2.5 秒都只剩 0–14 fps，表现为卡在首帧；冷却 2.5 分钟才恢复）。旧实现关闭小窗就销毁全部本地资源并强制重新协商，正好撞上这个冷却窗。现在：点「关闭画面」/Esc 只**隐藏**小窗并保温整条链路（P2P 会话、中继、转码都保持，`<img>` 继续消费流），再次点击卡片**秒出画面**；面板整体关闭、切换设备、出错重连或隐藏满 120 秒无人观看时才真正拆除，并尽力向摄像机下发 `stop-stream`、等待释放后再协商；协商任务带代次检查，过期的桥启动会被回收，不会在拆除后重建孤儿中继。已知限制（记录在案，非阻塞）：少数机型的云 HLS 动作需要类型化入参，两端都只尝试空入参与 `[1]`，失败即回落 P2P，因此该路径属实验性兜底；`stop-stream` 线级断言与 macOS 端会话生命周期测试暂未覆盖。诊断证据与脚本见 `.scratch/camera-diag/`。
-- **修复油烟机/晾衣架/浴霸/风扇灯被误显示成「裸灯卡片」（[#98](https://github.com/jryang1997/MenuBarMijia/issues/98) 延伸）**：这些设备规格自带 `light` 副服务，旧回退逻辑把它们合成成一盏只能开关灯的卡片，主功能完全不可见；现在非照明类设备类型在回退时跳过 `light` 服务（诚实进入「未显示设备」列表），可写 `on` 兜底也不再冒充插座。`video-doorbell` 品类的开关/夜视/移动侦测控制同步接入（复用 camera 通道，视频仍受 #97 边界约束）。全品类可行性盘点见 `docs/research/miot-unsupported-categories.md`。
-- **米家空气净化器支持（`zhimi.airp.rma3` 等全系 MIoT 空净）（[#98](https://github.com/jryang1997/MenuBarMijia/issues/98)）**：支持米家云直连与 Home Assistant 空气净化器设备卡片，卡片副标题与展开抽屉实时显示 PM2.5 浓度、空气质量等级（优/良/污染分级）、温湿度与滤芯剩余寿命；支持自动 / 睡眠 / 最爱模式切换与 1–100% 风速滑块调节（调节风速时自动联动 `air-purifier-favorite` 挡位并切入最爱模式），支持中英文语音/文字控制与一键撤销。
-- **智能摄像机支持与实时画面悬浮小窗（[#97](https://github.com/jryang1997/MenuBarMijia/issues/97)）**：把米家云端（`camera-control` / `motion-detection` / `camera-stream-for-google-home`）与 Home Assistant（`camera.*`）摄像机纳入设备卡片，点击卡片即可放大弹出跨桌面、全屏应用置顶的实时画面悬浮小窗（`CameraLivePanelController`），支持 HLS 直播（含系统画中画 PiP）、HA 实时抓拍帧、本机 `go2rtc` 自动发现及自定义流地址绑定，并提供镜头休眠/唤醒、夜视模式、移动侦测开关与一键撤销；摄像机默认不参与「全关」，防止误关看护画面。
-  - **Windows 端私有 P2P 直连**：内置 MISS CS2/TUTK 密钥协商与局域网 UDP 打洞中继（`start_xiaomi_camera_bridge`），把摄像机 H.265 裸流转成本机可播的流；走低码率子码流、关闭音轨，画面以 MJPEG 逐帧送到一个**常驻 `<img>`**（面板轮询重绘只重新挂载同一元素，不重开连接），实测原始 P2P 链路端到端 0–2 秒、转码链路 1–2 秒。曾试 WebRTC，但这台摄像机的 RTP 时间戳按约 40fps 递增（实际 20fps），浏览器按时间戳播放会累积约 18 秒延迟，故不采用。
-  - **修复 ffmpeg 控制台窗口闪出**：`go2rtc` 的 ffmpeg 探测与转码改走无窗口代理程序 `ffmpeg-silent.exe`，并拦截其 5 个 GPU 探测进程。
-  - **修复第二次打开无画面**：不再复用已失效的端口注册，重新打开会重建中继；小窗新增「重新连接」按钮与播放失败自动重试。（会话生命周期随后在「卡在首帧」修复中重构为「隐藏保温、超时才拆除」，见上。）
 - **温湿度传感器 24 小时 / 7 天历史折线图（[#90](https://github.com/jryang1997/MenuBarMijia/pull/90), [#92](https://github.com/jryang1997/MenuBarMijia/pull/92)）**：点击传感器卡片或顶部环境胶囊即可展开分时段温湿度趋势折线图，自动拉取米家云统计与蓝牙网关历史记录，融合本机采样并按家庭连接源隔离存储；展示最新、最高、最低、均值与悬停读数。
 - **macOS 按住说话（`⌥M` 全局快捷键 + 菜单栏图标长按）（[#89](https://github.com/jryang1997/MenuBarMijia/pull/89), [#95](https://github.com/jryang1997/MenuBarMijia/pull/95)）**：长按 `⌥M` 或菜单栏图标即可直接唤起语音聆听，松开自动发送执行；修复 macOS 26+ 系统级状态栏长按手势触发兼容问题。
 - **指令栏执行路径与耗时回执胶囊（[#94](https://github.com/jryang1997/MenuBarMijia/pull/94)）**：指令执行完成后在回复旁展示 `⚡ 本地 · <耗时>` 或 `🧠 AI · <耗时>` 胶囊，命中个人习惯记忆时附带 `💡 习惯` 标记与悬停摘要。
