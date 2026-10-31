@@ -4,6 +4,7 @@ import SwiftUI
 
 struct UpdateSection: View {
     let store: HomeStore
+    @State private var isVisible = false
 
     var body: some View {
         let _ = store.effectiveLanguage
@@ -75,6 +76,8 @@ struct UpdateSection: View {
         }
         .padding(12)
         .glassTile(isActive: badgeRelease != nil, cornerRadius: DesignTokens.Radius.card)
+        .onAppear { isVisible = true }
+        .onDisappear { isVisible = false }
     }
 
     private var statusSubtitle: String {
@@ -138,12 +141,7 @@ struct UpdateSection: View {
         case .available(let release):
             if release.packageAsset != nil {
                 Button(L10n.tr("立即更新", "Update Now")) {
-                    Task {
-                        await store.startUpdateInstallation()
-                        if store.updateState.isReadyToRelaunch {
-                            store.confirmRelaunchForUpdate()
-                        }
-                    }
+                    startInstallAndRelaunchIfVisible()
                 }
                 .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
             }
@@ -176,12 +174,7 @@ struct UpdateSection: View {
         case .failed(let failure):
             if failure.canRetryInstall {
                 Button(L10n.tr("重试", "Retry")) {
-                    Task {
-                        await store.startUpdateInstallation()
-                        if store.updateState.isReadyToRelaunch {
-                            store.confirmRelaunchForUpdate()
-                        }
-                    }
+                    startInstallAndRelaunchIfVisible()
                 }
                 .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
             } else {
@@ -194,6 +187,15 @@ struct UpdateSection: View {
                 NSWorkspace.shared.open(failure.fallbackURL)
             }
             .buttonStyle(PillActionButtonStyle())
+        }
+    }
+
+    private func startInstallAndRelaunchIfVisible() {
+        Task {
+            await store.startUpdateInstallation()
+            if isVisible, store.updateState.isReadyToRelaunch {
+                store.confirmRelaunchForUpdate()
+            }
         }
     }
 }

@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde::Serialize;
+use ring::digest::{digest, SHA256};
+use ring::signature::{UnparsedPublicKey, ED25519};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -292,6 +294,375 @@ fn open_url_in_browser(_url: &str) {}
 fn open_release_page(url: String) -> Result<(), String> {
     let target = validated_release_url(&url)?;
     open_url_in_browser(&target);
+    Ok(())
+}
+
+/// Offline Ed25519 public key (32-byte raw, base64) shared with `UpdateChecker.updateSigningPublicKeyBase64` (ADR-0005).
+const UPDATE_SIGNING_PUBLIC_KEY_BASE64: &str = "rLwWXuP0sOZvgd/KusLTTmBXN9DAZ9EzPBNhFSn9yUo=";
+const STAGED_INSTALLER_PREFIX: &str = "MenuBarMijia-update-";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallerAssetPayload {
+    name: String,
+    download_url: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    size_bytes: u64,
+    sha256: Option<String>,
+    checksum_url: Option<String>,
+    signature_url: String,
+}
+
+/// Validates a GitHub release download URL for MenuBarMijia installer, `.sha256`, or `.ed25519.sig` sidecar assets.
+fn validated_release_asset_url(raw: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(raw.trim()).map_err(|_| "更新包下载地址无效".to_string())?;
+    if url.scheme() != "https"
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("更新包地址必须是无附加参数的 https://github.com 地址".to_string());
+    }
+    let host = url.host_str().map(normalize_host).unwrap_or_default();
+    if host != "github.com" {
+        return Err(format!("拒绝从非 GitHub 地址下载更新包：{host}"));
+    }
+    if !url
+        .path()
+        .starts_with("/jryang1997/MenuBarMijia/releases/download/")
+    {
+        return Err("拒绝下载非 MenuBarMijia 官方发布附件".to_string());
+    }
+    Ok(url)
+}
+
+fn release_asset_redirect_allowed(next: &reqwest::Url) -> bool {
+    if next.scheme() != "https"
+        || next.port_or_known_default() != Some(443)
+        || !next.username().is_empty()
+        || next.password().is_some()
+    {
+        return false;
+    }
+    let host = next.host_str().map(normalize_host).unwrap_or_default();
+    host == "github.com"
+        || host == "githubusercontent.com"
+        || host.ends_with(".githubusercontent.com")
+}
+
+fn parse_sha256_hex(raw: &str) -> Option<String> {
+    let token = raw.split_whitespace().next()?;
+    let candidate = token
+        .strip_prefix("sha256:")
+        .or_else(|| token.strip_prefix("SHA256:"))
+        .unwrap_or(token)
+        .to_ascii_lowercase();
+    if candidate.len() == 64 && candidate.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn sanitize_installer_filename(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains(':')
+        || trimmed.contains("..")
+        || trimmed.chars().any(|c| c.is_control())
+    {
+        return Err("更新安装包文件名无效".to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.ends_with(".exe") && !lower.ends_with(".msi") {
+        return Err("仅支持 .exe 或 .msi 安装包".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn compute_sha256_hex(bytes: &[u8]) -> String {
+    let sum = digest(&SHA256, bytes);
+    let mut out = String::with_capacity(64);
+    for byte in sum.as_ref() {
+        use std::fmt::Write;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+/// Decodes standard RFC 4648 base64 (ignoring surrounding whitespace).
+fn decode_base64_strict(raw: &str) -> Option<Vec<u8>> {
+    let cleaned: Vec<u8> = raw
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
+    if cleaned.is_empty() || cleaned.len() % 4 != 0 {
+        return None;
+    }
+    fn val(b: u8) -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity((cleaned.len() / 4) * 3);
+    for (idx, chunk) in cleaned.chunks_exact(4).enumerate() {
+        let is_last = idx + 1 == cleaned.len() / 4;
+        let a = val(chunk[0])?;
+        let b = val(chunk[1])?;
+        match (chunk[2], chunk[3]) {
+            (b'=', b'=') if is_last => {
+                if (b & 0x0f) != 0 {
+                    return None;
+                }
+                out.push((a << 2) | (b >> 4));
+            }
+            (c_byte, b'=') if is_last => {
+                let c = val(c_byte)?;
+                if (c & 0x03) != 0 {
+                    return None;
+                }
+                out.push((a << 2) | (b >> 4));
+                out.push((b << 4) | (c >> 2));
+            }
+            (b'=', _) | (_, b'=') => return None,
+            (c_byte, d_byte) => {
+                let c = val(c_byte)?;
+                let d = val(d_byte)?;
+                out.push((a << 2) | (b >> 4));
+                out.push((b << 4) | (c >> 2));
+                out.push((c << 6) | d);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Verifies a detached Ed25519 signature over `data` against `public_key_base64` (ADR-0005).
+fn verify_ed25519_signature(
+    signature_base64: &str,
+    public_key_base64: &str,
+    data: &[u8],
+) -> Result<(), String> {
+    let trimmed_sig = signature_base64.trim();
+    if trimmed_sig.is_empty() {
+        return Err("更新包缺少 Ed25519 数字签名（.ed25519.sig），已中止安装".to_string());
+    }
+    let key_bytes = decode_base64_strict(public_key_base64)
+        .filter(|bytes| bytes.len() == 32)
+        .ok_or_else(|| "内置 Ed25519 更新公钥无效".to_string())?;
+    let sig_bytes = decode_base64_strict(trimmed_sig)
+        .filter(|bytes| bytes.len() == 64)
+        .ok_or_else(|| "更新包 Ed25519 数字签名格式无效，已中止安装".to_string())?;
+    let public_key = UnparsedPublicKey::new(&ED25519, key_bytes);
+    public_key
+        .verify(data, &sig_bytes)
+        .map_err(|_| "更新包 Ed25519 数字签名校验失败：签名与安装包内容不匹配，已中止安装".to_string())
+}
+
+fn sweep_stale_update_installers() {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name
+            .to_str()
+            .is_some_and(|s| s.starts_with(STAGED_INSTALLER_PREFIX))
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn elevated_launch_powershell_command(is_msi: bool) -> &'static str {
+    if is_msi {
+        "Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', $env:MIJIA_INSTALLER_PATH) -Verb RunAs -ErrorAction Stop"
+    } else {
+        "Start-Process -FilePath $env:MIJIA_INSTALLER_PATH -Verb RunAs -ErrorAction Stop"
+    }
+}
+
+fn launch_installer(installer_path: &std::path::Path) -> Result<(), String> {
+    let is_msi = installer_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("msi"));
+    let mut cmd = if is_msi {
+        let mut c = std::process::Command::new("msiexec");
+        c.arg("/i").arg(installer_path);
+        c
+    } else {
+        std::process::Command::new(installer_path)
+    };
+    match cmd.spawn() {
+        Ok(mut child) => {
+            std::thread::sleep(Duration::from_millis(250));
+            if let Ok(Some(status)) = child.try_wait() {
+                if !status.success() {
+                    return Err(format!("安装程序未能正常启动（退出码 {:?}）", status.code()));
+                }
+            }
+            Ok(())
+        }
+        Err(err) if err.raw_os_error() == Some(740) => {
+            // ERROR_ELEVATION_REQUIRED (740): invoke ShellExecute with -Verb RunAs so UAC prompts
+            // and wait for Start-Process to finish spawning the elevated installer (or fail if declined).
+            let status = std::process::Command::new("powershell")
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-WindowStyle",
+                    "Hidden",
+                    "-Command",
+                    elevated_launch_powershell_command(is_msi),
+                ])
+                .env("MIJIA_INSTALLER_PATH", installer_path)
+                .status()
+                .map_err(|e| format!("启动安装程序失败：{e}"))?;
+            if !status.success() {
+                return Err(format!(
+                    "启动安装程序失败（未获管理员授权或启动被取消，退出码 {:?}）",
+                    status.code()
+                ));
+            }
+            Ok(())
+        }
+        Err(err) => Err(format!("启动安装程序失败：{err}")),
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle, asset: InstallerAssetPayload) -> Result<(), String> {
+    let asset_url = validated_release_asset_url(&asset.download_url)?;
+    let lower_path = asset_url.path().to_ascii_lowercase();
+    if !lower_path.ends_with(".exe") && !lower_path.ends_with(".msi") {
+        return Err("更新包地址必须指向 .exe 或 .msi 安装程序".to_string());
+    }
+    let safe_name = sanitize_installer_filename(&asset.name)?;
+    let sig_url = validated_release_asset_url(&asset.signature_url)?;
+    if !sig_url.path().to_ascii_lowercase().ends_with(".ed25519.sig") {
+        return Err("更新签名文件地址必须以 .ed25519.sig 结尾".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.stop();
+            }
+            if release_asset_redirect_allowed(attempt.url()) {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        }))
+        .timeout(Duration::from_secs(120))
+        .user_agent("MenuBarMijia-Windows")
+        .build()
+        .map_err(|err| format!("无法初始化下载客户端：{err}"))?;
+
+    let expected_hex = if let Some(inline) = asset
+        .sha256
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        parse_sha256_hex(inline).ok_or_else(|| "更新包 SHA-256 摘要格式无效".to_string())?
+    } else if let Some(sidecar_raw) = asset
+        .checksum_url
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        let sidecar_url = validated_release_asset_url(sidecar_raw)?;
+        if !sidecar_url.path().to_ascii_lowercase().ends_with(".sha256") {
+            return Err("校验文件地址必须以 .sha256 结尾".to_string());
+        }
+        let resp = client
+            .get(sidecar_url)
+            .send()
+            .await
+            .map_err(|err| format!("下载 SHA-256 校验文件失败：{err}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("下载 SHA-256 校验文件失败（HTTP {}）", resp.status().as_u16()));
+        }
+        let text = resp
+            .text()
+            .await
+            .map_err(|err| format!("读取 SHA-256 校验文件失败：{err}"))?;
+        parse_sha256_hex(&text).ok_or_else(|| "无法解析 SHA-256 校验文件".to_string())?
+    } else {
+        return Err("缺少更新包 SHA-256 校验信息，已中止安装".to_string());
+    };
+
+    let sig_resp = client
+        .get(sig_url)
+        .send()
+        .await
+        .map_err(|err| format!("下载 Ed25519 更新签名失败：{err}"))?;
+    if sig_resp.status().as_u16() == 404 {
+        return Err("更新包缺少 Ed25519 数字签名（.ed25519.sig），已中止安装".to_string());
+    }
+    if !sig_resp.status().is_success() {
+        return Err(format!(
+            "下载 Ed25519 更新签名失败（HTTP {}）",
+            sig_resp.status().as_u16()
+        ));
+    }
+    let sig_text = sig_resp
+        .text()
+        .await
+        .map_err(|err| format!("读取 Ed25519 更新签名失败：{err}"))?;
+
+    let response = client
+        .get(asset_url)
+        .send()
+        .await
+        .map_err(|err| format!("下载更新安装包失败：{err}"))?;
+    if !response.status().is_success() {
+        return Err(format!("下载更新安装包失败（HTTP {}）", response.status().as_u16()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|err| format!("读取更新安装包数据失败：{err}"))?;
+
+    let actual_hex = compute_sha256_hex(&bytes);
+    if actual_hex != expected_hex {
+        return Err(format!(
+            "安装包 SHA-256 校验失败（期望 {}…，实际 {}…），已中止安装",
+            &expected_hex[..12],
+            &actual_hex[..12]
+        ));
+    }
+
+    verify_ed25519_signature(&sig_text, UPDATE_SIGNING_PUBLIC_KEY_BASE64, &bytes)?;
+
+    sweep_stale_update_installers();
+    let installer_path = std::env::temp_dir().join(format!(
+        "{STAGED_INSTALLER_PREFIX}{}-{safe_name}",
+        std::process::id()
+    ));
+    std::fs::write(&installer_path, &bytes)
+        .map_err(|err| format!("写入临时安装程序失败：{err}"))?;
+
+    if let Err(err) = launch_installer(&installer_path) {
+        let _ = std::fs::remove_file(&installer_path);
+        return Err(err);
+    }
+
+    let app_for_exit = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        app_for_exit.exit(0);
+    });
     Ok(())
 }
 
@@ -791,9 +1162,11 @@ fn main() {
             set_pin_popover,
             set_update_available,
             set_global_shortcut,
-            open_release_page
+            open_release_page,
+            install_update
         ])
         .setup(move |app| {
+            sweep_stale_update_installers();
             if let Some(path) = authorization_store_path() {
                 if let Ok(mut guard) = EXTRA_ALLOWED_ORIGINS.write() {
                     *guard = read_origin_store(&path);
@@ -822,7 +1195,15 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => toggle_main_window(app, None, false),
                     "update" => {
-                        if let Ok(url) = validated_release_url(RELEASE_PAGE_URL) {
+                        if let Some(window) = app.get_webview_window("main") {
+                            PIN_POPOVER.store(true, Ordering::SeqCst);
+                            position_popover(&window, None);
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.eval(
+                                "window.dispatchEvent(new CustomEvent('menumijia:open-update'))",
+                            );
+                        } else if let Ok(url) = validated_release_url(RELEASE_PAGE_URL) {
                             open_url_in_browser(&url);
                         }
                     }
@@ -1192,5 +1573,92 @@ mod tests {
                 "MenuBarMijia · 菜单栏米家".to_string()
             )
         );
+    }
+
+    #[test]
+    fn validates_release_asset_urls_filenames_and_sha256() {
+        assert!(validated_release_asset_url(
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.1.4/MenuBarMijia-1.1.4-windows-x64-setup.exe"
+        )
+        .is_ok());
+        assert!(validated_release_asset_url(
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.1.4/MenuBarMijia-1.1.4-windows-x64-setup.exe.sha256"
+        )
+        .is_ok());
+
+        for bad in [
+            "http://github.com/jryang1997/MenuBarMijia/releases/download/v1.1.4/setup.exe",
+            "https://evil.example/jryang1997/MenuBarMijia/releases/download/v1.1.4/setup.exe",
+            "https://github.com/other/repo/releases/download/v1.1.4/setup.exe",
+            "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.1.4",
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.1.4/setup.exe?foo=1",
+        ] {
+            assert!(validated_release_asset_url(bad).is_err(), "{bad}");
+        }
+
+        assert!(release_asset_redirect_allowed(
+            &reqwest::Url::parse("https://objects.githubusercontent.com/github-production-release-asset/123").unwrap()
+        ));
+        assert!(!release_asset_redirect_allowed(
+            &reqwest::Url::parse("https://evil.example/setup.exe").unwrap()
+        ));
+        assert!(!release_asset_redirect_allowed(
+            &reqwest::Url::parse("http://objects.githubusercontent.com/setup.exe").unwrap()
+        ));
+
+        assert_eq!(
+            sanitize_installer_filename("MenuBarMijia-1.1.4-windows-x64-setup.exe").ok(),
+            Some("MenuBarMijia-1.1.4-windows-x64-setup.exe".to_string())
+        );
+        for bad_name in [
+            "../setup.exe",
+            "dir/setup.exe",
+            "dir\\setup.exe",
+            "C:setup.exe",
+            "payload.bat",
+            "",
+        ] {
+            assert!(sanitize_installer_filename(bad_name).is_err(), "{bad_name}");
+        }
+
+        let hex = compute_sha256_hex(b"verified-windows-installer");
+        assert_eq!(parse_sha256_hex(&format!("sha256:{}", hex.to_uppercase())), Some(hex.clone()));
+        assert_eq!(parse_sha256_hex(&format!("{hex}  MenuBarMijia-1.1.4-windows-x64-setup.exe\n")), Some(hex));
+        assert_eq!(parse_sha256_hex("sha256:1234"), None);
+
+        // Built-in Ed25519 public key decodes to 32 bytes (ADR-0005).
+        assert_eq!(
+            decode_base64_strict(UPDATE_SIGNING_PUBLIC_KEY_BASE64).map(|b| b.len()),
+            Some(32)
+        );
+        // Cross-platform CryptoKit Ed25519 signature over `b"verified-windows-installer"`.
+        let test_pub_b64 = "IVL40Zt5HSRFMkLhXy6rbLfP+ntqXtMAl5YOBpiB2xI=";
+        let test_sig_b64 =
+            "KtT4QT0xAahlehckpgTkX9/sMX/HypxQGInJ5/dR9Nl78X8bKzLcRNNLEzDGH6y+W3CRzkGiuf1qgIs6DCQDAQ==";
+        assert!(verify_ed25519_signature(
+            test_sig_b64,
+            test_pub_b64,
+            b"verified-windows-installer"
+        )
+        .is_ok());
+        assert!(verify_ed25519_signature(
+            test_sig_b64,
+            test_pub_b64,
+            b"tampered-windows-installer"
+        )
+        .is_err());
+        assert!(verify_ed25519_signature(
+            test_sig_b64,
+            UPDATE_SIGNING_PUBLIC_KEY_BASE64,
+            b"verified-windows-installer"
+        )
+        .is_err());
+        assert!(verify_ed25519_signature("", UPDATE_SIGNING_PUBLIC_KEY_BASE64, b"payload").is_err());
+        assert!(verify_ed25519_signature("not-base64!", UPDATE_SIGNING_PUBLIC_KEY_BASE64, b"payload").is_err());
+
+        assert!(elevated_launch_powershell_command(false).contains("-Verb RunAs"));
+        assert!(elevated_launch_powershell_command(false).contains("-ErrorAction Stop"));
+        assert!(elevated_launch_powershell_command(true).contains("msiexec.exe"));
+        assert!(elevated_launch_powershell_command(true).contains("-Verb RunAs"));
     }
 }

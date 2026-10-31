@@ -14,11 +14,11 @@
 
 ## 决定
 
-1. **Ed25519 分离签名，作为主防线。** 发布时用私钥对最终 DMG 字节签名，生成 `<DMG>.ed25519.sig` 并作为 release 附件上传。应用把 32 字节公钥编进 `UpdateChecker.updateSigningPublicKeyBase64`，在下载完成、SHA-256 校验通过之后、解包之前验证签名。签名缺失、不是合法 base64、或与包内容不匹配，一律中止安装并报明确错误（`updateSignatureMissing` / `updateSignatureInvalid`）。选择 CryptoKit `Curve25519.Signing` 是因为它是系统自带、无第三方依赖，和 Sparkle 的 Ed25519 思路一致；Linux 侧由 ADR-0003 的 swift-crypto 垫片提供同名 API。
+1. **Ed25519 分离签名，作为主防线。** 发布时用私钥对最终安装包字节签名，生成 `<安装包>.ed25519.sig` 并作为 release 附件上传。双端应用把同一 32 字节公钥编进源码（macOS `UpdateChecker.updateSigningPublicKeyBase64`、Windows `UPDATE_SIGNING_PUBLIC_KEY_BASE64`），在下载完成、SHA-256 校验通过之后、解包或启动安装程序之前验证签名。签名缺失、不是合法 base64、或与包内容不匹配，一律中止安装并报明确错误（`updateSignatureMissing` / `updateSignatureInvalid`）。macOS 侧选择 CryptoKit `Curve25519.Signing`（Linux 侧由 ADR-0003 的 swift-crypto 垫片提供同名 API）；Windows 侧复用 `rustls` 已引入的 `ring::signature::ED25519` 验签。
 
    私钥的保存方式决定这条防线到底防谁：**私钥只保存在维护者的可信本机，永不进入 GitHub**。`release.yml` 与 `finalize.yml` 都不读取 `MENUBARMIJIA_UPDATE_SIGNING_KEY`，CI 里也没有该 secret，因此 GitHub 账号、Token 或 CI 任意一环被拿下都拿不到签名私钥，攻击者最多造成“更新失败”，而不是“装上恶意版本”。代价是发布必须多一次人工离线签名（见下文第 4 条）。
 
-2. **钉住代码签名证书。** 项目没有付费 Apple 开发者账号，发布包用固定的自签名代码签名证书（RSA 3072，10 年，Code Signing EKU）。`scripts/build_app.sh` 在设置了 `MACOS_SIGNING_IDENTITY` 时用该身份签名，并把证书 SHA-1（`MACOS_CERT_SHA1`）写进 App 的 `Info.plist` 键 `MijiaCodeSignCertSHA1`。更新时读取运行中 App 的该键，把 `codesign` 要求构造成：
+2. **钉住代码签名证书。** 项目没有付费 Apple 开发者账号，发布包用固定的自签名代码签名证书（RSA 3072，10 年，Code Signing EKU）。`scripts/build_app.sh` 在设置了 `MACOS_SIGNING_IDENTITY` 时用该身份签名（未显式设置时优先自动使用本机钥匙串中的 `"MenuBarMijia Release Signing"`，找不到才退回 ad-hoc `-`），并把证书 SHA-1（`MACOS_CERT_SHA1`）写进 App 的 `Info.plist` 键 `MijiaCodeSignCertSHA1`。更新时读取运行中 App 的该键，把 `codesign` 要求构造成：
 
    ```
    identifier "com.jryang1997.MenuBarMijia" and certificate leaf = H"<sha1>"
@@ -33,10 +33,10 @@
 4. **发布拆成两阶段：CI 只产草稿，人工离线签名，再由 Finalize 校验后发布。**
 
    - **阶段一（`release.yml`，push tag `v*` 或 workflow_dispatch 输入 `tag`）**：`verify-tag` → `macos-release` / `windows-release` → `stage-draft`。构建 job 只上传 artifact；`stage-draft` 校验 6 个未签名附件（DMG、`.dmg.sha256`、EXE、`.exe.sha256`、MSI、`.msi.sha256`）、拒绝改动已发布的 release、创建或刷新**草稿**，并在缺 `.ed25519.sig` 时以“⏳ 等待离线签名”成功结束。`release.yml` 全文件没有 `--draft=false`，构建阶段无法发布。
-   - **阶段二（维护者本机）**：下载草稿里的 DMG，用离线私钥执行 `scripts/sign_update.swift` 生成 `.sig`（脚本要求私钥对应的公钥等于内置值），再用 `gh release upload <tag> <DMG>.ed25519.sig` 显式上传这一个公有签名附件。
-   - **阶段三（`finalize.yml`，仅手动 workflow_dispatch，输入 `tag`）**：校验 tag == `v$(VERSION)`、四处版本号一致、远程 tag 仍指向检出提交、目标必须是未发布草稿；下载**恰好 7 个**附件，逐个比对下载字节与草稿的服务端 `sha256:` digest 与大小，并用 `scripts/check_release.sh assets` 就地解析 `UpdateChecker.updateSigningPublicKeyBase64` 对 DMG 验签（没有可配置公钥，换密钥必须改源码并发新版）；最后只执行 `gh release edit --draft=false`，**不重编译、不上传、不 `--clobber`**。
+   - **阶段二（维护者本机）**：下载草稿里的 DMG/EXE/MSI，用离线私钥执行 `scripts/sign_update.swift` 生成 3 份 `.ed25519.sig`（脚本要求私钥对应的公钥等于内置值），再用 `gh release upload <tag> dist/*.ed25519.sig` 显式上传这三个公有签名附件。
+   - **阶段三（`finalize.yml`，仅手动 workflow_dispatch，输入 `tag`）**：校验 tag == `v$(VERSION)`、四处版本号一致、远程 tag 仍指向检出提交、目标必须是未发布草稿；下载**恰好 9 个**附件，逐个比对下载字节与草稿的服务端 `sha256:` digest 与大小，并用 `scripts/check_release.sh assets` 就地解析 `UpdateChecker.updateSigningPublicKeyBase64` 对 DMG/EXE/MSI 验签（没有可配置公钥，换密钥必须改源码并发新版）；最后只执行 `gh release edit --draft=false`，**不重编译、不上传、不 `--clobber`**。
 
-   缺签名时 `stage-draft` 只留草稿；`finalize.yml` 发现草稿里没有 `.sig` 会输出完整离线命令并以非零退出，验签失败（包括 DMG 重建后仍挂旧签名）同样硬失败。`draft-assets` 严格 6 个、`assets` 严格 7 个，多一个少一个都失败，因此“少签名”不会悄悄降级为不带签名的发布。私钥格式支持 32 字节 raw seed 的 base64 或 PKCS#8 PEM。
+   缺签名时 `stage-draft` 只留草稿；`finalize.yml` 发现草稿里缺少任一 `.sig` 会输出完整离线命令并以非零退出，验签失败（包括安装包重建后仍挂旧签名）同样硬失败。`draft-assets` 严格 6 个、`assets` 严格 9 个，多一个少一个都失败，因此“少签名”不会悄悄降级为不带签名的发布。私钥格式支持 32 字节 raw seed 的 base64 或 PKCS#8 PEM。
 
 ## 后果
 

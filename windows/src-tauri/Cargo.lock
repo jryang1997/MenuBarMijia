@@ -1888,6 +1888,7 @@ version = "1.1.4"
 dependencies = [
  "keyring",
  "reqwest 0.12.28",
+ "ring",
  "serde",
  "serde_json",
  "tauri",

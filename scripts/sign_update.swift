@@ -36,7 +36,7 @@ enum SigningError: Error, CustomStringConvertible {
     var description: String {
         switch self {
         case .usage:
-            return "用法：MENUBARMIJIA_UPDATE_SIGNING_KEY=<私钥> swift scripts/sign_update.swift <DMG 路径>"
+            return "用法：MENUBARMIJIA_UPDATE_SIGNING_KEY=<私钥> swift scripts/sign_update.swift <安装包路径>..."
         case .missingKey:
             return "缺少环境变量 MENUBARMIJIA_UPDATE_SIGNING_KEY（32 字节 seed 的 base64 或 PKCS#8 PEM）"
         case .invalidKey(let detail):
@@ -99,7 +99,7 @@ func readKeyFromKeychain() -> String? {
 
 func main() throws {
     let arguments = Array(CommandLine.arguments.dropFirst())
-    guard arguments.count == 1 else { throw SigningError.usage }
+    guard !arguments.isEmpty else { throw SigningError.usage }
     guard let rawKey = ProcessInfo.processInfo.environment["MENUBARMIJIA_UPDATE_SIGNING_KEY"] ?? readKeyFromKeychain() else {
         throw SigningError.missingKey
     }
@@ -110,26 +110,28 @@ func main() throws {
     guard publicKey == expectedPublicKeyBase64 else {
         throw SigningError.keyMismatch("私钥对应的公钥 \(publicKey) 与 App 内置公钥不一致，客户端会拒绝该更新")
     }
-    let packageURL = URL(fileURLWithPath: arguments[0])
-    guard FileManager.default.fileExists(atPath: packageURL.path) else {
-        throw SigningError.invalidPackage("找不到 \(packageURL.path)")
-    }
+    for arg in arguments {
+        let packageURL = URL(fileURLWithPath: arg)
+        guard FileManager.default.fileExists(atPath: packageURL.path) else {
+            throw SigningError.invalidPackage("找不到 \(packageURL.path)")
+        }
 
-    let packageData: Data
-    do {
-        packageData = try Data(contentsOf: packageURL, options: .mappedIfSafe)
-    } catch {
-        throw SigningError.invalidPackage(error.localizedDescription)
-    }
-    let signature = try key.signature(for: packageData)
-    let signatureURL = packageURL.appendingPathExtension("ed25519.sig")
-    do {
-        try (signature.base64EncodedString() + "\n").write(to: signatureURL, atomically: true, encoding: .utf8)
-    } catch {
-        throw SigningError.writeFailed(error.localizedDescription)
-    }
+        let packageData: Data
+        do {
+            packageData = try Data(contentsOf: packageURL, options: .mappedIfSafe)
+        } catch {
+            throw SigningError.invalidPackage(error.localizedDescription)
+        }
+        let signature = try key.signature(for: packageData)
+        let signatureURL = packageURL.appendingPathExtension("ed25519.sig")
+        do {
+            try (signature.base64EncodedString() + "\n").write(to: signatureURL, atomically: true, encoding: .utf8)
+        } catch {
+            throw SigningError.writeFailed(error.localizedDescription)
+        }
 
-    print("✅ 已生成 \(signatureURL.path)")
+        print("✅ 已生成 \(signatureURL.path)")
+    }
     print("   公钥（与 App 内置值一致）：\(publicKey)")
 }
 

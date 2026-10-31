@@ -104,6 +104,26 @@ fi
 # The design-token scan only reads macOS UI sources; Linux runners have no python3.
 if command -v python3 >/dev/null 2>&1; then
     python3 scripts/check_design_tokens.py
+    python3 - <<'PY'
+import re
+import sys
+
+files = {
+    "Sources/MijiaCore/UpdateChecker.swift": r'updateSigningPublicKeyBase64\s*=\s*"([^"]+)"',
+    "scripts/sign_update.swift": r'expectedPublicKeyBase64\s*=\s*"([^"]+)"',
+    "windows/src/core/updateChecker.ts": r'UPDATE_SIGNING_PUBLIC_KEY_BASE64\s*=\s*"([^"]+)"',
+    "windows/src-tauri/src/main.rs": r'UPDATE_SIGNING_PUBLIC_KEY_BASE64:\s*&str\s*=\s*"([^"]+)"',
+}
+keys = {}
+for path, pat in files.items():
+    with open(path, encoding="utf-8") as f:
+        m = re.search(pat, f.read())
+    if not m:
+        sys.exit(f"❌ 无法从 {path} 读取 Ed25519 更新公钥常量")
+    keys[path] = m.group(1)
+if len(set(keys.values())) != 1:
+    sys.exit(f"❌ 双端 Ed25519 更新公钥不一致：{keys}")
+PY
 fi
 
 if [ "${1:-}" = "--lint-only" ]; then

@@ -431,7 +431,7 @@ jobs:
 
       - name: Validate the 6 unsigned-draft assets
         # 只校验“待签名的 6 个附件”（DMG / EXE / MSI + 各自 .sha256）。
-        # 这不是签名校验的降级替代：真正发布前的 assets 模式仍然要求 7 个且 Ed25519 必须匹配。
+        # 这不是签名校验的降级替代：真正发布前的 assets 模式仍然要求 9 个且三份 Ed25519 必须匹配。
         run: bash scripts/check_release.sh draft-assets "${RELEASE_VERSION}" dist
 
       - name: Verify the remote tag still points at the built commit
@@ -474,9 +474,13 @@ jobs:
           mapfile -t actual < <(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort)
           for name in "${actual[@]:-}"; do
             [ -n "$name" ] || continue
-            if [ "$name" = "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" ]; then
-              continue
-            fi
+            case "$name" in
+              "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig"|\
+              "MenuBarMijia-${RELEASE_VERSION}-windows-x64-setup.exe.ed25519.sig"|\
+              "MenuBarMijia-${RELEASE_VERSION}-windows-x64.msi.ed25519.sig")
+                continue
+                ;;
+            esac
             if ! printf '%s\n' "${expected[@]}" | grep -qxF -- "$name"; then
               echo "❌ 已存在的草稿 ${RELEASE_TAG} 含有本工作流不会产出的附件：$name；请人工清理后重跑。" >&2
               exit 1
@@ -503,27 +507,26 @@ jobs:
         run: |
           set -euo pipefail
           # 只对同 tag 的草稿重传这 6 个附件；维护者已上传的 .ed25519.sig 不在 dist/ 里，不会被覆盖。
-          sig="MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig"
           had_sig=false
-          if gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | grep -qxF "$sig"; then
+          if gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | grep -qE '\.ed25519\.sig$'; then
             had_sig=true
           fi
           gh release upload "${RELEASE_TAG}" dist/* --clobber
           if [ "$had_sig" = "true" ]; then
-            # DMG 重新构建后字节会变（hdiutil 不保证可复现），旧签名随即失效；
+            # 安装包重新构建后字节会变，旧签名随即失效；
             # 这里只是提醒，真正的把关在 Finalize 的 Ed25519 校验（不匹配即失败）。
             {
-              echo "### ⚠️ 草稿里已有 .ed25519.sig，但本次重新上传了 DMG"
-              echo "请重新离线签名并覆盖该 .sig，否则 Finalize Release 会因签名与 DMG 不匹配而失败。"
+              echo "### ⚠️ 草稿里已有 .ed25519.sig，但本次重新上传了安装包"
+              echo "请重新离线签名并覆盖对应的 .ed25519.sig，否则 Finalize Release 会因签名与安装包不匹配而失败。"
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::warning::草稿已含 $sig，DMG 被重新构建后旧签名失效；请重新离线签名。"
+            echo "::warning::草稿已含 .ed25519.sig，安装包被重新构建后旧签名失效；请重新离线签名。"
           fi
 
       - name: Verify draft assets and server-side digests
         run: |
           set -euo pipefail
           expected="$(cd dist && ls -1 | sort)"
-          actual="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort | grep -vxF "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" || true)"
+          actual="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort | grep -vE '\.ed25519\.sig$' || true)"
           if [ "$actual" != "$expected" ]; then
             echo "❌ 草稿附件与本地构建产物不一致" >&2
             diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
@@ -540,7 +543,9 @@ jobs:
             --jq '.assets[] | "\(.name) \(.digest // "none") \(.size)"' | tr -d '\r' > "$RUNNER_TEMP/remote-assets.txt"
           while read -r name digest size; do
             [ -n "$name" ] || continue
-            [ "$name" = "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" ] && continue
+            case "$name" in
+              *.ed25519.sig) continue ;;
+            esac
             local_file="dist/${name}"
             local_size="$(wc -c < "$local_file" | tr -d '[:space:]')"
             if [ "$size" != "$local_size" ]; then
@@ -587,9 +592,12 @@ jobs:
             echo ""
             echo "**尚未发布**：CI 不持有更新签名私钥（issue #17）。请在可信机器上执行："
             echo '```bash'
-            echo "gh release download ${RELEASE_TAG} --pattern \"MenuBarMijia-${RELEASE_VERSION}.dmg\" --dir dist"
-            echo "MENUBARMIJIA_UPDATE_SIGNING_KEY=\"<离线私钥>\" swift scripts/sign_update.swift dist/MenuBarMijia-${RELEASE_VERSION}.dmg"
-            echo "gh release upload ${RELEASE_TAG} \"dist/MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig\""
+            echo "gh release download ${RELEASE_TAG} --pattern \"MenuBarMijia-${RELEASE_VERSION}*\" --dir dist"
+            echo "MENUBARMIJIA_UPDATE_SIGNING_KEY=\"<离线私钥>\" swift scripts/sign_update.swift \\"
+            echo "  dist/MenuBarMijia-${RELEASE_VERSION}.dmg \\"
+            echo "  dist/MenuBarMijia-${RELEASE_VERSION}-windows-x64-setup.exe \\"
+            echo "  dist/MenuBarMijia-${RELEASE_VERSION}-windows-x64.msi"
+            echo "gh release upload ${RELEASE_TAG} dist/*.ed25519.sig"
             echo '```'
             echo "然后运行 **Finalize Release** 工作流（tag=${RELEASE_TAG}）完成严格校验并发布。"
           } >> "$GITHUB_STEP_SUMMARY"

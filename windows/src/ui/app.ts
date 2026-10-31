@@ -669,6 +669,9 @@ export class MenuMijiaWindowsApp {
   /** Latest GitHub release found by the daily check (#39); shown in settings and the tray menu. */
   private availableUpdate: GitHubRelease | null = null;
   private updateState: UpdateState = { lastCheckedAtMs: null, release: null };
+  private isCheckingUpdate = false;
+  private isInstallingUpdate = false;
+  private updateStatusMessage: { text: string; isError: boolean } | null = null;
   private readonly transport: HttpTransport = createTransport();
   private readonly specResolver: MiotSpecResolver;
   private speechRecognition: SpeechRecognitionInstance | null = null;
@@ -714,6 +717,9 @@ export class MenuMijiaWindowsApp {
     this.bindGlobalKeys();
     this.bindLayoutGestures();
     this.bindOpenAnimation();
+    window.addEventListener("menumijia:open-update", () => {
+      this.openSettingsSheet();
+    });
     this.applyPanelHeight();
     void this.applyGlobalHotkey();
     this.startTimerLoop();
@@ -848,6 +854,12 @@ export class MenuMijiaWindowsApp {
    */
   private async checkForAppUpdate(manual: boolean): Promise<void> {
     if (!manual && !window.__TAURI_INTERNALS__?.invoke) return;
+    if (this.isCheckingUpdate || this.isInstallingUpdate) return;
+    if (manual) {
+      this.isCheckingUpdate = true;
+      this.updateStatusMessage = null;
+      this.render();
+    }
     const result = await checkForUpdate({
       currentVersion: APP_VERSION,
       enabled: manual || this.settings.autoCheckUpdates,
@@ -865,22 +877,29 @@ export class MenuMijiaWindowsApp {
           timeoutMs: 8000,
         }),
     });
+    this.isCheckingUpdate = false;
     if (!result.requested) return;
 
     this.updateState = { lastCheckedAtMs: result.checkedAtMs, release: result.release };
     this.saveUpdateState();
     if (result.updateAvailable && result.release) {
       this.availableUpdate = result.release;
+      this.updateStatusMessage = null;
       invokeTauriVoid("set_update_available", { version: result.release.version });
       this.render();
     } else if (!result.failed && this.availableUpdate) {
       // A successful check with no newer release retires yesterday's notice.
       this.availableUpdate = null;
+      this.updateStatusMessage = manual
+        ? { text: t("已是最新版本 v{version}", { version: APP_VERSION }), isError: false }
+        : null;
       invokeTauriVoid("set_update_available", { version: null });
       this.render();
     } else if (manual) {
+      const text = result.failed ? t("检查更新失败，请稍后再试") : t("已是最新版本 v{version}", { version: APP_VERSION });
+      this.updateStatusMessage = { text, isError: result.failed };
       this.replyBanner = {
-        text: result.failed ? t("检查更新失败，请稍后再试") : t("已是最新版本 v{version}", { version: APP_VERSION }),
+        text,
         source: t("检查更新"),
         isError: result.failed,
       };
@@ -888,8 +907,50 @@ export class MenuMijiaWindowsApp {
     }
   }
 
+  private openSettingsSheet(): void {
+    this.activeSheet = "settings";
+    invokeTauriVoid("set_pin_popover", { pin: true });
+    this.render();
+    void this.checkForAppUpdate(false);
+  }
+
   private openUpdatePage(): void {
     invokeTauriVoid("open_release_page", { url: this.availableUpdate?.htmlURL ?? UPDATE_RELEASES_PAGE });
+  }
+
+  private async startUpdateInstall(): Promise<void> {
+    if (this.isInstallingUpdate || !this.availableUpdate) return;
+    const asset = this.availableUpdate.installerAsset;
+    if (!asset) {
+      this.openUpdatePage();
+      return;
+    }
+    const invoke = window.__TAURI_INTERNALS__?.invoke;
+    if (!invoke) {
+      this.openUpdatePage();
+      return;
+    }
+    this.isInstallingUpdate = true;
+    this.updateStatusMessage = {
+      text: t("正在下载并校验 v{version} 安装包，完成后将自动启动安装…", { version: this.availableUpdate.version }),
+      isError: false,
+    };
+    this.render();
+    try {
+      await invoke("install_update", { asset });
+      this.isInstallingUpdate = false;
+      this.render();
+    } catch (error) {
+      this.isInstallingUpdate = false;
+      const message =
+        typeof error === "string" && error.trim().length > 0
+          ? error
+          : error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : t("下载或校验更新包失败，请重试或手动下载");
+      this.updateStatusMessage = { text: message, isError: true };
+      this.render();
+    }
   }
 
   /**
@@ -2286,6 +2347,13 @@ export class MenuMijiaWindowsApp {
 
           <div class="cc-footer-actions">
             ${
+              this.availableUpdate
+                ? `<button class="cc-footer-pill is-accent" id="btn-footer-update" title="${t("发现新版本 v{version}", { version: this.availableUpdate.version })}">
+                    <span>${t("更新 v{version}", { version: this.availableUpdate.version })}</span>
+                  </button>`
+                : ""
+            }
+            ${
               !this.settings.miSession || isDemo
                 ? `<button class="cc-footer-pill is-accent" id="btn-footer-qr" title="${t("用手机米家 App 扫码直连真实设备")}">
                     ${SF_ICONS.qrcode}
@@ -2890,6 +2958,8 @@ export class MenuMijiaWindowsApp {
             </button>
           </div>
 
+          ${this.availableUpdate ? this.renderUpdateSection() : ""}
+
           <div class="cc-field">
             <label>${t("面板皮肤")}</label>
             <div class="cc-skin-grid">
@@ -3122,27 +3192,52 @@ export class MenuMijiaWindowsApp {
             }
           </div>
 
-          <div class="cc-field">
-            <label>${t("软件更新")}</label>
-            <div class="cc-update-row">
-              <span>${t("当前版本 v{version}", { version: APP_VERSION })}</span>
-              ${
-                this.availableUpdate
-                  ? `<button type="button" class="cc-btn-secondary" id="btn-open-update">${t("有新版本 v{version}，点击查看", { version: this.availableUpdate.version })}</button>`
-                  : `<button type="button" class="cc-btn-secondary" id="btn-check-update">${t("立即检查")}</button>`
-              }
-            </div>
-            <label class="cc-checkbox">
-              <input type="checkbox" id="settings-auto-update" ${this.settings.autoCheckUpdates ? "checked" : ""} />
-              <span>${t("每天自动检查更新（关闭后不再请求 GitHub）")}</span>
-            </label>
-          </div>
+          ${!this.availableUpdate ? this.renderUpdateSection() : ""}
 
           <div class="cc-sheet-footer">
             <button class="cc-btn-danger" id="btn-settings-quit">${t("退出 MenuBarMijia")}</button>
             <button class="cc-btn-primary" id="btn-save-settings">${t("完成并保存")}</button>
           </div>
         </div>
+      </div>
+    `;
+  }
+
+  private renderUpdateSection(): string {
+    const release = this.availableUpdate;
+    const hasInstaller = Boolean(release?.installerAsset);
+    const notes = release?.notes?.trim() ?? "";
+    const statusText = this.updateStatusMessage?.text ?? (release && hasInstaller ? t("可直接下载并安装，无需打开浏览器") : "");
+    return `
+      <div class="cc-field cc-update-card ${release ? "is-available" : ""}">
+        <label>${release ? t("发现新版本 v{version}", { version: release.version }) : t("软件更新")}</label>
+        <div class="cc-update-row">
+          <span>${t("当前版本 v{version}", { version: APP_VERSION })}</span>
+          <div class="cc-update-actions">
+            ${
+              release
+                ? `${
+                    hasInstaller
+                      ? `<button type="button" class="cc-btn-primary" id="btn-install-update" ${this.isInstallingUpdate ? "disabled" : ""}>${this.isInstallingUpdate ? t("正在更新…") : t("立即更新")}</button>`
+                      : ""
+                  }
+                  <button type="button" class="cc-btn-secondary" id="btn-open-update">${
+                    hasInstaller ? t("手动下载") : t("有新版本 v{version}，点击查看", { version: release.version })
+                  }</button>`
+                : `<button type="button" class="cc-btn-secondary" id="btn-check-update" ${this.isCheckingUpdate ? "disabled" : ""}>${this.isCheckingUpdate ? t("检查中…") : t("立即检查")}</button>`
+            }
+          </div>
+        </div>
+        ${
+          statusText
+            ? `<div class="cc-update-status ${this.updateStatusMessage?.isError ? "is-error" : ""}">${this.escapeHtml(statusText)}</div>`
+            : ""
+        }
+        ${notes ? `<div class="cc-update-notes">${this.escapeHtml(notes)}</div>` : ""}
+        <label class="cc-checkbox" style="margin-top: 6px;">
+          <input type="checkbox" id="settings-auto-update" ${this.settings.autoCheckUpdates ? "checked" : ""} />
+          <span>${t("每天自动检查更新（关闭后不再请求 GitHub）")}</span>
+        </label>
       </div>
     `;
   }
@@ -3462,13 +3557,11 @@ export class MenuMijiaWindowsApp {
     });
 
     this.root.querySelector("#btn-empty-settings")?.addEventListener("click", () => {
-      this.activeSheet = "settings";
-      this.render();
+      this.openSettingsSheet();
     });
 
     this.root.querySelector("#btn-settings")?.addEventListener("click", () => {
-      this.activeSheet = "settings";
-      this.render();
+      this.openSettingsSheet();
     });
 
     this.root.querySelector("#btn-undo")?.addEventListener("click", () => {
@@ -3741,8 +3834,16 @@ export class MenuMijiaWindowsApp {
       void this.checkForAppUpdate(true);
     });
 
+    this.root.querySelector("#btn-install-update")?.addEventListener("click", () => {
+      void this.startUpdateInstall();
+    });
+
     this.root.querySelector("#btn-open-update")?.addEventListener("click", () => {
       this.openUpdatePage();
+    });
+
+    this.root.querySelector("#btn-footer-update")?.addEventListener("click", () => {
+      this.openSettingsSheet();
     });
 
     this.root.querySelector("#btn-start-qr")?.addEventListener("click", () => {
