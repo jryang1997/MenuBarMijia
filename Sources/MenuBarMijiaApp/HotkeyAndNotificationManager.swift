@@ -8,9 +8,9 @@ import MijiaCore
 public final class HotkeyAndNotificationManager: NSObject, @preconcurrency UNUserNotificationCenterDelegate {
     public static let shared = HotkeyAndNotificationManager()
 
-    /// Holding the global shortcut (`⌥M` by default) for 0.2 s starts hold-to-talk voice input,
+    /// Holding the global shortcut (`⌥M` by default) for 0.5 s starts hold-to-talk voice input,
     /// matching the menu-bar icon long-press threshold (`MenuBarPanelController.holdThreshold`).
-    public static let hotkeyHoldThreshold: TimeInterval = 0.2
+    public static let hotkeyHoldThreshold: TimeInterval = 0.5
 
     private weak var store: HomeStore?
     private var hotKeyRef: EventHotKeyRef?
