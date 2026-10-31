@@ -86,6 +86,9 @@ public struct SettingsWindowView: View {
             tab = requested
             opener.requestedTab = nil
         }
+        .task {
+            await store.checkForUpdatesIfNeeded()
+        }
     }
     @ViewBuilder
     private var settingsPage: some View {
@@ -474,7 +477,6 @@ private struct GeneralSettingsTab: View {
         }
         .task {
             await HotkeyAndNotificationManager.shared.refreshNotificationPermission()
-            await store.checkForUpdatesIfNeeded()
         }
     }
 

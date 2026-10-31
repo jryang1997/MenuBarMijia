@@ -10,11 +10,21 @@ fi
 
 VERSION="$(tr -d '[:space:]' < "$ROOT/VERSION" 2>/dev/null || echo 1.0.0)"
 BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
-# 留空 = 本机临时签名（只能自己用）；发布时需要固定证书：
+# 留空 =优先使用本机钥匙串中的 "MenuBarMijia Release Signing" 固定签名证书（支持应用内自更新），
+# 找不到时退回本机临时 ad-hoc 签名；发布或 CI 可显式传入：
 #   MACOS_SIGNING_IDENTITY  codesign 身份名称（CI secret 导入后自动填）
 #   MACOS_CERT_SHA1         该证书的 SHA-1（40 位十六进制），会写进 Info.plist 供更新校验钉住
 # SIGN_IDENTITY 为旧调用方式（scripts/release.sh）保留。
-SIGN_IDENTITY="${MACOS_SIGNING_IDENTITY:-${SIGN_IDENTITY:--}}"
+DEFAULT_RELEASE_SIGN_IDENTITY="MenuBarMijia Release Signing"
+if [ -z "${MACOS_SIGNING_IDENTITY:-}" ] && [ -z "${SIGN_IDENTITY:-}" ]; then
+    if security find-identity -v -p codesigning 2>/dev/null | grep -Fq "\"$DEFAULT_RELEASE_SIGN_IDENTITY\""; then
+        SIGN_IDENTITY="$DEFAULT_RELEASE_SIGN_IDENTITY"
+    else
+        SIGN_IDENTITY="-"
+    fi
+else
+    SIGN_IDENTITY="${MACOS_SIGNING_IDENTITY:-${SIGN_IDENTITY:--}}"
+fi
 MACOS_CERT_SHA1="$(printf '%s' "${MACOS_CERT_SHA1:-}" | tr 'A-F' 'a-f')"
 if [ "$SIGN_IDENTITY" != "-" ] && [ -z "$MACOS_CERT_SHA1" ]; then
     MACOS_CERT_SHA1="$(security find-identity -v -p codesigning 2>/dev/null \

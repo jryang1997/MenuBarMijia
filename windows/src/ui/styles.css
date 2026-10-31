@@ -1493,7 +1493,36 @@ body {
 .cc-field-hint { font-size: 10.5px; opacity: 0.6; line-height: 1.5; margin-top: 6px; }
 .cc-field-row { flex-direction: row; align-items: center; justify-content: space-between; }
 .cc-update-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11.5px; }
-.cc-update-row .cc-btn-secondary { flex: 0 0 auto; }
+.cc-update-row .cc-btn-secondary, .cc-update-row .cc-btn-primary { flex: 0 0 auto; }
+.cc-update-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cc-update-card.is-available {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(10, 132, 255, 0.09);
+  border: 1px solid rgba(10, 132, 255, 0.28);
+}
+.cc-update-notes {
+  max-height: 84px;
+  overflow-y: auto;
+  padding: 7px 9px;
+  margin-top: 6px;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.08);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+.cc-update-status {
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 4px;
+  opacity: 0.78;
+}
+.cc-update-status.is-error {
+  color: #ff453a;
+  opacity: 1;
+}
 .cc-field select.cc-input { appearance: none; cursor: pointer; }
 .swatch-classic { background: rgba(24, 25, 31, 0.9); } .swatch-classic i:first-child { background: #ff9f0a; } .swatch-classic i:last-child { background: rgba(255, 255, 255, 0.15); }
 .swatch-frost { background: #f7f8fa; } .swatch-frost i:first-child { background: #ffe7d4; } .swatch-frost i:last-child { background: #fff; border: 1px solid #e4e7ec; }

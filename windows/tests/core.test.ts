@@ -1717,4 +1717,51 @@ describe("Windows update check (#39)", () => {
     assert.deepEqual(parseUpdateState(null), { lastCheckedAtMs: null, release: null });
     assert.deepEqual(parseUpdateState("{bad json"), { lastCheckedAtMs: null, release: null });
   });
+
+  it("selects Windows setup.exe over MSI and requires SHA-256 or sidecar URL", () => {
+    const sha = "a".repeat(64);
+    const fullPayload = JSON.stringify({
+      tag_name: "v1.2.0",
+      html_url: "https://github.com/jryang1997/MenuBarMijia/releases/tag/v1.2.0",
+      body: "支持应用内一键更新",
+      assets: [
+        {
+          name: "MenuBarMijia-1.2.0-windows-x64.msi",
+          browser_download_url:
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.2.0/MenuBarMijia-1.2.0-windows-x64.msi",
+          size: 4096,
+          digest: `sha256:${sha}`,
+        },
+        {
+          name: "MenuBarMijia-1.2.0-windows-x64-setup.exe",
+          browser_download_url:
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.2.0/MenuBarMijia-1.2.0-windows-x64-setup.exe",
+          size: 2048,
+          digest: `sha256:${sha.toUpperCase()}`,
+        },
+        {
+          name: "MenuBarMijia-1.2.0-windows-x64-setup.exe.sha256",
+          browser_download_url:
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.2.0/MenuBarMijia-1.2.0-windows-x64-setup.exe.sha256",
+          size: 96,
+        },
+      ],
+    });
+    const parsed = parseLatestRelease(fullPayload);
+    assert.equal(parsed?.notes, "支持应用内一键更新");
+    assert.deepEqual(parsed?.installerAsset, {
+      name: "MenuBarMijia-1.2.0-windows-x64-setup.exe",
+      downloadURL:
+        "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.2.0/MenuBarMijia-1.2.0-windows-x64-setup.exe",
+      sizeBytes: 2048,
+      sha256: sha,
+      checksumURL:
+        "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.2.0/MenuBarMijia-1.2.0-windows-x64-setup.exe.sha256",
+      signatureURL:
+        "https://github.com/jryang1997/MenuBarMijia/releases/download/v1.2.0/MenuBarMijia-1.2.0-windows-x64-setup.exe.ed25519.sig",
+    });
+
+    const roundTrip = parseUpdateState(serializeUpdateState({ lastCheckedAtMs: 123, release: parsed }));
+    assert.deepEqual(roundTrip.release, parsed);
+  });
 });
