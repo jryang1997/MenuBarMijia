@@ -896,6 +896,60 @@ describe("Update notice (#39)", () => {
     });
   });
 
+  it("installs an update directly in-app when a verified installer asset is present", async () => {
+    localStorage.removeItem("menumijia.windows.update.v1");
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const sha = "b".repeat(64);
+    const releaseBody = JSON.stringify({
+      tag_name: "v9.9.9",
+      html_url: "https://github.com/jryang1997/MenuBarMijia/releases/tag/v9.9.9",
+      body: "新增应用内直接更新",
+      assets: [
+        {
+          name: "MenuBarMijia-9.9.9-windows-x64-setup.exe",
+          browser_download_url:
+            "https://github.com/jryang1997/MenuBarMijia/releases/download/v9.9.9/MenuBarMijia-9.9.9-windows-x64-setup.exe",
+          size: 3145728,
+          digest: `sha256:${sha}`,
+        },
+      ],
+    });
+    const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      calls.push({ name, args });
+      if (name === "native_http" && String(args["url"]).startsWith("https://api.github.com/")) {
+        return { status: 200, headers: {}, body: releaseBody };
+      }
+      return undefined;
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await setImmediate();
+    await setImmediate();
+
+    await click("#btn-footer-update");
+    assert.match(document.body.textContent ?? "", /发现新版本 v9\.9\.9/);
+    assert.match(document.body.textContent ?? "", /新增应用内直接更新/);
+    await click("#btn-install-update");
+    const installCall = calls.find((call) => call.name === "install_update");
+    assert.deepEqual(installCall?.args, {
+      asset: {
+        name: "MenuBarMijia-9.9.9-windows-x64-setup.exe",
+        downloadURL:
+          "https://github.com/jryang1997/MenuBarMijia/releases/download/v9.9.9/MenuBarMijia-9.9.9-windows-x64-setup.exe",
+        sizeBytes: 3145728,
+        sha256: sha,
+        checksumURL: null,
+        signatureURL:
+          "https://github.com/jryang1997/MenuBarMijia/releases/download/v9.9.9/MenuBarMijia-9.9.9-windows-x64-setup.exe.ed25519.sig",
+      },
+    });
+  });
+
   it("makes no request when automatic checks are switched off", async () => {
     localStorage.removeItem("menumijia.windows.update.v1");
     const urls: string[] = [];

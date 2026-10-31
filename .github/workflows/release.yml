@@ -474,9 +474,13 @@ jobs:
           mapfile -t actual < <(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort)
           for name in "${actual[@]:-}"; do
             [ -n "$name" ] || continue
-            if [ "$name" = "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" ]; then
-              continue
-            fi
+            case "$name" in
+              "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig"|\
+              "MenuBarMijia-${RELEASE_VERSION}-windows-x64-setup.exe.ed25519.sig"|\
+              "MenuBarMijia-${RELEASE_VERSION}-windows-x64.msi.ed25519.sig")
+                continue
+                ;;
+            esac
             if ! printf '%s\n' "${expected[@]}" | grep -qxF -- "$name"; then
               echo "❌ 已存在的草稿 ${RELEASE_TAG} 含有本工作流不会产出的附件：$name；请人工清理后重跑。" >&2
               exit 1
@@ -523,7 +527,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="$(cd dist && ls -1 | sort)"
-          actual="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort | grep -vxF "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" || true)"
+          actual="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | tr -d '\r' | sort | grep -vE '\.ed25519\.sig$' || true)"
           if [ "$actual" != "$expected" ]; then
             echo "❌ 草稿附件与本地构建产物不一致" >&2
             diff <(printf '%s\n' "$expected") <(printf '%s\n' "$actual") >&2 || true
@@ -540,7 +544,9 @@ jobs:
             --jq '.assets[] | "\(.name) \(.digest // "none") \(.size)"' | tr -d '\r' > "$RUNNER_TEMP/remote-assets.txt"
           while read -r name digest size; do
             [ -n "$name" ] || continue
-            [ "$name" = "MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig" ] && continue
+            case "$name" in
+              *.ed25519.sig) continue ;;
+            esac
             local_file="dist/${name}"
             local_size="$(wc -c < "$local_file" | tr -d '[:space:]')"
             if [ "$size" != "$local_size" ]; then
@@ -587,9 +593,12 @@ jobs:
             echo ""
             echo "**尚未发布**：CI 不持有更新签名私钥（issue #17）。请在可信机器上执行："
             echo '```bash'
-            echo "gh release download ${RELEASE_TAG} --pattern \"MenuBarMijia-${RELEASE_VERSION}.dmg\" --dir dist"
-            echo "MENUBARMIJIA_UPDATE_SIGNING_KEY=\"<离线私钥>\" swift scripts/sign_update.swift dist/MenuBarMijia-${RELEASE_VERSION}.dmg"
-            echo "gh release upload ${RELEASE_TAG} \"dist/MenuBarMijia-${RELEASE_VERSION}.dmg.ed25519.sig\""
+            echo "gh release download ${RELEASE_TAG} --pattern \"MenuBarMijia-${RELEASE_VERSION}*\" --dir dist"
+            echo "MENUBARMIJIA_UPDATE_SIGNING_KEY=\"<离线私钥>\" swift scripts/sign_update.swift \\"
+            echo "  dist/MenuBarMijia-${RELEASE_VERSION}.dmg \\"
+            echo "  dist/MenuBarMijia-${RELEASE_VERSION}-windows-x64-setup.exe \\"
+            echo "  dist/MenuBarMijia-${RELEASE_VERSION}-windows-x64.msi"
+            echo "gh release upload ${RELEASE_TAG} dist/*.ed25519.sig"
             echo '```'
             echo "然后运行 **Finalize Release** 工作流（tag=${RELEASE_TAG}）完成严格校验并发布。"
           } >> "$GITHUB_STEP_SUMMARY"

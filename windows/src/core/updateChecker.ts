@@ -12,6 +12,23 @@ export const UPDATE_RELEASES_URL =
   "https://api.github.com/repos/jryang1997/MenuBarMijia/releases/latest";
 export const UPDATE_RELEASES_PAGE = "https://github.com/jryang1997/MenuBarMijia/releases/latest";
 export const UPDATE_STORAGE_KEY = "menumijia.windows.update.v1";
+/** Offline Ed25519 public key (ADR-0005), shared with `UpdateChecker.updateSigningPublicKeyBase64` on macOS. */
+export const UPDATE_SIGNING_PUBLIC_KEY_BASE64 = "rLwWXuP0sOZvgd/KusLTTmBXN9DAZ9EzPBNhFSn9yUo=";
+
+export interface WindowsInstallerAsset {
+  /** Asset file name, e.g. `MenuBarMijia-1.1.4-windows-x64-setup.exe`. */
+  readonly name: string;
+  /** Direct download URL under https://github.com/jryang1997/MenuBarMijia/releases/download/... */
+  readonly downloadURL: string;
+  /** Byte size reported by GitHub (0 when unknown). */
+  readonly sizeBytes: number;
+  /** Lowercase 64-hex SHA-256 from GitHub's inline `digest`, or `null` when only a `.sha256` sidecar exists. */
+  readonly sha256: string | null;
+  /** Optional `.sha256` sidecar download URL under https://github.com/jryang1997/MenuBarMijia/releases/download/... */
+  readonly checksumURL: string | null;
+  /** Detached Ed25519 signature URL (`<asset>.ed25519.sig`, ADR-0005). */
+  readonly signatureURL: string;
+}
 
 export interface GitHubRelease {
   /** Version without the leading `v`, e.g. `1.0.7`. */
@@ -20,6 +37,10 @@ export interface GitHubRelease {
   readonly tag: string;
   /** GitHub release page, always an https://github.com/ URL. */
   readonly htmlURL: string;
+  /** Optional release notes markdown (`body`). */
+  readonly notes?: string;
+  /** Optional verified Windows installer asset (`.exe` preferred over `.msi`). */
+  readonly installerAsset?: WindowsInstallerAsset;
 }
 
 export interface UpdateState {
@@ -71,6 +92,107 @@ export function shouldCheckForUpdate(nowMs: number, lastCheckedAtMs: number | nu
   return updateCheckDayKey(nowMs) !== updateCheckDayKey(lastCheckedAtMs);
 }
 
+const RELEASE_DOWNLOAD_URL_PATTERN =
+  /^https:\/\/github\.com\/jryang1997\/MenuBarMijia\/releases\/download\/[^\s]+$/i;
+
+/** Parses a 64-char hex SHA-256 digest from `"sha256:<hex>"` or a `.sha256` sidecar line. */
+export function parseSha256Digest(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const firstToken = raw.trim().split(/\s+/)[0] ?? "";
+  const candidate = firstToken.toLowerCase().replace(/^sha256:/, "");
+  if (!/^[0-9a-f]{64}$/.test(candidate)) return null;
+  return candidate;
+}
+
+function buildValidatedInstallerAsset(params: {
+  rawName: unknown;
+  rawDownloadURL: unknown;
+  rawSizeBytes: unknown;
+  rawSha256: unknown;
+  rawChecksumURL: unknown;
+  rawSignatureURL?: unknown;
+}): WindowsInstallerAsset | null {
+  const name = typeof params.rawName === "string" ? params.rawName.trim() : "";
+  if (!name || /[\\/:]|\.\./.test(name) || !/\.(?:exe|msi)$/i.test(name)) return null;
+  const downloadURL = typeof params.rawDownloadURL === "string" ? params.rawDownloadURL.trim() : "";
+  if (!RELEASE_DOWNLOAD_URL_PATTERN.test(downloadURL)) return null;
+  const sizeBytes =
+    typeof params.rawSizeBytes === "number" && Number.isFinite(params.rawSizeBytes) && params.rawSizeBytes >= 0
+      ? Math.floor(params.rawSizeBytes)
+      : 0;
+  const sha256 = parseSha256Digest(params.rawSha256);
+  const rawChecksum = typeof params.rawChecksumURL === "string" ? params.rawChecksumURL.trim() : "";
+  const checksumURL =
+    RELEASE_DOWNLOAD_URL_PATTERN.test(rawChecksum) && /\.sha256$/i.test(rawChecksum)
+      ? rawChecksum
+      : null;
+  if (!sha256 && !checksumURL) return null;
+  const rawSig = typeof params.rawSignatureURL === "string" ? params.rawSignatureURL.trim() : "";
+  const signatureURL =
+    RELEASE_DOWNLOAD_URL_PATTERN.test(rawSig) && /\.ed25519\.sig$/i.test(rawSig)
+      ? rawSig
+      : `${downloadURL}.ed25519.sig`;
+  return { name, downloadURL, sizeBytes, sha256, checksumURL, signatureURL };
+}
+
+function parseInstallerAssetRecord(raw: unknown): WindowsInstallerAsset | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  return buildValidatedInstallerAsset({
+    rawName: record["name"],
+    rawDownloadURL: record["downloadURL"],
+    rawSizeBytes: record["sizeBytes"],
+    rawSha256: record["sha256"],
+    rawChecksumURL: record["checksumURL"],
+    rawSignatureURL: record["signatureURL"],
+  });
+}
+
+export function selectWindowsInstallerAsset(rawAssets: unknown): WindowsInstallerAsset | null {
+  if (!Array.isArray(rawAssets)) return null;
+  const sidecarByBaseName = new Map<string, string>();
+  const signatureByBaseName = new Map<string, string>();
+  for (const item of rawAssets) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec["name"] === "string" ? rec["name"].trim() : "";
+    const url = typeof rec["browser_download_url"] === "string" ? rec["browser_download_url"].trim() : "";
+    if (!RELEASE_DOWNLOAD_URL_PATTERN.test(url)) continue;
+    const lower = name.toLowerCase();
+    if (lower.endsWith(".sha256")) {
+      sidecarByBaseName.set(lower.slice(0, -".sha256".length), url);
+    } else if (lower.endsWith(".ed25519.sig")) {
+      signatureByBaseName.set(lower.slice(0, -".ed25519.sig".length), url);
+    }
+  }
+
+  let exeCandidate: WindowsInstallerAsset | null = null;
+  let msiCandidate: WindowsInstallerAsset | null = null;
+
+  for (const item of rawAssets) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+    const rec = item as Record<string, unknown>;
+    const name = typeof rec["name"] === "string" ? rec["name"].trim() : "";
+    const lowerName = name.toLowerCase();
+    const candidate = buildValidatedInstallerAsset({
+      rawName: name,
+      rawDownloadURL: rec["browser_download_url"],
+      rawSizeBytes: rec["size"],
+      rawSha256: rec["digest"],
+      rawChecksumURL: sidecarByBaseName.get(lowerName) ?? null,
+      rawSignatureURL: signatureByBaseName.get(lowerName) ?? null,
+    });
+    if (!candidate) continue;
+    if (lowerName.endsWith(".exe") && !exeCandidate) {
+      exeCandidate = candidate;
+    } else if (lowerName.endsWith(".msi") && !msiCandidate) {
+      msiCandidate = candidate;
+    }
+  }
+
+  return exeCandidate ?? msiCandidate;
+}
+
 /** Parses `GET /repos/.../releases/latest`; rejects drafts/odd payloads without a tag. */
 export function parseLatestRelease(body: string): GitHubRelease | null {
   let parsed: unknown;
@@ -86,7 +208,15 @@ export function parseLatestRelease(body: string): GitHubRelease | null {
   if (!version) return null;
   const rawURL = typeof record["html_url"] === "string" ? record["html_url"].trim() : "";
   const htmlURL = /^https:\/\/github\.com\/[^\s]+$/i.test(rawURL) ? rawURL : UPDATE_RELEASES_PAGE;
-  return { version, tag, htmlURL };
+  const notes = typeof record["body"] === "string" ? record["body"].trim() : "";
+  const installerAsset = selectWindowsInstallerAsset(record["assets"]);
+  return {
+    version,
+    tag,
+    htmlURL,
+    ...(notes ? { notes } : {}),
+    ...(installerAsset ? { installerAsset } : {}),
+  };
 }
 
 export function parseUpdateState(raw: string | null): UpdateState {
@@ -104,10 +234,14 @@ export function parseUpdateState(raw: string | null): UpdateState {
       const version = typeof record["version"] === "string" ? normalizeVersionTag(record["version"]) : null;
       if (version) {
         const rawURL = typeof record["htmlURL"] === "string" ? record["htmlURL"].trim() : "";
+        const notes = typeof record["notes"] === "string" ? record["notes"].trim() : "";
+        const installerAsset = parseInstallerAssetRecord(record["installerAsset"]);
         release = {
           version,
           tag: typeof record["tag"] === "string" ? record["tag"] : `v${version}`,
           htmlURL: /^https:\/\/github\.com\/[^\s]+$/i.test(rawURL) ? rawURL : UPDATE_RELEASES_PAGE,
+          ...(notes ? { notes } : {}),
+          ...(installerAsset ? { installerAsset } : {}),
         };
       }
     }
@@ -120,7 +254,15 @@ export function parseUpdateState(raw: string | null): UpdateState {
 export function serializeUpdateState(state: UpdateState): string {
   return JSON.stringify({
     lastCheckedAtMs: state.lastCheckedAtMs,
-    release: state.release ? { version: state.release.version, tag: state.release.tag, htmlURL: state.release.htmlURL } : null,
+    release: state.release
+      ? {
+          version: state.release.version,
+          tag: state.release.tag,
+          htmlURL: state.release.htmlURL,
+          ...(state.release.notes ? { notes: state.release.notes } : {}),
+          ...(state.release.installerAsset ? { installerAsset: state.release.installerAsset } : {}),
+        }
+      : null,
   });
 }
 

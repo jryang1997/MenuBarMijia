@@ -14,11 +14,11 @@
 
 ## 决定
 
-1. **Ed25519 分离签名，作为主防线。** 发布时用私钥对最终 DMG 字节签名，生成 `<DMG>.ed25519.sig` 并作为 release 附件上传。应用把 32 字节公钥编进 `UpdateChecker.updateSigningPublicKeyBase64`，在下载完成、SHA-256 校验通过之后、解包之前验证签名。签名缺失、不是合法 base64、或与包内容不匹配，一律中止安装并报明确错误（`updateSignatureMissing` / `updateSignatureInvalid`）。选择 CryptoKit `Curve25519.Signing` 是因为它是系统自带、无第三方依赖，和 Sparkle 的 Ed25519 思路一致；Linux 侧由 ADR-0003 的 swift-crypto 垫片提供同名 API。
+1. **Ed25519 分离签名，作为主防线。** 发布时用私钥对最终安装包字节签名，生成 `<安装包>.ed25519.sig` 并作为 release 附件上传。双端应用把同一 32 字节公钥编进源码（macOS `UpdateChecker.updateSigningPublicKeyBase64`、Windows `UPDATE_SIGNING_PUBLIC_KEY_BASE64`），在下载完成、SHA-256 校验通过之后、解包或启动安装程序之前验证签名。签名缺失、不是合法 base64、或与包内容不匹配，一律中止安装并报明确错误（`updateSignatureMissing` / `updateSignatureInvalid`）。macOS 侧选择 CryptoKit `Curve25519.Signing`（Linux 侧由 ADR-0003 的 swift-crypto 垫片提供同名 API）；Windows 侧复用 `rustls` 已引入的 `ring::signature::ED25519` 验签。
 
    私钥的保存方式决定这条防线到底防谁：**私钥只保存在维护者的可信本机，永不进入 GitHub**。`release.yml` 与 `finalize.yml` 都不读取 `MENUBARMIJIA_UPDATE_SIGNING_KEY`，CI 里也没有该 secret，因此 GitHub 账号、Token 或 CI 任意一环被拿下都拿不到签名私钥，攻击者最多造成“更新失败”，而不是“装上恶意版本”。代价是发布必须多一次人工离线签名（见下文第 4 条）。
 
-2. **钉住代码签名证书。** 项目没有付费 Apple 开发者账号，发布包用固定的自签名代码签名证书（RSA 3072，10 年，Code Signing EKU）。`scripts/build_app.sh` 在设置了 `MACOS_SIGNING_IDENTITY` 时用该身份签名，并把证书 SHA-1（`MACOS_CERT_SHA1`）写进 App 的 `Info.plist` 键 `MijiaCodeSignCertSHA1`。更新时读取运行中 App 的该键，把 `codesign` 要求构造成：
+2. **钉住代码签名证书。** 项目没有付费 Apple 开发者账号，发布包用固定的自签名代码签名证书（RSA 3072，10 年，Code Signing EKU）。`scripts/build_app.sh` 在设置了 `MACOS_SIGNING_IDENTITY` 时用该身份签名（未显式设置时优先自动使用本机钥匙串中的 `"MenuBarMijia Release Signing"`，找不到才退回 ad-hoc `-`），并把证书 SHA-1（`MACOS_CERT_SHA1`）写进 App 的 `Info.plist` 键 `MijiaCodeSignCertSHA1`。更新时读取运行中 App 的该键，把 `codesign` 要求构造成：
 
    ```
    identifier "com.jryang1997.MenuBarMijia" and certificate leaf = H"<sha1>"

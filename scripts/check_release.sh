@@ -205,11 +205,9 @@ verify_checksum() {
     info "SHA-256 校验通过：$asset"
 }
 
-verify_ed25519() {
-    local dir="$1"
-    local version="$2"
-    local dmg="$dir/MenuBarMijia-${version}.dmg"
-    local sig="${dmg}.ed25519.sig"
+verify_ed25519_file() {
+    local pkg="$1"
+    local sig="${pkg}.ed25519.sig"
     local source="Sources/MijiaCore/UpdateChecker.swift"
 
     [ -f "$source" ] || fail "缺少内置更新公钥来源：$source"
@@ -257,11 +255,25 @@ PY
     fi
 
     if ! openssl pkeyutl -verify -pubin -inkey "$TMP_DIR/public.pem" -rawin \
-        -in "$dmg" -sigfile "$TMP_DIR/signature.bin" >/dev/null; then
-        fail "Ed25519 签名与 $(basename "$dmg") 不匹配"
+        -in "$pkg" -sigfile "$TMP_DIR/signature.bin" >/dev/null; then
+        fail "Ed25519 签名与 $(basename "$pkg") 不匹配"
     fi
 
-    info "Ed25519 签名校验通过：$(basename "$dmg")"
+    rm -rf "$TMP_DIR"
+    TMP_DIR=""
+    info "Ed25519 签名校验通过：$(basename "$pkg")"
+}
+
+verify_ed25519() {
+    local dir="$1"
+    local version="$2"
+    verify_ed25519_file "$dir/MenuBarMijia-${version}.dmg"
+    if [ -f "$dir/MenuBarMijia-${version}-windows-x64-setup.exe.ed25519.sig" ]; then
+        verify_ed25519_file "$dir/MenuBarMijia-${version}-windows-x64-setup.exe"
+    fi
+    if [ -f "$dir/MenuBarMijia-${version}-windows-x64.msi.ed25519.sig" ]; then
+        verify_ed25519_file "$dir/MenuBarMijia-${version}-windows-x64.msi"
+    fi
 }
 
 release_assets() {
@@ -330,6 +342,16 @@ validate_assets() {
 
     local -a required=()
     mapfile -t required < <(release_assets "$version" "$with_signature")
+    if [ "$with_signature" -eq 1 ]; then
+        for win_sig in \
+            "MenuBarMijia-${version}-windows-x64-setup.exe.ed25519.sig" \
+            "MenuBarMijia-${version}-windows-x64.msi.ed25519.sig"
+        do
+            if [ -e "$dir/$win_sig" ]; then
+                required+=("$win_sig")
+            fi
+        done
+    fi
     check_asset_set "$dir" "${required[@]}"
 
     verify_checksum "$dir" "MenuBarMijia-${version}.dmg"
