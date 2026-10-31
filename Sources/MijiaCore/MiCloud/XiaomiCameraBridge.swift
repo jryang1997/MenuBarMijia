@@ -1,5 +1,9 @@
 import CryptoKit
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 import Foundation
 import os
 
@@ -337,6 +341,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
     // MARK: - CS2 UDP LAN Relay
 
     private static func spawnCS2UDPRelay(camIP: in_addr) throws -> (UInt16, RelayStopBox) {
+        #if canImport(Darwin)
         let probeFD = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
         guard probeFD >= 0 else {
             throw HomeProviderError.networkError("UDP probe socket failed")
@@ -528,8 +533,12 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
         thread.start()
 
         return (relayPort, stopBox)
+        #else
+        throw HomeProviderError.networkError("CS2 UDP relay requires Darwin")
+        #endif
     }
 
+    #if canImport(Darwin)
     private static func sendUDP(fd: Int32, bytes: [UInt8], count: Int, ip: in_addr, port: UInt16) {
         var dst = sockaddr_in()
         dst.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -544,6 +553,7 @@ public actor XiaomiCameraBridge: XiaomiCameraBridging {
             }
         }
     }
+    #endif
 }
 
 /// Keeps go2rtc's CS2 command channel from overflowing (#97).
