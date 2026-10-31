@@ -513,7 +513,6 @@ public struct DeviceCardView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(Text(L10n.tr("打开 \(device.name) 实时画面小窗", "Open \(device.name) floating live view")))
-                    .skinHelp(L10n.tr("弹出置顶实时画面小窗", "Open floating live camera window"))
                 }
 
 
