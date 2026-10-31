@@ -33,10 +33,10 @@
 4. **发布拆成两阶段：CI 只产草稿，人工离线签名，再由 Finalize 校验后发布。**
 
    - **阶段一（`release.yml`，push tag `v*` 或 workflow_dispatch 输入 `tag`）**：`verify-tag` → `macos-release` / `windows-release` → `stage-draft`。构建 job 只上传 artifact；`stage-draft` 校验 6 个未签名附件（DMG、`.dmg.sha256`、EXE、`.exe.sha256`、MSI、`.msi.sha256`）、拒绝改动已发布的 release、创建或刷新**草稿**，并在缺 `.ed25519.sig` 时以“⏳ 等待离线签名”成功结束。`release.yml` 全文件没有 `--draft=false`，构建阶段无法发布。
-   - **阶段二（维护者本机）**：下载草稿里的 DMG，用离线私钥执行 `scripts/sign_update.swift` 生成 `.sig`（脚本要求私钥对应的公钥等于内置值），再用 `gh release upload <tag> <DMG>.ed25519.sig` 显式上传这一个公有签名附件。
-   - **阶段三（`finalize.yml`，仅手动 workflow_dispatch，输入 `tag`）**：校验 tag == `v$(VERSION)`、四处版本号一致、远程 tag 仍指向检出提交、目标必须是未发布草稿；下载**恰好 7 个**附件，逐个比对下载字节与草稿的服务端 `sha256:` digest 与大小，并用 `scripts/check_release.sh assets` 就地解析 `UpdateChecker.updateSigningPublicKeyBase64` 对 DMG 验签（没有可配置公钥，换密钥必须改源码并发新版）；最后只执行 `gh release edit --draft=false`，**不重编译、不上传、不 `--clobber`**。
+   - **阶段二（维护者本机）**：下载草稿里的 DMG/EXE/MSI，用离线私钥执行 `scripts/sign_update.swift` 生成 3 份 `.ed25519.sig`（脚本要求私钥对应的公钥等于内置值），再用 `gh release upload <tag> dist/*.ed25519.sig` 显式上传这三个公有签名附件。
+   - **阶段三（`finalize.yml`，仅手动 workflow_dispatch，输入 `tag`）**：校验 tag == `v$(VERSION)`、四处版本号一致、远程 tag 仍指向检出提交、目标必须是未发布草稿；下载**恰好 9 个**附件，逐个比对下载字节与草稿的服务端 `sha256:` digest 与大小，并用 `scripts/check_release.sh assets` 就地解析 `UpdateChecker.updateSigningPublicKeyBase64` 对 DMG/EXE/MSI 验签（没有可配置公钥，换密钥必须改源码并发新版）；最后只执行 `gh release edit --draft=false`，**不重编译、不上传、不 `--clobber`**。
 
-   缺签名时 `stage-draft` 只留草稿；`finalize.yml` 发现草稿里没有 `.sig` 会输出完整离线命令并以非零退出，验签失败（包括 DMG 重建后仍挂旧签名）同样硬失败。`draft-assets` 严格 6 个、`assets` 严格 7 个，多一个少一个都失败，因此“少签名”不会悄悄降级为不带签名的发布。私钥格式支持 32 字节 raw seed 的 base64 或 PKCS#8 PEM。
+   缺签名时 `stage-draft` 只留草稿；`finalize.yml` 发现草稿里缺少任一 `.sig` 会输出完整离线命令并以非零退出，验签失败（包括安装包重建后仍挂旧签名）同样硬失败。`draft-assets` 严格 6 个、`assets` 严格 9 个，多一个少一个都失败，因此“少签名”不会悄悄降级为不带签名的发布。私钥格式支持 32 字节 raw seed 的 base64 或 PKCS#8 PEM。
 
 ## 后果
 

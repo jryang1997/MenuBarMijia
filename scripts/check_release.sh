@@ -3,7 +3,7 @@
 #
 # 用法：
 #   scripts/check_release.sh tag <tag>              # 校验 VERSION、tag、HEAD 与 Windows 版本元数据
-#   scripts/check_release.sh assets <version> <dir> # 校验 7 个附件、SHA-256 与 Ed25519 签名
+#   scripts/check_release.sh assets <version> <dir> # 校验 9 个附件、SHA-256 与 Ed25519 签名
 #
 # `tag` 在 GitHub Actions 中会把 version/tag/commit 写入 $GITHUB_OUTPUT。
 # `assets` 需要 openssl（Ed25519 校验）与 python3；发布工作流在 ubuntu-latest 上执行。
@@ -31,11 +31,11 @@ usage() {
   scripts/check_release.sh notes <输入.md> <输出.md> <version> <signed:true|false>
 
 tag 必须等于 VERSION 加 v 前缀（例如 VERSION=1.0.6 → v1.0.6），并且指向当前 HEAD。
-assets 只接受 MenuBarMijia-<version>.dmg / .dmg.sha256 / .dmg.ed25519.sig 与
-MenuBarMijia-<version>-windows-x64-setup.exe / .exe.sha256、
-MenuBarMijia-<version>-windows-x64.msi / .msi.sha256 这 7 个文件。
-draft-assets 接受同样的 7 个文件去掉 .ed25519.sig 后的 6 个待签附件，供 CI 产出草稿时自检；
-它不做签名校验，发布前仍必须跑 assets（严格 7 个且 Ed25519 必须对得上）。
+assets 只接受 MenuBarMijia-<version>.dmg / .dmg.sha256 / .dmg.ed25519.sig、
+MenuBarMijia-<version>-windows-x64-setup.exe / .exe.sha256 / .exe.ed25519.sig 与
+MenuBarMijia-<version>-windows-x64.msi / .msi.sha256 / .msi.ed25519.sig 这 9 个文件。
+draft-assets 接受同样的 9 个文件去掉 3 个 .ed25519.sig 后的 6 个待签附件，供 CI 产出草稿时自检；
+它不做签名校验，发布前仍必须跑 assets（严格 9 个且三份 Ed25519 签名都必须对得上）。
 notes 按 Windows 签名状态增删“未签名”段落，重复执行结果一致。
 EOF
     exit 2
@@ -268,16 +268,12 @@ verify_ed25519() {
     local dir="$1"
     local version="$2"
     verify_ed25519_file "$dir/MenuBarMijia-${version}.dmg"
-    if [ -f "$dir/MenuBarMijia-${version}-windows-x64-setup.exe.ed25519.sig" ]; then
-        verify_ed25519_file "$dir/MenuBarMijia-${version}-windows-x64-setup.exe"
-    fi
-    if [ -f "$dir/MenuBarMijia-${version}-windows-x64.msi.ed25519.sig" ]; then
-        verify_ed25519_file "$dir/MenuBarMijia-${version}-windows-x64.msi"
-    fi
+    verify_ed25519_file "$dir/MenuBarMijia-${version}-windows-x64-setup.exe"
+    verify_ed25519_file "$dir/MenuBarMijia-${version}-windows-x64.msi"
 }
 
 release_assets() {
-    # 单一附件清单：signature 阶段只差 .ed25519.sig，其余 6 个完全一致。
+    # 单一附件清单：signature 阶段只差 3 个 .ed25519.sig，其余 6 个完全一致。
     local version="$1"
     local with_signature="$2"
     printf '%s\n' \
@@ -288,9 +284,16 @@ release_assets() {
     fi
     printf '%s\n' \
         "MenuBarMijia-${version}-windows-x64-setup.exe" \
-        "MenuBarMijia-${version}-windows-x64-setup.exe.sha256" \
+        "MenuBarMijia-${version}-windows-x64-setup.exe.sha256"
+    if [ "$with_signature" = "1" ]; then
+        printf '%s\n' "MenuBarMijia-${version}-windows-x64-setup.exe.ed25519.sig"
+    fi
+    printf '%s\n' \
         "MenuBarMijia-${version}-windows-x64.msi" \
         "MenuBarMijia-${version}-windows-x64.msi.sha256"
+    if [ "$with_signature" = "1" ]; then
+        printf '%s\n' "MenuBarMijia-${version}-windows-x64.msi.ed25519.sig"
+    fi
 }
 
 check_asset_set() {
@@ -322,7 +325,7 @@ check_asset_set() {
 }
 
 validate_assets() {
-    # assets：严格 7 个附件（含 Ed25519 签名），签名必须与 DMG 字节匹配。
+    # assets：严格 9 个附件（含三份 Ed25519 签名），签名必须与 DMG/EXE/MSI 字节匹配。
     # draft-assets：只要求 6 个待签附件，供 CI 阶段产出草稿时自检；绝不替代签名验证。
     local mode="$1"
     [ "$#" -eq 3 ] || usage
@@ -334,24 +337,17 @@ validate_assets() {
     [ "$version" = "$(version_file)" ] \
         || fail "附件版本 $version 与 VERSION=$(version_file) 不一致"
 
-    local with_signature=1 expect="7 个文件（DMG/EXE/MSI、SHA-256 与 Ed25519 签名）"
+    local with_signature=1 expect="9 个文件（DMG/EXE/MSI、SHA-256 与 Ed25519 签名）"
     if [ "$mode" = "draft-assets" ]; then
         with_signature=0
         expect="6 个待签文件（DMG/EXE/MSI 与 SHA-256；Ed25519 签名由维护者离线补上）"
     fi
 
     local -a required=()
-    mapfile -t required < <(release_assets "$version" "$with_signature")
-    if [ "$with_signature" -eq 1 ]; then
-        for win_sig in \
-            "MenuBarMijia-${version}-windows-x64-setup.exe.ed25519.sig" \
-            "MenuBarMijia-${version}-windows-x64.msi.ed25519.sig"
-        do
-            if [ -e "$dir/$win_sig" ]; then
-                required+=("$win_sig")
-            fi
-        done
-    fi
+    local item
+    while IFS= read -r item; do
+        [ -n "$item" ] && required+=("$item")
+    done < <(release_assets "$version" "$with_signature")
     check_asset_set "$dir" "${required[@]}"
 
     verify_checksum "$dir" "MenuBarMijia-${version}.dmg"
