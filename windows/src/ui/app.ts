@@ -200,6 +200,8 @@ interface PersistedSettings {
   enableGlobalHotkey: boolean;
   /** Canonical global shortcut string (default `"Alt+M"`, #43). */
   globalHotkey: string;
+  /** Per-camera custom stream URLs (e.g. local go2rtc / HLS), persisted across restarts. */
+  cameraStreamURLs?: Record<string, string>;
 }
 
 interface UndoStep {
@@ -556,6 +558,14 @@ function loadSettings(): LoadedSettings {
               : "system",
           enableGlobalHotkey: typeof parsed.enableGlobalHotkey === "boolean" ? parsed.enableGlobalHotkey : true,
           globalHotkey: normalizeGlobalShortcut(parsed.globalHotkey),
+          cameraStreamURLs:
+            parsed.cameraStreamURLs && typeof parsed.cameraStreamURLs === "object"
+              ? Object.fromEntries(
+                  Object.entries(parsed.cameraStreamURLs as Record<string, unknown>).filter(
+                    (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0,
+                  ),
+                )
+              : {},
           layout: { ...emptyLayoutPrefs(), ...(parsed.layout ?? {}) },
           selectedHomeId: parsed.selectedHomeId ?? null,
         },
@@ -594,6 +604,7 @@ function loadSettings(): LoadedSettings {
       temperatureUnit: "system",
       enableGlobalHotkey: true,
       globalHotkey: DEFAULT_GLOBAL_SHORTCUT,
+      cameraStreamURLs: {},
     },
     hasLegacyCredentials: false,
   };
@@ -732,11 +743,12 @@ export class MenuMijiaWindowsApp {
   private liveCameraLoading = false;
   private liveCameraError: string | null = null;
   private liveCameraShowingURLInput = false;
-  private cameraStreamURLs: Record<string, string> = {};
+  private cameraStreamURLs: Record<string, string> = { ...(this.settings.cameraStreamURLs ?? {}) };
   /** The live picture arrives as MJPEG frames in a persistent `<img>`, which never restarts on re-render. */
   private liveCameraMode: "mjpeg" | null = null;
   private liveCameraImgEl: HTMLImageElement | null = null;
   private liveCameraToken = 0;
+  private readonly pendingCameraReleases = new Map<string, Promise<void>>();
   private updateState: UpdateState = { lastCheckedAtMs: null, release: null };
   private readonly transport: HttpTransport = createTransport();
   private readonly specResolver: MiotSpecResolver;
@@ -1864,6 +1876,14 @@ export class MenuMijiaWindowsApp {
           } else if (k.kind === "camera") {
             if (k.entityId === command.entityId) {
               k.isOn = command.isOn;
+              if (this.activeLiveCameraId === dev.id && !this.liveCameraHidden) {
+                if (command.isOn) {
+                  this.reconnectCameraLiveView();
+                } else {
+                  this.stopLiveTransport();
+                  this.liveCameraLoading = false;
+                }
+              }
             } else if (k.motionDetectionEntityId === command.entityId) {
               k.isMotionDetectionOn = command.isOn;
             }
@@ -3034,7 +3054,7 @@ export class MenuMijiaWindowsApp {
     this.liveCameraStreamURL = this.cameraStreamURLs[dev.id] ?? null;
     this.liveCameraLoading = false;
     invokeTauriVoid("set_pin_popover", { pin: true });
-    if (!this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
+    if (dev.kind.isOn && !this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
       void this.resolveCloudCameraStream(dev);
     }
     this.render();
@@ -3063,12 +3083,8 @@ export class MenuMijiaWindowsApp {
   }
 
   private closeCameraLiveView(): void {
-    if (this.settings.connectionMode === "xiaomiCloud" && this.activeLiveCameraId) {
-      const dev = this.devices.find((d) => d.id === this.activeLiveCameraId);
-      if (dev) void this.releaseCameraP2PSession(dev);
-      // Release the P2P session so the next open negotiates a fresh one instead of a dead relay.
-      invokeTauriVoid("stop_xiaomi_camera_bridge", { did: this.activeLiveCameraId });
-    }
+    const closingId = this.activeLiveCameraId;
+    const closingDev = closingId ? this.devices.find((d) => d.id === closingId) : undefined;
     this.clearCameraKeepAlive();
     this.liveCameraHidden = false;
     this.stopLiveTransport();
@@ -3077,35 +3093,50 @@ export class MenuMijiaWindowsApp {
     this.liveCameraLoading = false;
     this.liveCameraError = null;
     this.liveCameraShowingURLInput = false;
+    if (this.settings.connectionMode === "xiaomiCloud" && closingId) {
+      if (closingDev) void this.releaseCameraP2PSession(closingDev, this.liveCameraToken);
+      // Release the P2P session so the next open negotiates a fresh one instead of a dead relay.
+      invokeTauriVoid("stop_xiaomi_camera_bridge", { did: closingId });
+    }
     invokeTauriVoid("set_pin_popover", { pin: false });
     this.render();
   }
 
   /**
-   * Tells the camera to drop its single P2P session. Fire-and-forget: without
-   * this the session lingers until the camera times it out, and a quick
-   * reopen then stalls after the first frame (#97).
+   * Tells the camera to drop its single P2P session. Serialized with the next
+   * negotiation for the same camera so a delayed stop-stream never kills a
+   * freshly reopened stream (#97).
    */
-  private async releaseCameraP2PSession(dev: SmartDevice): Promise<void> {
-    if (!this.settings.miSession) return;
-    try {
-      const spec = await this.specResolver.resolve({
-        did: dev.id,
-        name: dev.name,
-        model: dev.model,
-        isOnline: dev.isOnline,
-        specType: null,
-      });
-      const p2pSvc = spec.services.find((s) => s.actions.some((a) => a.type.includes("stop-stream")));
-      const stopAct = p2pSvc?.actions.find((a) => a.type.includes("stop-stream"));
-      if (!p2pSvc || !stopAct) return;
-      const client = new MiCloudClient(this.settings.miSession, this.transport);
-      await client
-        .callAction({ did: dev.id, siid: p2pSvc.iid, aiid: stopAct.iid, inputs: [] })
-        .catch(() => {});
-    } catch {
-      // Best effort only; the bridge teardown below already freed local resources.
-    }
+  private releaseCameraP2PSession(dev: SmartDevice, releaseToken = this.liveCameraToken): Promise<void> {
+    if (!this.settings.miSession) return Promise.resolve();
+    const run = (async () => {
+      try {
+        const spec = await this.specResolver.resolve({
+          did: dev.id,
+          name: dev.name,
+          model: dev.model,
+          isOnline: dev.isOnline,
+          specType: null,
+        });
+        if (this.liveCameraToken !== releaseToken || this.activeLiveCameraId === dev.id) return;
+        const p2pSvc = spec.services.find((s) => s.actions.some((a) => a.type.includes("stop-stream")));
+        const stopAct = p2pSvc?.actions.find((a) => a.type.includes("stop-stream"));
+        if (!p2pSvc || !stopAct) return;
+        const client = new MiCloudClient(this.settings.miSession!, this.transport);
+        await client
+          .callAction({ did: dev.id, siid: p2pSvc.iid, aiid: stopAct.iid, inputs: [] })
+          .catch(() => {});
+      } catch {
+        // Best effort only; the bridge teardown below already freed local resources.
+      }
+    })();
+    const tracked = run.finally(() => {
+      if (this.pendingCameraReleases.get(dev.id) === tracked) {
+        this.pendingCameraReleases.delete(dev.id);
+      }
+    });
+    this.pendingCameraReleases.set(dev.id, tracked);
+    return tracked;
   }
 
   /** Drops the MJPEG image and any pending negotiation. */
@@ -3165,6 +3196,11 @@ export class MenuMijiaWindowsApp {
     const token = this.liveCameraToken;
     const stale = () => this.liveCameraToken !== token || this.activeLiveCameraId !== dev.id;
     try {
+      const pendingRelease = this.pendingCameraReleases.get(dev.id);
+      if (pendingRelease) {
+        await pendingRelease;
+        if (stale()) return;
+      }
       const spec = await this.specResolver.resolve({
         did: dev.id,
         name: dev.name,
@@ -4380,14 +4416,22 @@ export class MenuMijiaWindowsApp {
       if (!id) return;
       const input = this.root.querySelector<HTMLInputElement>("#camera-stream-url-input");
       const val = input?.value.trim() ?? "";
+      this.stopLiveTransport();
       if (val) {
         this.cameraStreamURLs[id] = val;
         this.liveCameraStreamURL = val;
         this.liveCameraError = null;
+        this.liveCameraLoading = false;
       } else {
         delete this.cameraStreamURLs[id];
         this.liveCameraStreamURL = null;
+        const dev = this.devices.find((d) => d.id === id);
+        if (dev && dev.kind.kind === "camera" && dev.kind.isOn && this.settings.connectionMode === "xiaomiCloud") {
+          void this.resolveCloudCameraStream(dev);
+        }
       }
+      this.settings.cameraStreamURLs = { ...this.cameraStreamURLs };
+      this.saveSettings();
       this.liveCameraShowingURLInput = false;
       this.render();
     });

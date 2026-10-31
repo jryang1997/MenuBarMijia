@@ -1123,6 +1123,41 @@ describe("Smart camera support and live view (#97)", () => {
     await click("#btn-undo");
     assert.match(tile("camera.living_cam"), /侦测开/);
   });
+
+  it("persists custom camera stream URLs across restarts and wakes sleeping cameras straight into the stream", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    await click("#btn-toggle-camera-url");
+    const input = element("#camera-stream-url-input") as HTMLInputElement;
+    input.value = "http://127.0.0.1:1984/api/stream.mjpeg?src=living_custom";
+    await click("#btn-save-camera-url");
+    assert.equal(
+      (element("#cc-camera-live-img") as HTMLImageElement).getAttribute("src"),
+      "http://127.0.0.1:1984/api/stream.mjpeg?src=living_custom",
+    );
+
+    // Re-instantiate the app to verify the saved stream URL survived in localStorage.
+    document.body.innerHTML = '<div id="app"></div>';
+    new MenuMijiaWindowsApp(element("#app"));
+    await click('[data-body-device="camera.living_cam"]');
+    assert.equal(
+      (element("#cc-camera-live-img") as HTMLImageElement).getAttribute("src"),
+      "http://127.0.0.1:1984/api/stream.mjpeg?src=living_custom",
+    );
+
+    // Put the camera to sleep, then wake it from inside the modal and verify the stream resumes immediately.
+    await click('.cc-camera-live-sheet .cc-segmented-pills [data-toggle-device="camera.living_cam"]');
+    assert.match(document.body.textContent ?? "", /摄像机处于物理休眠状态/);
+    await click('.cc-camera-stage.is-sleeping [data-toggle-device="camera.living_cam"]');
+    assert.equal(
+      (element("#cc-camera-live-img") as HTMLImageElement).getAttribute("src"),
+      "http://127.0.0.1:1984/api/stream.mjpeg?src=living_custom",
+    );
+  });
 });
 
 describe("Air purifier support (#98)", () => {
