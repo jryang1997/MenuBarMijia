@@ -471,12 +471,20 @@ public enum L10n {
     }
 
     /// Digits only, for places that draw the degree mark separately.
-    public static func temperatureValue(_ celsius: Double, fractionDigits: Int = 0) -> String {
-        String(format: "%.\(max(0, fractionDigits))f", temperatureNumber(celsius))
+    public static func temperatureValue(_ celsius: Double, fractionDigits: Int? = nil) -> String {
+        let digits: Int
+        if let fractionDigits {
+            digits = max(0, fractionDigits)
+        } else if temperatureUnit == .celsius && abs(celsius - celsius.rounded()) >= 0.05 {
+            digits = 1
+        } else {
+            digits = 0
+        }
+        return String(format: "%.\(digits)f", temperatureNumber(celsius))
     }
 
-    /// Digits plus unit symbol, e.g. `24°C` or `75°F`.
-    public static func temperature(_ celsius: Double, fractionDigits: Int = 0) -> String {
+    /// Digits plus unit symbol, e.g. `24°C`, `25.5°C`, or `75°F`.
+    public static func temperature(_ celsius: Double, fractionDigits: Int? = nil) -> String {
         temperatureValue(celsius, fractionDigits: fractionDigits) + temperatureUnit.symbol
     }
 

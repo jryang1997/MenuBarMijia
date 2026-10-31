@@ -264,6 +264,8 @@ struct LocalizationTests {
     func temperatureFormatting() {
         L10n.$overrideTemperatureUnit.withValue(.celsius) {
             #expect(L10n.temperature(24) == "24°C")
+            #expect(L10n.temperature(25.5) == "25.5°C")
+            #expect(L10n.temperatureValue(24.5) == "24.5")
             #expect(L10n.temperature(26.5, fractionDigits: 1) == "26.5°C")
             #expect(L10n.temperatureValue(26.5, fractionDigits: 1) == "26.5")
             #expect(L10n.temperatureSymbol == "°C")

@@ -75,10 +75,12 @@ import {
   partitionDueTimers,
 } from "../core/models.js";
 import {
+  type AppAppearance,
   type AppSkin,
   type LayoutPrefs,
   type PanelHeight,
   type TileSize,
+  APPEARANCES,
   DEFAULT_GLOBAL_SHORTCUT,
   PANEL_HEIGHTS,
   SKINS,
@@ -95,6 +97,7 @@ import {
   normalizeGlobalShortcut,
   pageSections,
   recordShortcutFromKeyEvent,
+  resolveAppearance,
   resolvedSize,
   scopedKey,
   spans,
@@ -189,6 +192,7 @@ interface PersistedSettings {
   cachedXiaomiDevices: SmartDevice[];
   cachedModelTypes: Record<string, string>;
   skin: AppSkin;
+  appearance: AppAppearance;
   panelHeight: PanelHeight;
   climatePanel: boolean;
   layout: LayoutPrefs;
@@ -254,7 +258,7 @@ const SF_ICONS = {
   grid1x2: `<svg viewBox="0 0 20 20" fill="currentColor"><rect x="3" y="3.5" width="14" height="5.2" rx="1.6"/><rect x="3" y="11.3" width="14" height="5.2" rx="1.6"/></svg>`,
   qrcode: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h6v6H3V3zm1.5 1.5v3h3v-3h-3zM11 3h6v6h-6V3zm1.5 1.5v3h3v-3h-3zM3 11h6v6H3v-6zm1.5 1.5v3h3v-3h-3zM11 11h2.5v2.5H11V11zm3.5 0H17v2.5h-2.5V11zM11 14.5h2.5V17H11v-2.5zm3.5 0H17V17h-2.5v-2.5z"/></svg>`,
   xmark: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></svg>`,
-  arrowUpCircle: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm.53-11.28a.75.75 0 00-1.06 0L6.72 9.47a.75.75 0 101.06 1.06l1.47-1.47v4.19a.75.75 0 001.5 0V9.06l1.47 1.47a.75.75 0 101.06-1.06l-2.75-2.75z"/></svg>`,
+  arrowUpCircle: `<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.53-11.28a.75.75 0 00-1.06 0L6.72 9.47a.75.75 0 101.06 1.06l1.47-1.47v4.19a.75.75 0 001.5 0V9.06l1.47 1.47a.75.75 0 101.06-1.06l-2.75-2.75z"/></svg>`,
   videoFill: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 5a2 2 0 012-2h7a2 2 0 012 2v1.8l3.1-1.85A.75.75 0 0118.25 5.6v8.8a.75.75 0 01-1.15.65L14 13.2V15a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>`,
 };
 
@@ -548,6 +552,10 @@ function loadSettings(): LoadedSettings {
               ? parsed.cachedModelTypes
               : {},
           skin: SKINS.some((k) => k.id === parsed.skin) ? (parsed.skin as AppSkin) : "classic",
+          appearance:
+            parsed.appearance === "light" || parsed.appearance === "dark"
+              ? parsed.appearance
+              : "system",
           panelHeight: PANEL_HEIGHTS.some((h) => h.id === parsed.panelHeight) ? (parsed.panelHeight as PanelHeight) : "standard",
           climatePanel: parsed.climatePanel ?? true,
           interfaceLanguage:
@@ -598,6 +606,7 @@ function loadSettings(): LoadedSettings {
       cachedXiaomiDevices: [],
       cachedModelTypes: {},
       skin: "classic",
+      appearance: "system",
       panelHeight: "standard",
       climatePanel: true,
       layout: emptyLayoutPrefs(),
@@ -2139,6 +2148,13 @@ export class MenuMijiaWindowsApp {
     return this.settings.skin;
   }
 
+  private get effectiveAppearance(): "light" | "dark" {
+    const prefersLight =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: light)").matches;
+    return resolveAppearance(this.settings.appearance, prefersLight);
+  }
+
   private get layout(): LayoutPrefs {
     return this.settings.layout;
   }
@@ -2182,10 +2198,15 @@ export class MenuMijiaWindowsApp {
             selectionEnd: keepsFocusedDraft ? focusedInput?.selectionEnd ?? null : null,
           }
         : null;
+    const hasMountedPopover = this.root.querySelector(":scope > .cc-popover") !== null;
+    if (hasMountedPopover) {
+      this.root.classList.remove("is-opening");
+    }
     const tiles = Array.from(this.root.querySelectorAll<HTMLElement>("[data-tile-id]"));
     const before = new Map(tiles.map((el) => [el.dataset.tileId as string, el.getBoundingClientRect()]));
     const scrollTop = this.root.querySelector(".cc-scroll-area")?.scrollTop ?? 0;
     const roomLeft = this.root.querySelector(".cc-room-scroll")?.scrollLeft ?? 0;
+    const sheetScrollTop = this.root.querySelector(".cc-sheet")?.scrollTop ?? 0;
 
     this.pendingCloudRender = false;
     this.renderNow();
@@ -2194,6 +2215,8 @@ export class MenuMijiaWindowsApp {
     if (area) area.scrollTop = scrollTop;
     const strip = this.root.querySelector<HTMLElement>(".cc-room-scroll");
     if (strip) strip.scrollLeft = roomLeft;
+    const sheet = this.root.querySelector<HTMLElement>(".cc-sheet");
+    if (sheet) sheet.scrollTop = sheetScrollTop;
 
     if (focusSnapshot) {
       const matches = Array.from(
@@ -2248,8 +2271,10 @@ export class MenuMijiaWindowsApp {
       this.lastUndoAction && this.lastUndoAction.expiresAtMs > Date.now()
         ? this.lastUndoAction
         : null;
-    this.root.innerHTML = `
-      <div class="cc-popover skin-${this.skin} ${this.skin === "classic" ? "" : "is-skinned"} ${this.isEditingLayout ? "is-editing" : ""}">
+    const scheme = this.effectiveAppearance;
+    this.root.dataset.scheme = scheme;
+    const popoverClass = `cc-popover skin-${this.skin} scheme-${scheme} ${this.skin === "classic" ? "" : "is-skinned"} ${this.isEditingLayout ? "is-editing" : ""}`.trim();
+    const innerContent = `
         <header class="cc-header">
           <div class="cc-header-top">
             <div class="cc-title-group">
@@ -2510,6 +2535,14 @@ export class MenuMijiaWindowsApp {
                 : ""
             }
             <button
+              class="cc-footer-icon-btn"
+              id="btn-toggle-appearance"
+              title="${scheme === "light" ? t("切换深色模式") : t("切换浅色模式")}"
+              aria-label="${scheme === "light" ? t("切换深色模式") : t("切换浅色模式")}"
+            >
+              ${scheme === "light" ? SF_ICONS.moonStarsFill : SF_ICONS.sunMaxFill}
+            </button>
+            <button
               class="cc-footer-icon-btn ${this.isSyncingCloud ? "is-spinning" : ""}"
               id="btn-refresh"
               title="${t("立即同步最新设备状态")}"
@@ -2542,8 +2575,16 @@ export class MenuMijiaWindowsApp {
         ${this.renderHomeMenu()}
         ${this.renderContextMenu()}
         ${this.renderPrompt()}
-      </div>
     `;
+    const existingPopover = this.root.querySelector<HTMLElement>(":scope > .cc-popover");
+    if (existingPopover) {
+      if (existingPopover.className !== popoverClass) {
+        existingPopover.className = popoverClass;
+      }
+      existingPopover.innerHTML = innerContent;
+    } else {
+      this.root.innerHTML = `<div class="${popoverClass}">${innerContent}</div>`;
+    }
 
     this.bindEvents();
   }
@@ -2994,7 +3035,7 @@ export class MenuMijiaWindowsApp {
           <div class="cc-slider-group">
             <div class="cc-slider-label">
               <span>${t("目标温度")}</span>
-              <strong>${k.targetTemperature}°C</strong>
+              <strong>${formatTemperature(k.targetTemperature)}</strong>
             </div>
             <input class="cc-range is-blue" type="range" min="${formatTemperatureValue(k.minTemp)}" max="${formatTemperatureValue(k.maxTemp)}" step="${displayStep(k.step)}" value="${formatTemperatureValue(k.targetTemperature)}" data-actemp="${this.escapeHtml(dev.id)}" aria-label="${t("目标温度")}" aria-valuemin="${formatTemperatureValue(k.minTemp)}" aria-valuemax="${formatTemperatureValue(k.maxTemp)}" aria-valuetext="${formatTemperature(k.targetTemperature)}" />
           </div>
@@ -3702,15 +3743,13 @@ export class MenuMijiaWindowsApp {
           ${this.availableUpdate ? this.renderUpdateSection() : ""}
 
           <div class="cc-field">
-            <label>${t("面板皮肤")}</label>
-            <div class="cc-skin-grid">
-              ${SKINS.map((k) => `
-                <button class="cc-skin-swatch ${this.skin === k.id ? "is-active" : ""}" data-skin="${k.id}" aria-pressed="${this.skin === k.id}" aria-label="${this.escapeHtml(k.title)}">
-                  <span class="cc-swatch-art swatch-${k.id}"><i></i><i></i></span>
-                  <span>${k.title}</span>
-                </button>`).join("")}
+            <label>${t("外观模式")}</label>
+            <div class="cc-segmented-pills is-even">
+              ${APPEARANCES.map(
+                (a) =>
+                  `<button class="cc-seg-pill ${this.settings.appearance === a.id ? "is-active" : ""}" data-appearance="${a.id}" aria-pressed="${this.settings.appearance === a.id}">${this.escapeHtml(a.title)}</button>`,
+              ).join("")}
             </div>
-            <p class="cc-field-hint">${t("经典以外的皮肤带有：卡片依次入场、在灯上左右拖动调亮度、按住「全关」0.6 秒确认。长按卡片可以拖动排序，右键卡片可以改大小、分组和重命名。")}</p>
           </div>
 
           <div class="cc-field">
@@ -4195,6 +4234,20 @@ export class MenuMijiaWindowsApp {
         this.saveSettings();
         this.render();
       });
+    });
+    this.root.querySelectorAll<HTMLElement>("[data-appearance]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const value = btn.dataset.appearance;
+        this.settings.appearance =
+          value === "light" || value === "dark" ? value : "system";
+        this.saveSettings();
+        this.render();
+      });
+    });
+    this.root.querySelector("#btn-toggle-appearance")?.addEventListener("click", () => {
+      this.settings.appearance = this.effectiveAppearance === "light" ? "dark" : "light";
+      this.saveSettings();
+      this.render();
     });
     this.root.querySelectorAll<HTMLElement>("[data-interface-language]").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -5045,9 +5098,24 @@ export class MenuMijiaWindowsApp {
       if (strip && active) strip.scrollLeft = this.selectedRoom === "全部" ? 0 : active.offsetLeft - (strip.clientWidth - active.offsetWidth) / 2;
     };
     let hiddenAt = 0;
-    window.addEventListener("blur", () => { hiddenAt = performance.now(); });
-    window.addEventListener("focus", () => { if (performance.now() - hiddenAt > 150) play(); });
-    this.root.addEventListener("animationend", (e) => { if (e.target === this.root) this.root.classList.remove("is-opening"); });
+    if (window.__TAURI_INTERNALS__) {
+      window.addEventListener("blur", () => { hiddenAt = performance.now(); });
+      window.addEventListener("focus", () => { if (performance.now() - hiddenAt > 150) play(); });
+    }
+    this.root.addEventListener("animationend", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target === this.root || target?.classList?.contains("cc-popover")) {
+        this.root.classList.remove("is-opening");
+      }
+    });
+    if (typeof window.matchMedia === "function") {
+      const mql = window.matchMedia("(prefers-color-scheme: light)");
+      mql.addEventListener?.("change", () => {
+        if (this.settings.appearance === "system") {
+          this.render();
+        }
+      });
+    }
     play();
   }
 
