@@ -535,8 +535,16 @@ struct MijiaCoreTests {
 
         store.setCameraNightShot("dev_cam_1", mode: "On")
         store.setCameraMotionDetection("dev_cam_1", enabled: false)
-        try await Task.sleep(for: .milliseconds(40))
-        let cmds = await mock.executedCommands
+        var cmds: [DeviceCommand] = []
+        for _ in 0..<50 {
+            cmds = await mock.executedCommands
+            if cmds.contains(.setSelectOption(entityId: spec.entityId, option: "On"))
+                && cmds.contains(.setSwitch(entityId: "switch.living_cam_motion_detection", isOn: false))
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(cmds.contains(.setSelectOption(entityId: spec.entityId, option: "On")))
         #expect(cmds.contains(.setSwitch(entityId: "switch.living_cam_motion_detection", isOn: false)))
 
