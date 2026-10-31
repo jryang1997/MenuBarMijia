@@ -695,6 +695,31 @@ struct MenuBarPanelControllerTests {
         #expect(roomScrollView.contentView.bounds.origin.x < 1)
     }
 
+    @Test("CameraLivePanelController attaches NSHostingView contentView and elevates above MenuBarPanel")
+    func cameraLivePanelAttachesHostingViewAndOrdersAboveMenuBarPanel() async throws {
+        let suite = "MenuBarPanelTests-camera-\(UUID().uuidString)"
+        defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let store = HomeStore(provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome()), defaultsSuiteName: suite)
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let camera = try #require(store.devices.first(where: {
+            if case .camera = $0.kind { return true }
+            return false
+        }))
+
+        let cameraController = CameraLivePanelController.shared
+        cameraController.presentsActively = false
+        cameraController.install(with: store)
+        defer { cameraController.closePanel() }
+
+        store.openCameraLiveView(camera.id)
+        let panel = try #require(cameraController.panelWindow)
+        #expect(panel.isVisible)
+        #expect(panel.contentView is NSHostingView<CameraLivePanelView>, "NSPanel initializes with a blank NSView; present(device:) must replace it with NSHostingView<CameraLivePanelView>")
+        #expect(panel.level.rawValue > NSWindow.Level.statusBar.rawValue)
+    }
+
     private static func pumpMainRunLoop(_ seconds: TimeInterval = 0.05) {
         CFRunLoopRunInMode(.defaultMode, seconds, false)
     }

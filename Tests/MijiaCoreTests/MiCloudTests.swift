@@ -561,6 +561,60 @@ actor StubMiCloudAPI: MiCloudAPI {
     }
 
     func action(_ call: MiotActionCall) async throws {}
+
+    private(set) var callActionCalls: [MiotActionCall] = []
+    private(set) var vendorRequestedDid: String?
+    private(set) var vendorRequestedPubKey: String?
+    var stubVendor = MiCameraP2PVendor(
+        vendorName: "cs2",
+        p2pId: "TICK-123456-ABCDE",
+        devicePublicKey: String(repeating: "ab", count: 32),
+        sign: "deadbeef0102"
+    )
+    var stubLocalIP: String? = "192.168.50.145"
+
+    func callAction(_ call: MiotActionCall) async throws -> JSONValue {
+        callActionCalls.append(call)
+        return .object(["code": .number(0)])
+    }
+
+    func cameraLocalIP(did: String) async throws -> String? {
+        stubLocalIP
+    }
+
+    func cameraP2PVendor(did: String, appPublicKey: String) async throws -> MiCameraP2PVendor {
+        vendorRequestedDid = did
+        vendorRequestedPubKey = appPublicKey
+        return stubVendor
+    }
+}
+
+actor StubXiaomiCameraBridge: XiaomiCameraBridging {
+    private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?)] = []
+    private(set) var stopCalls: [String] = []
+    var stubEndpoints = XiaomiCameraStreamEndpoints(
+        mp4: URL(string: "http://127.0.0.1:1984/api/stream.mp4?src=cam_raw_1105610385&mp4")!,
+        mjpeg: URL(string: "http://127.0.0.1:1984/api/stream.mjpeg?src=cam_mjpeg_1105610385")!
+    )
+
+    func startBridge(
+        did: String,
+        model: String,
+        localIP: String,
+        clientPublic: String,
+        clientPrivate: String,
+        devicePublic: String,
+        sign: String,
+        vendor: String,
+        uid: String?
+    ) async throws -> XiaomiCameraStreamEndpoints {
+        startCalls.append((did: did, model: model, localIP: localIP, vendor: vendor, uid: uid))
+        return stubEndpoints
+    }
+
+    func stopBridge(did: String) async {
+        stopCalls.append(did)
+    }
 }
 
 struct StubSpecSource: MiotSpecSource {
@@ -730,6 +784,75 @@ struct MiCloudProviderTests {
         store.switchBackend(.homeAssistant)
         #expect(store.homeBackend == .homeAssistant)
         #expect(store.serverHostSummary == "192.168.50.35")
+    }
+
+    @Test("P2P camera stream resolution negotiates stop-stream, start-p2p-stream, miss_get_vendor, and starts local fMP4 bridge with MJPEG fallback")
+    func p2pCameraStreamNegotiationAndStop() async throws {
+        let cameraSpecJSON = #"{"type":"urn:miot-spec-v2:device:camera:0000A01C:chuangmi-061a01:3","services":[{"iid":2,"type":"urn:miot-spec-v2:service:camera-control:0000782F:chuangmi-061a01:1","properties":[{"iid":1,"type":"urn:miot-spec-v2:property:on:00000006:chuangmi-061a01:1","format":"bool","access":["read","write","notify"]},{"iid":2,"type":"urn:miot-spec-v2:property:night-shot:00000057:chuangmi-061a01:1","format":"uint8","access":["read","write","notify"],"value-list":[{"value":0,"description":"Off"},{"value":1,"description":"On"},{"value":2,"description":"Auto"}]}]},{"iid":9,"type":"urn:miot-spec-v2:service:p2p-stream:00007881:chuangmi-061a01:1","actions":[{"iid":1,"type":"urn:miot-spec-v2:action:start-p2p-stream:00002839:chuangmi-061a01:1"},{"iid":2,"type":"urn:miot-spec-v2:action:stop-stream:00002822:chuangmi-061a01:1"}]}]}"#
+        let camSpec = MiotFixtures.decode(cameraSpecJSON)
+        struct CameraSpecSource: MiotSpecSource {
+            let spec: MiotDeviceSpec
+            func spec(model: String, specType: String?) async throws -> MiotDeviceSpec? {
+                model == "chuangmi.camera.061a01" ? spec : nil
+            }
+        }
+
+        let camRecord = MiDeviceRecord(
+            did: "1105610385",
+            name: "小米智能摄像机3",
+            model: "chuangmi.camera.061a01",
+            isOnline: true,
+            localIp: "192.168.50.145"
+        )
+        let api = StubMiCloudAPI(
+            devices: [camRecord],
+            rooms: [MiRoom(id: "r1", name: "儿童房", dids: ["1105610385"])],
+            values: [
+                MiotPropKey(did: "1105610385", siid: 2, piid: 1): .bool(true),
+                MiotPropKey(did: "1105610385", siid: 2, piid: 2): .number(2),
+            ]
+        )
+        let bridge = StubXiaomiCameraBridge()
+        let provider = MiCloudProvider(
+            sessionLoader: { fakeSession },
+            apiFactory: { _ in api },
+            specSource: CameraSpecSource(spec: camSpec),
+            cameraBridge: bridge,
+            pollInterval: .seconds(60),
+            cameraSessionReleaseDelay: .milliseconds(5)
+        )
+        let (log, task) = consume(provider)
+        defer { task.cancel() }
+
+        #expect(await log.wait { await !$0.snapshots.isEmpty })
+        let cameraDevice = try #require(await log.snapshots.first?.devices.first)
+        let resolved = try await provider.resolveCameraStream(for: cameraDevice)
+        #expect(resolved == .liveMP4(
+            URL(string: "http://127.0.0.1:1984/api/stream.mp4?src=cam_raw_1105610385&mp4")!,
+            mjpegFallback: URL(string: "http://127.0.0.1:1984/api/stream.mjpeg?src=cam_mjpeg_1105610385")!
+        ))
+
+        let actions = await api.callActionCalls
+        #expect(actions == [
+            MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []),
+            MiotActionCall(did: "1105610385", siid: 9, aiid: 1, inputs: []),
+        ])
+        #expect(await api.vendorRequestedDid == "1105610385")
+        #expect((await api.vendorRequestedPubKey)?.count == 64)
+        let starts = await bridge.startCalls
+        #expect(starts.count == 1)
+        #expect(starts.first?.did == "1105610385")
+        #expect(starts.first?.localIP == "192.168.50.145")
+        #expect(starts.first?.vendor == "cs2")
+        #expect(starts.first?.uid == "TICK-123456-ABCDE")
+
+        await provider.stopCameraStream(for: cameraDevice)
+        let stops = await bridge.stopCalls
+        #expect(stops == ["1105610385"])
+        let actionsAfterStop = await api.callActionCalls
+        #expect(actionsAfterStop.count == 3)
+        #expect(actionsAfterStop.last == MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []))
+        await provider.shutdown()
     }
 }
 

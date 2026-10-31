@@ -605,6 +605,7 @@ final class MenuBarPanelController: NSObject {
         guard isPanelVisible, let window else { return }
         guard !isPanelWindow(window) else { return }
         guard window !== statusItem?.button?.window else { return }
+        guard window !== CameraLivePanelController.shared.panelWindow else { return }
         hidePanel()
     }
 
@@ -648,6 +649,11 @@ final class MenuBarPanelController: NSObject {
         }
         guard isPanelVisible, let panel = panelWindow else { return }
         guard !isPanelWindow(window) else { return }
+        if let cameraWindow = CameraLivePanelController.shared.panelWindow,
+           cameraWindow.isVisible,
+           window === cameraWindow || cameraWindow.frame.contains(screenPoint) {
+            return
+        }
         if panel.frame.contains(screenPoint) { return }
         if let children = panel.childWindows,
            children.contains(where: { $0.isVisible && $0.frame.contains(screenPoint) }) { return }

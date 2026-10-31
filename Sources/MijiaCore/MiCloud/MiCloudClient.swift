@@ -13,9 +13,10 @@ public struct MiDeviceRecord: Equatable, Sendable {
     /// go to the parent did, limited to the switch service `splitSiid`.
     public var splitParentDid: String?
     public var splitSiid: Int?
+    public var localIp: String?
 
     public init(did: String, name: String, model: String, isOnline: Bool, specType: String? = nil,
-                splitParentDid: String? = nil, splitSiid: Int? = nil) {
+                splitParentDid: String? = nil, splitSiid: Int? = nil, localIp: String? = nil) {
         self.did = did
         self.name = name
         self.model = model
@@ -23,6 +24,7 @@ public struct MiDeviceRecord: Equatable, Sendable {
         self.specType = specType
         self.splitParentDid = splitParentDid
         self.splitSiid = splitSiid
+        self.localIp = localIp
     }
 
     /// The did MIoT property and action calls address.
@@ -85,6 +87,20 @@ public struct MiotActionCall: Equatable, Sendable {
     }
 }
 
+public struct MiCameraP2PVendor: Equatable, Sendable {
+    public var vendorName: String
+    public var p2pId: String?
+    public var devicePublicKey: String
+    public var sign: String
+
+    public init(vendorName: String, p2pId: String? = nil, devicePublicKey: String, sign: String) {
+        self.vendorName = vendorName
+        self.p2pId = p2pId
+        self.devicePublicKey = devicePublicKey
+        self.sign = sign
+    }
+}
+
 public enum MiCloudError: LocalizedError, Equatable, Sendable {
     case notLoggedIn
     case sessionExpired
@@ -120,6 +136,8 @@ public protocol MiCloudAPI: Sendable {
         window: SensorHistoryWindow,
         now: Date
     ) async throws -> [SensorHistorySample]
+    func cameraLocalIP(did: String) async throws -> String?
+    func cameraP2PVendor(did: String, appPublicKey: String) async throws -> MiCameraP2PVendor
 }
 
 extension MiCloudAPI {
@@ -135,6 +153,12 @@ extension MiCloudAPI {
         now: Date
     ) async throws -> [SensorHistorySample] {
         []
+    }
+    public func cameraLocalIP(did: String) async throws -> String? {
+        nil
+    }
+    public func cameraP2PVendor(did: String, appPublicKey: String) async throws -> MiCameraP2PVendor {
+        MiCameraP2PVendor(vendorName: "cs2", p2pId: nil, devicePublicKey: "", sign: "")
     }
 }
 
@@ -296,9 +320,40 @@ public actor MiCloudClient: MiCloudAPI {
                 isOnline: item["isOnline"]?.boolValue ?? true,
                 specType: item["spec_type"]?.stringValue,
                 splitParentDid: split?["parentId"]?.idString,
-                splitSiid: split?["moduleId"]?.intValue
+                splitSiid: split?["moduleId"]?.intValue,
+                localIp: item["localip"]?.stringValue
             )
         }
+    }
+
+    public func cameraLocalIP(did: String) async throws -> String? {
+        let records = try await legacyDeviceList()
+        return records.first(where: { $0.did == did || $0.miotDid == did })?.localIp
+    }
+
+    public func cameraP2PVendor(did: String, appPublicKey: String) async throws -> MiCameraP2PVendor {
+        let result = try await request("v2/device/miss_get_vendor", data: .object([
+            "did": .string(did),
+            "app_pubkey": .string(appPublicKey),
+            "support_vendors": .string("TUTK_CS2_MTP"),
+        ]))
+        let vendorObj = result["vendor"]
+        let vendorId = vendorObj?["vendor"]?.intValue ?? 4
+        let vendorName: String
+        switch vendorId {
+        case 1: vendorName = "tutk"
+        case 4: vendorName = "cs2"
+        default: vendorName = String(vendorId)
+        }
+        let p2pId = vendorObj?["vendor_params"]?["p2p_id"]?.stringValue
+        let devicePublic = result["public_key"]?.stringValue ?? ""
+        let sign = result["sign"]?.stringValue ?? ""
+        return MiCameraP2PVendor(
+            vendorName: vendorName,
+            p2pId: p2pId,
+            devicePublicKey: devicePublic,
+            sign: sign
+        )
     }
 
     public func homeRooms() async throws -> [MiRoom] {

@@ -30,6 +30,13 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     public private(set) var isLoadingStream = false
     public private(set) var errorMessage: String?
     public private(set) var snapshotImage: NSImage?
+    /// Native H.264/H.265 player for `.liveMP4` streams; nil for every other source.
+    private(set) var videoPlayer: CameraLiveVideoPlayer?
+    public private(set) var hasLiveVideoFrame = false
+    /// Native Picture-in-Picture for the live video layer.
+    @ObservationIgnored private var pictureInPicture: CameraPictureInPicture?
+    public private(set) var isPictureInPicturePossible = false
+    public private(set) var isPictureInPictureActive = false
     public var isPinnedOnTop = true {
         didSet { syncWindowLevel() }
     }
@@ -44,6 +51,9 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     private(set) var panelWindow: CameraFloatingPanel?
     private var resolveTask: Task<Void, Never>?
     private var snapshotLoopTask: Task<Void, Never>?
+    private var mjpegSession: URLSession?
+    private var closeReleaseTask: Task<Void, Never>?
+    private static let hotKeepAliveDuration: Duration = .seconds(120)
     private let snapshotSession: URLSession = {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.connectionProxyDictionary = [:]
@@ -74,6 +84,24 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
 
     public func present(device: SmartDevice) {
         guard let store else { return }
+        closeReleaseTask?.cancel()
+        closeReleaseTask = nil
+        if isPictureInPictureActive {
+            pictureInPicture?.stop()
+        }
+
+        let previousDeviceId = activeDeviceId
+        let canReuseHotStream = (
+            previousDeviceId == device.id
+            && errorMessage == nil
+            && (streamSource != nil || isLoadingStream)
+        )
+        if let previousDeviceId, previousDeviceId != device.id {
+            let oldId = previousDeviceId
+            stopStreamTasks()
+            Task { await store.stopCameraStream(for: oldId) }
+        }
+
         activeDeviceId = device.id
         customURLInput = store.cameraCustomStreamURL(for: device.id) ?? ""
         isShowingURLConfig = false
@@ -81,7 +109,7 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         let panel = panelWindow ?? makePanel()
         panelWindow = panel
         panel.appearance = MenuBarPanelController.preferredAppearance()
-        if panel.contentView == nil {
+        if !(panel.contentView is NSHostingView<CameraLivePanelView>) {
             let hosting = NSHostingView(rootView: CameraLivePanelView(controller: self, store: store))
             hosting.frame = NSRect(origin: .zero, size: panel.frame.size)
             hosting.autoresizingMask = [.width, .height]
@@ -96,20 +124,89 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             panel.setFrame(initialFrame(for: initialSize), display: true)
         }
         panel.orderFrontRegardless()
-        reloadStream()
+        if !canReuseHotStream {
+            reloadStream()
+        }
     }
 
     public func closePanel() {
-        resolveTask?.cancel()
-        resolveTask = nil
-        snapshotLoopTask?.cancel()
-        snapshotLoopTask = nil
-        snapshotImage = nil
-        streamSource = nil
+        setURLFieldActive(false)
         if let frame = panelWindow?.frame {
             UserDefaults.standard.set(NSStringFromRect(frame), forKey: Self.frameStorageKey)
         }
         panelWindow?.orderOut(nil)
+
+        closeReleaseTask?.cancel()
+        let keepAlive = Self.hotKeepAliveDuration
+        closeReleaseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: keepAlive)
+            guard !Task.isCancelled, let self, !self.isVisible, !self.isPictureInPictureActive else { return }
+            let oldId = self.activeDeviceId
+            self.stopStreamTasks()
+            if let oldId, let store = self.store {
+                await store.stopCameraStream(for: oldId)
+            }
+        }
+    }
+
+    private func stopStreamTasks() {
+        resolveTask?.cancel()
+        resolveTask = nil
+        snapshotLoopTask?.cancel()
+        snapshotLoopTask = nil
+        mjpegSession?.invalidateAndCancel()
+        mjpegSession = nil
+        videoPlayer?.stop()
+        videoPlayer = nil
+        tearDownPictureInPicture()
+        hasLiveVideoFrame = false
+        snapshotImage = nil
+        streamSource = nil
+        isLoadingStream = false
+    }
+
+    // MARK: - Picture in Picture
+
+    public func togglePictureInPicture() {
+        guard let pictureInPicture else { return }
+        if isPictureInPictureActive {
+            pictureInPicture.stop()
+        } else {
+            pictureInPicture.start()
+        }
+    }
+
+    private func setUpPictureInPicture(for player: CameraLiveVideoPlayer) {
+        tearDownPictureInPicture()
+        let pip = CameraPictureInPicture(displayLayer: player.displayLayer)
+        pip.onStateChange = { [weak self, weak pip] in
+            guard let self, let pip, self.pictureInPicture === pip else { return }
+            let wasActive = self.isPictureInPictureActive
+            self.isPictureInPicturePossible = pip.isPossible
+            self.isPictureInPictureActive = pip.isActive
+            if pip.isActive, !wasActive {
+                // The system PiP window replaces the floating panel; the stream stays live.
+                self.setURLFieldActive(false)
+                if let frame = self.panelWindow?.frame {
+                    UserDefaults.standard.set(NSStringFromRect(frame), forKey: Self.frameStorageKey)
+                }
+                self.panelWindow?.orderOut(nil)
+            }
+        }
+        pip.onRestore = { [weak self] in
+            self?.panelWindow?.orderFrontRegardless()
+        }
+        pip.onClosed = { [weak self] in
+            self?.closePanel()
+        }
+        pictureInPicture = pip
+    }
+
+    private func tearDownPictureInPicture() {
+        pictureInPicture?.invalidate()
+        pictureInPicture = nil
+        isPictureInPicturePossible = false
+        isPictureInPictureActive = false
     }
 
     public func toggleExpandedSize() {
@@ -155,18 +252,15 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
     }
 
     public func reloadStream() {
-        resolveTask?.cancel()
-        snapshotLoopTask?.cancel()
-        snapshotLoopTask = nil
-        snapshotImage = nil
+        stopStreamTasks()
         errorMessage = nil
-        streamSource = nil
 
         guard let store, let device = currentDevice, case .camera(let spec) = device.kind else {
             return
         }
         guard spec.isOn else {
-            isLoadingStream = false
+            let deviceId = device.id
+            Task { await store.stopCameraStream(for: deviceId) }
             return
         }
 
@@ -179,8 +273,15 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 guard !Task.isCancelled else { return }
                 self.streamSource = resolved
                 self.isLoadingStream = false
-                if case .snapshot(let url) = resolved {
+                switch resolved {
+                case .snapshot(let url):
                     self.startSnapshotLoop(url: url)
+                case .liveMP4(let url, let fallback):
+                    self.startLiveVideo(url: url, mjpegFallback: fallback)
+                case .mjpeg(let url):
+                    self.startMJPEGStream(url: url)
+                case .hls, .demo:
+                    break
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -200,6 +301,121 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
                 }
                 try? await Task.sleep(for: .milliseconds(900))
             }
+        }
+    }
+
+    /// Plays the camera's own bitstream through VideoToolbox, reconnecting when go2rtc drops the
+    /// connection. If no frame ever decodes (unsupported codec, broken parameter sets, no data
+    /// for 15 s) it switches to the transcoded MJPEG fallback so the window still shows video.
+    private func startLiveVideo(url: URL, mjpegFallback: URL?) {
+        snapshotLoopTask?.cancel()
+        videoPlayer?.stop()
+        let player = CameraLiveVideoPlayer()
+        player.onFirstFrame = { [weak self, weak player] in
+            guard let self, let player, self.videoPlayer === player else { return }
+            self.hasLiveVideoFrame = true
+        }
+        videoPlayer = player
+        hasLiveVideoFrame = false
+        setUpPictureInPicture(for: player)
+
+        snapshotLoopTask = Task { @MainActor [weak self] in
+            var failedAttempts = 0
+            while !Task.isCancelled {
+                let watchdog = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(15))
+                    guard !Task.isCancelled, self?.hasLiveVideoFrame == false else { return }
+                    player.stop()
+                }
+                let outcome = await player.play(url: url)
+                watchdog.cancel()
+                guard !Task.isCancelled, let self, self.videoPlayer === player else { return }
+
+                if outcome.framesDecoded > 0 {
+                    failedAttempts = 0
+                    try? await Task.sleep(for: .milliseconds(400))
+                    continue
+                }
+                failedAttempts += 1
+                if failedAttempts >= 2, !self.hasLiveVideoFrame, let mjpegFallback {
+                    self.videoPlayer = nil
+                    self.tearDownPictureInPicture()
+                    self.streamSource = .mjpeg(mjpegFallback)
+                    self.startMJPEGStream(url: mjpegFallback)
+                    return
+                }
+                if failedAttempts >= 4 {
+                    self.errorMessage = L10n.tr(
+                        "实时画面中断：\(outcome.failure ?? "无数据")",
+                        "Live video stopped: \(outcome.failure ?? "no data")"
+                    )
+                    self.streamSource = nil
+                    self.videoPlayer = nil
+                    self.tearDownPictureInPicture()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(900))
+            }
+        }
+    }
+
+    private func startMJPEGStream(url: URL) {
+        snapshotLoopTask?.cancel()
+        snapshotLoopTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var attempts = 0
+            while !Task.isCancelled, attempts < 4 {
+                attempts += 1
+                var receivedFrame = false
+                await self.consumeMJPEGConnection(url: url) { [weak self] image in
+                    receivedFrame = true
+                    self?.snapshotImage = image
+                }
+                if Task.isCancelled { break }
+                if receivedFrame {
+                    attempts = 0
+                }
+                try? await Task.sleep(for: .milliseconds(900))
+            }
+        }
+    }
+
+    private func consumeMJPEGConnection(
+        url: URL,
+        onFrame: @escaping @MainActor (NSImage) -> Void
+    ) async {
+        mjpegSession?.invalidateAndCancel()
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = [:]
+        cfg.timeoutIntervalForRequest = 25
+        cfg.timeoutIntervalForResource = 0
+        cfg.waitsForConnectivity = false
+
+        let resumeGuard = MJPEGContinuationGuard()
+        let delegate = MJPEGStreamDelegate(
+            onFrame: { image in
+                Task { @MainActor in
+                    onFrame(image)
+                }
+            },
+            onComplete: { _ in
+                resumeGuard.resumeOnce()
+            }
+        )
+        let session = URLSession(configuration: cfg, delegate: delegate, delegateQueue: nil)
+        self.mjpegSession = session
+        var req = URLRequest(url: url)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        let task = session.dataTask(with: req)
+
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                resumeGuard.install(continuation)
+                task.resume()
+            }
+        } onCancel: {
+            session.invalidateAndCancel()
+            resumeGuard.resumeOnce()
         }
     }
 
@@ -247,11 +463,13 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
         panel.minSize = NSSize(width: 300, height: 204)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.delegate = self
+        panel.contentView = nil
         return panel
     }
 
     private func syncWindowLevel() {
-        panelWindow?.level = isPinnedOnTop ? .floating : .normal
+        let pinnedLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        panelWindow?.level = isPinnedOnTop ? pinnedLevel : .floating
     }
 
     private func initialFrame(for size: NSSize) -> NSRect {
@@ -261,12 +479,105 @@ public final class CameraLivePanelController: NSObject, NSWindowDelegate {
             if rect.width >= 300, rect.height >= 200 {
                 let x = min(max(rect.minX, visible.minX + 12), visible.maxX - size.width - 12)
                 let y = min(max(rect.minY, visible.minY + 12), visible.maxY - size.height - 12)
-                return NSRect(origin: NSPoint(x: x, y: y), size: size)
+                let candidate = NSRect(origin: NSPoint(x: x, y: y), size: size)
+                if let menuPanel = MenuBarPanelController.shared.panelWindow,
+                   menuPanel.isVisible,
+                   candidate.intersects(menuPanel.frame) {
+                    let leftX = max(visible.minX + 12, menuPanel.frame.minX - size.width - 12)
+                    return NSRect(origin: NSPoint(x: leftX, y: y), size: size)
+                }
+                return candidate
             }
+        }
+        if let menuPanel = MenuBarPanelController.shared.panelWindow, menuPanel.isVisible {
+            let x = max(visible.minX + 12, menuPanel.frame.minX - size.width - 12)
+            let y = min(max(menuPanel.frame.maxY - size.height, visible.minY + 12), visible.maxY - size.height - 12)
+            return NSRect(origin: NSPoint(x: x, y: y), size: size)
         }
         let x = visible.maxX - size.width - 24
         let y = visible.maxY - size.height - 48
         return NSRect(origin: NSPoint(x: x, y: y), size: size)
+    }
+}
+
+private final class MJPEGContinuationGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var didResume = false
+
+    func install(_ continuation: CheckedContinuation<Void, Never>) {
+        lock.lock()
+        if didResume {
+            lock.unlock()
+            continuation.resume()
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func resumeOnce() {
+        lock.lock()
+        didResume = true
+        let cont = continuation
+        continuation = nil
+        lock.unlock()
+        cont?.resume()
+    }
+}
+
+private final class MJPEGStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private let onFrame: @Sendable (NSImage) -> Void
+    private let onComplete: @Sendable (Error?) -> Void
+
+    init(
+        onFrame: @escaping @Sendable (NSImage) -> Void,
+        onComplete: @escaping @Sendable (Error?) -> Void
+    ) {
+        self.onFrame = onFrame
+        self.onComplete = onComplete
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            completionHandler(.cancel)
+        } else {
+            completionHandler(.allow)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        var latestImage: NSImage?
+        lock.lock()
+        buffer.append(data)
+        let soi = Data([0xFF, 0xD8, 0xFF])
+        let eoi = Data([0xFF, 0xD9])
+        while let startRange = buffer.range(of: soi),
+              let endRange = buffer.range(of: eoi, in: startRange.upperBound..<buffer.endIndex) {
+            let frameData = buffer.subdata(in: startRange.lowerBound..<endRange.upperBound)
+            buffer.removeSubrange(buffer.startIndex..<endRange.upperBound)
+            if let image = NSImage(data: frameData) {
+                latestImage = image
+            }
+        }
+        if buffer.count > 4_000_000 {
+            buffer.removeAll(keepingCapacity: true)
+        }
+        lock.unlock()
+        if let latestImage {
+            onFrame(latestImage)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        onComplete(error)
     }
 }
 
@@ -339,6 +650,9 @@ struct CameraLivePanelView: View {
 
             ZStack {
                 Color(red: 0.05, green: 0.07, blue: 0.11)
+                // Below the content so buttons in empty/error states stay clickable; video and
+                // still frames ignore hits and let drags fall through to it.
+                WindowDragArea(onDoubleClick: { controller.toggleExpandedSize() })
                 viewportContent
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -392,6 +706,18 @@ struct CameraLivePanelView: View {
                 controller.isPinnedOnTop.toggle()
             }
 
+            if case .liveMP4 = controller.streamSource {
+                hudIconButton(
+                    symbol: controller.isPictureInPictureActive ? "pip.exit" : "pip.enter",
+                    isActive: controller.isPictureInPictureActive,
+                    help: L10n.tr("系统画中画（可放在任意位置、跨全屏应用）", "Picture in Picture (system floating window)")
+                ) {
+                    controller.togglePictureInPicture()
+                }
+                .disabled(!controller.isPictureInPicturePossible && !controller.isPictureInPictureActive)
+                .opacity(controller.isPictureInPicturePossible || controller.isPictureInPictureActive ? 1 : 0.4)
+            }
+
             hudIconButton(
                 symbol: controller.isExpandedSize
                     ? "arrow.down.right.and.arrow.up.left"
@@ -431,7 +757,12 @@ struct CameraLivePanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.42))
+        .background {
+            ZStack {
+                Color.black.opacity(0.42)
+                WindowDragArea()
+            }
+        }
     }
 
     private var customURLBar: some View {
@@ -500,12 +831,44 @@ struct CameraLivePanelView: View {
             switch source {
             case .hls(let url):
                 CameraHLSPlayerView(url: url)
+            case .liveMP4:
+                ZStack {
+                    if let player = controller.videoPlayer {
+                        CameraLiveVideoSurface(player: player)
+                            .allowsHitTesting(false)
+                    }
+                    if !controller.hasLiveVideoFrame {
+                        VStack(spacing: 8) {
+                            ProgressView()
+                            Text(L10n.tr("正在建立 P2P 加密通道并解码实时画面…", "Establishing P2P encrypted channel & decoding live video…"))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .mjpeg:
+                if let img = controller.snapshotImage {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                } else {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text(L10n.tr("正在建立 P2P 加密通道并解码实时画面…", "Establishing P2P encrypted channel & decoding live video…"))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                }
             case .snapshot:
                 if let img = controller.snapshotImage {
                     Image(nsImage: img)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
                 } else {
                     VStack(spacing: 8) {
                         ProgressView()

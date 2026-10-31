@@ -560,12 +560,23 @@ extension HomeStore {
            let scheme = url.scheme?.lowercased(),
            (scheme == "http" || scheme == "https") {
             let lower = custom.lowercased()
+            if lower.contains("stream.mp4") {
+                return .liveMP4(url, mjpegFallback: nil)
+            }
+            if lower.contains("mjpeg") || lower.contains("mpjpeg") {
+                return .mjpeg(url)
+            }
             if lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains("snapshot") || lower.contains("camera_proxy") || lower.contains("frame.jpeg") {
                 return .snapshot(url)
             }
             return .hls(url)
         }
         return try await provider.resolveCameraStream(for: device)
+    }
+
+    public func stopCameraStream(for deviceId: String) async {
+        guard let device = devices.first(where: { $0.id == deviceId }) else { return }
+        await provider.stopCameraStream(for: device)
     }
 
     // MARK: - Internal Dispatch Helpers

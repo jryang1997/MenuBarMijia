@@ -10,16 +10,19 @@ public actor MiCloudProvider: HomeProvider {
     private let sessionLoader: @Sendable () -> MiSession?
     private let apiFactory: APIFactory
     private let specSource: any MiotSpecSource
+    private let cameraBridge: any XiaomiCameraBridging
     /// Poll interval while the panel is open; see `PollingPolicy` for the rest (#26).
     private let pollInterval: Duration
     private let closedPollInterval: Duration
     private let deviceRefreshEveryPolls: Int
     private let followUpDelay: Duration
+    private let cameraSessionReleaseDelay: Duration
     private let selectedHomeLoader: @Sendable () -> String?
 
     private var continuation: AsyncStream<HomeProviderEvent>.Continuation?
     private var loopTask: Task<Void, Never>?
     private var api: (any MiCloudAPI)?
+    private var pendingCameraReleases: [String: Task<Void, Never>] = [:]
 
     private var devices: [MiDeviceRecord] = []
     private var rooms: [MiRoom] = []
@@ -40,19 +43,23 @@ public actor MiCloudProvider: HomeProvider {
         sessionLoader: @escaping @Sendable () -> MiSession? = { MiSessionStore.load() },
         apiFactory: @escaping APIFactory = { MiCloudClient(session: $0) },
         specSource: any MiotSpecSource = MiotSpecStore(),
+        cameraBridge: any XiaomiCameraBridging = XiaomiCameraBridge.shared,
         pollInterval: Duration = PollingPolicy.panelOpenInterval,
         closedPollInterval: Duration = PollingPolicy.panelClosedInterval,
         deviceRefreshEveryPolls: Int = 20,
         followUpDelay: Duration = .milliseconds(800),
+        cameraSessionReleaseDelay: Duration = .milliseconds(2500),
         selectedHomeLoader: @escaping @Sendable () -> String? = { UserDefaults.standard.string(forKey: MiCloudProvider.selectedHomeKey) }
     ) {
         self.sessionLoader = sessionLoader
         self.apiFactory = apiFactory
         self.specSource = specSource
+        self.cameraBridge = cameraBridge
         self.pollInterval = pollInterval
         self.closedPollInterval = closedPollInterval
         self.deviceRefreshEveryPolls = max(1, deviceRefreshEveryPolls)
         self.followUpDelay = followUpDelay
+        self.cameraSessionReleaseDelay = cameraSessionReleaseDelay
         self.selectedHomeLoader = selectedHomeLoader
     }
 
@@ -426,6 +433,10 @@ public actor MiCloudProvider: HomeProvider {
            let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id }),
            let spec = specsByModel[record.model] {
             let did = record.miotDid
+            if let pending = pendingCameraReleases[did] {
+                await pending.value
+                pendingCameraReleases.removeValue(forKey: did)
+            }
             let streamService: MiotService? = {
                 if let streamId = cameraSpec.streamEntityId,
                    let (_, siid) = MiotAddress.parse(streamId),
@@ -446,6 +457,49 @@ public actor MiCloudProvider: HomeProvider {
                     return .hls(url)
                 }
             }
+
+            // Private CS2/TUTK P2P camera stream (e.g. chuangmi.camera.061a01, isa.camera.*)
+            if let p2pService = spec.services.first(where: { $0.action(named: "start-p2p-stream") != nil }) {
+                if let stopAct = p2pService.action(named: "stop-stream") {
+                    if (try? await api.callAction(MiotActionCall(did: did, siid: p2pService.iid, aiid: stopAct.iid, inputs: []))) != nil {
+                        try? await Task.sleep(for: cameraSessionReleaseDelay)
+                    }
+                }
+                if let startAct = p2pService.action(named: "start-p2p-stream") {
+                    _ = try? await api.callAction(MiotActionCall(did: did, siid: p2pService.iid, aiid: startAct.iid, inputs: []))
+                }
+            }
+
+            let resolvedIP: String = await {
+                let cached = record.localIp?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !cached.isEmpty { return cached }
+                let fetched = try? await api.cameraLocalIP(did: did)
+                return fetched?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            }()
+
+            if !resolvedIP.isEmpty {
+                let kp = XiaomiCameraBridge.makeX25519KeyPair()
+                if let vendor = try? await api.cameraP2PVendor(did: did, appPublicKey: kp.publicKeyHex),
+                   !vendor.devicePublicKey.isEmpty,
+                   !vendor.sign.isEmpty {
+                    do {
+                        let endpoints = try await cameraBridge.startBridge(
+                            did: did,
+                            model: record.model,
+                            localIP: resolvedIP,
+                            clientPublic: kp.publicKeyHex,
+                            clientPrivate: kp.privateKeyHex,
+                            devicePublic: vendor.devicePublicKey,
+                            sign: vendor.sign,
+                            vendor: vendor.vendorName,
+                            uid: vendor.p2pId
+                        )
+                        return .liveMP4(endpoints.mp4, mjpegFallback: endpoints.mjpeg)
+                    } catch {
+                        logger.error("Xiaomi camera P2P bridge failed for \(did, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
         }
 
         if let localURL = await Self.probeLocalGo2RTC(for: device) {
@@ -459,6 +513,32 @@ public actor MiCloudProvider: HomeProvider {
                 "Xiaomi Cloud cameras use private P2P streaming; enter a local go2rtc / HLS URL below or connect via Home Assistant"
             )
         )
+    }
+
+    public func stopCameraStream(for device: SmartDevice) async {
+        let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id })
+        let did = record?.miotDid ?? device.id
+        if let api,
+           let record,
+           let spec = specsByModel[record.model],
+           let p2pService = spec.services.first(where: { $0.action(named: "stop-stream") != nil }),
+           let stopAct = p2pService.action(named: "stop-stream") {
+            let siid = p2pService.iid
+            let aiid = stopAct.iid
+            let releaseDelay = cameraSessionReleaseDelay
+            let releaseTask = Task<Void, Never> {
+                _ = try? await api.callAction(MiotActionCall(did: did, siid: siid, aiid: aiid, inputs: []))
+                try? await Task.sleep(for: releaseDelay)
+            }
+            pendingCameraReleases[did] = releaseTask
+            await cameraBridge.stopBridge(did: did)
+            await releaseTask.value
+            if pendingCameraReleases[did] == releaseTask {
+                pendingCameraReleases.removeValue(forKey: did)
+            }
+        } else {
+            await cameraBridge.stopBridge(did: did)
+        }
     }
 
     public static func extractStreamURL(from value: JSONValue) -> URL? {

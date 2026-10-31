@@ -60,6 +60,8 @@ public protocol HomeProvider: Sendable {
     func fetchSensorHistory(deviceId: String, window: SensorHistoryWindow, now: Date) async -> [SensorHistorySample]
     /// Resolves a playable live video or snapshot stream for a camera device.
     func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource
+    /// Releases any active live stream session (such as a single-session P2P bridge) for a camera device.
+    func stopCameraStream(for device: SmartDevice) async
 }
 
 extension HomeProvider {
@@ -69,6 +71,7 @@ extension HomeProvider {
     public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
         throw HomeProviderError.serviceCallFailed(501, L10n.tr("当前数据源暂未返回该摄像头的实时画面流", "Current backend did not return a live stream for this camera"))
     }
+    public func stopCameraStream(for device: SmartDevice) async {}
 }
 
 // MARK: - Live Home Assistant WebSocket + REST Provider

@@ -75,6 +75,13 @@ if [ ! -d "$RESOURCE_BUNDLE" ]; then
 fi
 cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/MenuBarMijia_MijiaCore.bundle"
 
+GO2RTC_CACHED="$HOME/Library/Application Support/MenuBarMijia/bin/go2rtc"
+if [ -x "$GO2RTC_CACHED" ]; then
+    mkdir -p "$APP_DIR/Contents/Resources/bin"
+    cp "$GO2RTC_CACHED" "$APP_DIR/Contents/Resources/bin/go2rtc"
+    chmod +x "$APP_DIR/Contents/Resources/bin/go2rtc"
+fi
+
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
 chmod +x "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
 strip -S -x "$APP_DIR/Contents/MacOS/MenuBarMijiaApp"
@@ -308,6 +315,9 @@ fi
 
 if [ "$SIGN_IDENTITY" = "-" ]; then
     echo "⚠️ 未设置 MACOS_SIGNING_IDENTITY：使用 ad-hoc 签名，仅适合本机运行，应用内更新已禁用；发布包必须用固定证书签名。"
+    if [ -f "$APP_DIR/Contents/Resources/bin/go2rtc" ]; then
+        codesign --force --sign - "$APP_DIR/Contents/Resources/bin/go2rtc"
+    fi
     codesign --force --sign - "$APP_DIR"
 else
     # 正式签名：开启 Hardened Runtime（苹果公证的前提），并声明麦克风权限。
@@ -317,6 +327,9 @@ else
         | openssl x509 -noout -issuer 2>/dev/null \
         | grep -q "Apple"; then
         CODESIGN_ARGS+=(--timestamp)
+    fi
+    if [ -f "$APP_DIR/Contents/Resources/bin/go2rtc" ]; then
+        codesign "${CODESIGN_ARGS[@]}" --sign "$SIGN_IDENTITY" "$APP_DIR/Contents/Resources/bin/go2rtc"
     fi
     codesign "${CODESIGN_ARGS[@]}" \
         --entitlements "$ROOT/scripts/MenuBarMijia.entitlements" \
