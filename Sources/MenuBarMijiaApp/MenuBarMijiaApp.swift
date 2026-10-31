@@ -53,7 +53,7 @@ enum MenuBarStatusSummary {
         var parts: [String] = ["MenuBarMijia"]
         parts.append(L10n.tr("\(store.activeDeviceCount) 台开启", "\(store.activeDeviceCount) on"))
 
-        if let reading = store.environmentReadings.first(where: { $0.temperature != nil }),
+        if let reading = store.preferredEnvironmentReading,
            let temperature = reading.temperature {
             parts.append("\(L10n.displayRoomName(reading.label)) \(L10n.temperature(temperature, fractionDigits: 1))")
         }

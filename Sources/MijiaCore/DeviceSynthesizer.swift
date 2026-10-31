@@ -278,18 +278,8 @@ public enum DeviceSynthesizer {
         }
 
         for device in smartDevices {
-            if case .sensor(let sensor) = device.kind,
-               sensor.temperature != nil || sensor.humidity != nil {
-                let label = device.name.replacingOccurrences(of: "温湿度计", with: "")
-                    .trimmingCharacters(in: .whitespaces)
-                envReadings.append(EnvironmentReading(
-                    id: device.id,
-                    label: label.isEmpty ? device.roomName : label,
-                    roomName: device.roomName,
-                    temperature: sensor.temperature,
-                    humidity: sensor.humidity,
-                    battery: sensor.battery
-                ))
+            if let reading = device.environmentReading {
+                envReadings.append(reading)
             }
         }
 
@@ -392,7 +382,14 @@ public enum DeviceSynthesizer {
             return a.name < b.name
         }
 
+        var readingPriorityById: [String: Int] = [:]
+        for d in smartDevices {
+            readingPriorityById[d.id] = d.kind.environmentReadingPriority
+        }
         let sortedReadings = envReadings.sorted { a, b in
+            let pa = readingPriorityById[a.id] ?? 0
+            let pb = readingPriorityById[b.id] ?? 0
+            if pa != pb { return pa < pb }
             let ra = roomOrder(a.roomName)
             let rb = roomOrder(b.roomName)
             if ra != rb { return ra < rb }

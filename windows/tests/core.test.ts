@@ -703,6 +703,15 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
     }
     assert.deepEqual(home.environmentReadings, corpus.expectedEnvironmentReadings);
 
+    // Offline climate/fan/sensor devices must not enter environmentReadings (#103).
+    const offlineHome = MiotSynthesizer.synthesize(
+      records.map((r) => ({ ...r, isOnline: false })),
+      corpus.rooms,
+      parsedSpecs,
+      values,
+    );
+    assert.deepEqual(offlineHome.environmentReadings, []);
+
     for (const record of records) {
       const spec = parsedSpecs[record.model];
       assert.ok(spec, `Missing spec for ${record.model}`);

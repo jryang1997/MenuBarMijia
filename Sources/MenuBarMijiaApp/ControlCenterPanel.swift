@@ -1082,11 +1082,12 @@ public struct ControlCenterPanel: View {
     /// One quiet line instead of a row of capsules: 客厅 25.5°C · 52% ⚡ 18W.
     @ViewBuilder
     private var environmentStatusLine: some View {
-        // One representative reading keeps the line quiet: the selected room's sensor first.
+        // One representative reading keeps the line quiet: the selected room's reading first,
+        // then the user's preferred menu-bar temperature source (#103).
         let selectedRoomName = store.rooms.first { $0.id == store.selectedRoomId }?.name
         let reading = store.environmentReadings.first { env in
             selectedRoomName != nil && env.roomName == selectedRoomName
-        } ?? store.environmentReadings.first
+        } ?? store.preferredEnvironmentReading
         let watts = store.totalPowerWatts
 
         if let reading, reading.temperature != nil || reading.humidity != nil || watts >= 1 {

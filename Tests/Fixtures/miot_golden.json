@@ -924,6 +924,22 @@
       "temperature": 23.8,
       "humidity": 54,
       "battery": 91
+    },
+    {
+      "id": "did_purifier",
+      "label": "米家空气净化器 4 Lite",
+      "roomName": "书房",
+      "temperature": 24.5,
+      "humidity": 52,
+      "battery": null
+    },
+    {
+      "id": "did_ac",
+      "label": "客厅空调",
+      "roomName": "客厅",
+      "temperature": 27.2,
+      "humidity": null,
+      "battery": null
     }
   ],
   "expectedRequiredProps": {

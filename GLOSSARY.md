@@ -43,7 +43,7 @@ _Avoid_: Workspace（工作区）、Account（账号）
 _Avoid_: Sub-entity（子实体）、Virtual plug（虚拟插座）
 
 **EnvironmentReading（环境读数）**：
-从各房间温湿度计提取并置顶展示在面板顶部与 macOS 菜单栏的实时温湿度指标。
+从在线温湿度计、带内置温湿度的空气净化器/风扇以及带当前室温读数的空调/电暖器提取，按「独立传感器 → 空气净化器 → 空调室温」优先级排序并展示在面板顶部与菜单栏的实时温湿度指标。
 _Avoid_: Weather（天气）、Telemetry（遥测）
 
 ### 控制与偏好
