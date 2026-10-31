@@ -78,12 +78,18 @@ public struct DeviceCardView: View {
 
     private var accent: Color { DevicePalette.accentColor(for: device) }
 
+    /// Climate tiles wear their family colour when on; every other kind keeps the white platter.
+    private var tileTint: Color? {
+        if case .climate = device.kind { return DesignTokens.Orb.climate }
+        return nil
+    }
+
     /// On the bright platter, system `primary` would turn white and disappear; text flips to ink.
     private var onPlatter: Bool { device.isActiveOn && device.isOnline }
 
-    private var statusColor: Color { PanelLook.secondaryInk(isActive: onPlatter) }
+    private var statusColor: Color { PanelLook.secondaryInk(isActive: onPlatter, tinted: tileTint != nil, scheme: colorScheme) }
 
-    private var nameColor: Color { PanelLook.ink(isActive: onPlatter) }
+    private var nameColor: Color { PanelLook.ink(isActive: onPlatter, tinted: tileTint != nil, scheme: colorScheme) }
 
     /// One spoken sentence for the whole card: name, power state and the detail subtitle (#41).
     private var accessibilitySummary: String {
@@ -155,7 +161,7 @@ public struct DeviceCardView: View {
                     .transition(AppleMotion.drawerTransition)
             }
         }
-        .glassTile(isActive: onPlatter, cornerRadius: PanelLook.tileRadius)
+        .glassTile(isActive: onPlatter, cornerRadius: PanelLook.tileRadius, tint: tileTint)
         .background {
             GeometryReader { geo in
                 Color.clear
@@ -531,7 +537,7 @@ public struct DeviceCardView: View {
             Circle()
                 .fill(on ? AnyShapeStyle(accent) : AnyShapeStyle(accent.opacity(0.16)))
                 .frame(width: 34, height: 34)
-                .shadowIf(on, color: accent.opacity(0.32), radius: 4, y: 1)
+                .shadowIf(on, color: accent.opacity(0.4), radius: 8, y: 2)
             Image(systemName: resolvedSymbolName)
                 .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                 .foregroundStyle(on ? Color.white : accent)

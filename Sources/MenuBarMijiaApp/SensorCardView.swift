@@ -712,13 +712,13 @@ struct SensorCardView: View {
     }
 
     private var comfortChip: some View {
-        let label = comfortLabel
-        return Text(label)
+        let state = comfort
+        return Text(state.label)
             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-            .foregroundStyle(muted)
+            .foregroundStyle(state.color)
             .padding(.horizontal, isCompact ? 5.5 : 6)
             .padding(.vertical, isCompact ? 1.5 : 2)
-            .background(Capsule(style: .continuous).fill(track))
+            .background(Capsule(style: .continuous).fill(state.color.opacity(0.16)))
     }
 
     // MARK: Semantics
@@ -728,18 +728,42 @@ struct SensorCardView: View {
         return n.isEmpty ? device.name : n
     }
 
-    private var comfortLabel: String {
-        let t = spec.temperature ?? 24, h = spec.humidity ?? 50
-        if t >= 28 { return L10n.tr("偏热", "Warm") }
-        if t <= 16 { return L10n.tr("偏冷", "Cool") }
-        if h < 35 { return L10n.tr("偏干", "Dry") }
-        if h > 70 { return L10n.tr("偏湿", "Humid") }
-        return L10n.tr("舒适", "Comfy")
+    /// The comfort badge speaks through colour too: green when fine, amber hot, blue cold, teal dry/humid.
+    private enum ComfortState {
+        case comfy, warm, cool, dry, humid
+
+        var label: String {
+            switch self {
+            case .comfy: return L10n.tr("舒适", "Comfy")
+            case .warm: return L10n.tr("偏热", "Warm")
+            case .cool: return L10n.tr("偏冷", "Cool")
+            case .dry: return L10n.tr("偏干", "Dry")
+            case .humid: return L10n.tr("偏湿", "Humid")
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .comfy: return DesignTokens.Orb.plug
+            case .warm: return DesignTokens.Orb.light
+            case .cool: return DesignTokens.Orb.climate
+            case .dry, .humid: return DesignTokens.Orb.fan
+            }
+        }
     }
 
-    private var tempColor: Color { muted }
+    private var comfort: ComfortState {
+        let t = spec.temperature ?? 24, h = spec.humidity ?? 50
+        if t >= 28 { return .warm }
+        if t <= 16 { return .cool }
+        if h < 35 { return .dry }
+        if h > 70 { return .humid }
+        return .comfy
+    }
 
-    private var humidityColor: Color { .secondary }
+    private var tempColor: Color { DesignTokens.Orb.climate }
+
+    private var humidityColor: Color { DesignTokens.Orb.fan }
 
     private func batterySymbol(_ b: Int) -> String {
         switch b {

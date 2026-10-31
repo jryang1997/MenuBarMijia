@@ -86,6 +86,39 @@ struct SnapshotTests {
         }
     }
 
+    @Test("Climate card wears its tinted platter when on")
+    func climateOnCardSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        var climate = try #require(fixture.store.devices.first { device in
+            if case .climate = device.kind { return true } else { return false }
+        })
+        await fixture.store.togglePrimary(climate)?.value
+        climate = try #require(fixture.store.devices.first { $0.id == climate.id })
+        #expect(climate.isActiveOn, "MockHomeProvider should apply the power toggle")
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: climate, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-climate-on-zh-light"
+        )
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: climate, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360),
+                scheme: .dark
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-climate-on-zh-dark",
+            scheme: .dark
+        )
+    }
+
     @Test("Settings remain readable in light and dark appearances")
     func settingsSnapshots() async throws {
         let fixture = try await SnapshotFixture()

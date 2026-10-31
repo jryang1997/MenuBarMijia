@@ -93,8 +93,20 @@ public enum PanelLook {
         isActive ? platterInk : .primary
     }
 
+    /// Ink on the tinted platter: it is dark blue glass in dark mode, so white ink reads there;
+    /// every other surface keeps the platter rules above.
+    public static func ink(isActive: Bool, tinted: Bool, scheme: ColorScheme) -> Color {
+        if isActive, tinted, scheme == .dark { return Color.white }
+        return ink(isActive: isActive)
+    }
+
     public static func secondaryInk(isActive: Bool) -> Color {
         isActive ? platterInk.opacity(0.55) : Color.secondary
+    }
+
+    public static func secondaryInk(isActive: Bool, tinted: Bool, scheme: ColorScheme) -> Color {
+        if isActive, tinted, scheme == .dark { return Color.white.opacity(0.62) }
+        return secondaryInk(isActive: isActive)
     }
 
     public static func hairline(scheme: ColorScheme, isActive: Bool) -> Color {
@@ -105,6 +117,19 @@ public enum PanelLook {
     /// Soft drop shadow that keeps the platter above the glass; wells stay flat.
     public static func platterShadow(isActive: Bool) -> Color {
         isActive ? Color.black.opacity(0.18) : .clear
+    }
+
+    /// Tinted active platter for a semantically coloured family (climate): a wash of the family
+    /// colour over glass instead of the white platter, so the tile's hue itself carries the state.
+    public static func tintedPlatterFill(scheme: ColorScheme, tint: Color) -> AnyShapeStyle {
+        scheme == .dark
+            ? AnyShapeStyle(LinearGradient(colors: [tint.opacity(0.24), Color.white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            : AnyShapeStyle(LinearGradient(colors: [tint.opacity(0.14), Color.white.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing))
+    }
+
+    /// Hairline for the tinted platter: the family colour instead of the neutral hairline.
+    public static func tintedHairline(tint: Color, scheme: ColorScheme) -> Color {
+        tint.opacity(scheme == .dark ? 0.38 : 0.30)
     }
 }
 
@@ -239,6 +264,14 @@ public struct PanelRoot: ViewModifier {
             .background {
                 if reduceTransparency {
                     Rectangle().fill(Color(nsColor: .windowBackgroundColor))
+                } else if #available(macOS 26.0, *) {
+                    // Native Liquid Glass replaces the hand-stacked material+scrim; the wrapper
+                    // keeps the macOS 26 API inside ThemeAndMotion. A lighter scrim still pins the
+                    // chosen appearance: over a bright wallpaper the dark scheme must stay dark or
+                    // white text loses contrast.
+                    Color.clear
+                        .panelRootGlass()
+                    Rectangle().fill(scheme == .dark ? Color.black.opacity(0.30) : Color.white.opacity(0.18))
                 } else {
                     // A thin material alone picks up whatever is behind the window: over a bright
                     // wallpaper the dark scheme stays light and white text loses contrast. The scrim

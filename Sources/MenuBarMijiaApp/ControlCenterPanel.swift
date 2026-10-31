@@ -1104,7 +1104,7 @@ public struct ControlCenterPanel: View {
                         }
                         if let h = reading.humidity {
                             Text(String(format: "%.0f%%", h))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DesignTokens.Orb.climate)
                         }
                     }
                     .font(.system(size: DesignTokens.TypeSize.caption))
@@ -1119,7 +1119,7 @@ public struct ControlCenterPanel: View {
                     HStack(spacing: 3) {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: DesignTokens.TypeSize.micro, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(DesignTokens.Orb.plug)
                         Text(String(format: "%.0fW", watts))
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                             .monospacedDigit()
@@ -1203,7 +1203,7 @@ public struct ControlCenterPanel: View {
                     HStack(spacing: 4) {
                         Image(systemName: action.sfSymbolName)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                            .foregroundStyle(DesignTokens.active)
+                            .foregroundStyle(ScenePalette.iconTint(forSymbol: action.sfSymbolName))
                         Text(action.title)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                             .lineLimit(1)
@@ -1223,7 +1223,7 @@ public struct ControlCenterPanel: View {
                     HStack(spacing: 4) {
                         Image(systemName: scene.iconName)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(ScenePalette.iconTint(forSymbol: scene.iconName))
                         Text(scene.name)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                             .lineLimit(1)

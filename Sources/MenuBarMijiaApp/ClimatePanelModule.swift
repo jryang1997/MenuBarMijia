@@ -20,9 +20,9 @@ struct ClimatePanelModule: View {
 
     private var accent: Color { DevicePalette.accentColor(for: device) }
 
-    /// A running unit sits on the bright platter, so its text flips to platter ink.
-    private var fg: Color { PanelLook.ink(isActive: isRunning) }
-    private var muted: Color { PanelLook.secondaryInk(isActive: isRunning) }
+    /// A running unit sits on the tinted platter: platter ink in light, white ink on the dark blue glass.
+    private var fg: Color { PanelLook.ink(isActive: isRunning, tinted: isRunning, scheme: colorScheme) }
+    private var muted: Color { PanelLook.secondaryInk(isActive: isRunning, tinted: isRunning, scheme: colorScheme) }
 
     private var isExpanded: Bool { forceExpanded || store.expandedDeviceId == device.id }
 
@@ -49,7 +49,7 @@ struct ClimatePanelModule: View {
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 10)
-        .glassTile(isActive: isRunning, cornerRadius: DesignTokens.Radius.card)
+        .glassTile(isActive: isRunning, cornerRadius: DesignTokens.Radius.card, tint: DesignTokens.Orb.climate)
         .opacity(device.isOnline ? 1 : 0.58)
         .disabled(!device.isOnline)
         .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: isRunning)
