@@ -103,9 +103,14 @@ final class URLCommandHandler {
     private func description(for resolved: Resolved) -> String {
         switch resolved {
         case .toggle(let device):
-            let verb = device.isActiveOn
-                ? L10n.tr("关闭", "Turn off")
-                : L10n.tr("打开", "Turn on")
+            let verb: String
+            if device.isMomentaryButton {
+                verb = L10n.tr("触发", "Trigger")
+            } else {
+                verb = device.isActiveOn
+                    ? L10n.tr("关闭", "Turn off")
+                    : L10n.tr("打开", "Turn on")
+            }
             let room = L10n.displayRoomName(device.roomName)
             return L10n.format(
                 "%@「%@」（%@）",
@@ -161,12 +166,22 @@ final class URLCommandHandler {
             }
             // `togglePrimary` flips whatever the device is doing now, so report the result rather
             // than a prediction made before the confirmation sheet appeared.
+            let isMomentary = device.isMomentaryButton
             let task = store.togglePrimary(device)
             let isOnNow = store.devices.first(where: { $0.id == device.id })?.isActiveOn ?? false
             guard await task?.value == true else {
                 finish(
-                    L10n.format("%@ 响应失败，已回滚", "%@ failed to respond; rolled back", device.name),
+                    isMomentary
+                        ? L10n.format("%@ 触发失败", "Failed to trigger %@", device.name)
+                        : L10n.format("%@ 响应失败，已回滚", "%@ failed to respond; rolled back", device.name),
                     isError: true,
+                    store: store
+                )
+                return
+            }
+            if isMomentary {
+                finish(
+                    L10n.format("已触发 %@", "Triggered %@", device.name),
                     store: store
                 )
                 return

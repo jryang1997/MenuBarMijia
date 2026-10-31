@@ -294,6 +294,7 @@ generate_app_intents_metadata() {
             echo "❌ 无法生成 App Intents 元数据（Metadata.appintents）。" >&2
             echo "   缺了它，快捷指令 / Siri / Spotlight 看不到任何动作，属于 #57 的交付缺失，已中止打包。" >&2
             echo "   排查：xcode-select -p 必须指向完整 Xcode；xcodebuild -list 应列出 ${APP_INTENTS_MODULE}。" >&2
+            echo "   （若仅本机自用且只安装了 Command Line Tools，可运行 SKIP_APP_INTENTS=1 bash scripts/build_app.sh 跳过）" >&2
             exit 1
         fi
     fi
@@ -305,7 +306,12 @@ generate_app_intents_metadata() {
 
     echo "🧩 已嵌入 App Intents 元数据：$(du -h "$resources/extract.actionsdata" | awk '{print $1}') extract.actionsdata（快捷指令 / Siri 可发现）"
 }
-generate_app_intents_metadata
+if [ "${SKIP_APP_INTENTS:-0}" = "1" ] && [ "$SIGN_IDENTITY" = "-" ]; then
+    rm -rf "$APP_DIR/Contents/Resources/Metadata.appintents"
+    echo "⚠️ 已跳过 App Intents 元数据生成（SKIP_APP_INTENTS=1，仅限本机 ad-hoc 自用）"
+else
+    generate_app_intents_metadata
+fi
 
 if [ -n "$MACOS_CERT_SHA1" ] && [ "$SIGN_IDENTITY" != "-" ]; then
     /usr/libexec/PlistBuddy -c "Delete :MijiaCodeSignCertSHA1" "$APP_DIR/Contents/Info.plist" >/dev/null 2>&1 || true

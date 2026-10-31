@@ -34,9 +34,13 @@ extension HomeStore {
             command = .setFanPower(entityId: s.entityId, isOn: s.isOn)
 
         case .plug(var s):
-            s.isOn.toggle()
-            updated.kind = .plug(s)
-            command = .setSwitch(entityId: s.switchEntityId, isOn: s.isOn)
+            if s.switchEntityId.hasPrefix("button.") {
+                command = .pressButton(entityId: s.switchEntityId)
+            } else {
+                s.isOn.toggle()
+                updated.kind = .plug(s)
+                command = .setSwitch(entityId: s.switchEntityId, isOn: s.isOn)
+            }
 
         case .vacuum(var s):
             let startCleaning = !s.isCleaning
@@ -69,31 +73,41 @@ extension HomeStore {
         }
 
         guard let cmd = command else { return nil }
-        devices[idx] = updated
-        if case .light = updated.kind, updated.isActiveOn {
-            recordManualLightUse(device.id)
-        }
-        lockOptimistic(device.id, duration: .seconds(2.2))
+        let isMomentaryButton = device.isMomentaryButton
+        if !isMomentaryButton {
+            devices[idx] = updated
+            if case .light = updated.kind, updated.isActiveOn {
+                recordManualLightUse(device.id)
+            }
+            lockOptimistic(device.id, duration: .seconds(2.2))
 
-        var memory = userHabitMemory
-        memory.record(
-            utterance: nil,
-            intents: [DeviceIntent(targetId: device.id, operation: .power(updated.isActiveOn))],
-            devices: devices,
-            scenes: scenes
-        )
-        if isHabitLearningEnabled { userHabitMemory = memory }
+            var memory = userHabitMemory
+            memory.record(
+                utterance: nil,
+                intents: [DeviceIntent(targetId: device.id, operation: .power(updated.isActiveOn))],
+                devices: devices,
+                scenes: scenes
+            )
+            if isHabitLearningEnabled { userHabitMemory = memory }
+        }
 
         return Task {
             do {
                 try await executeDeviceCommand(cmd)
+                if isMomentaryButton {
+                    self.showToast(L10n.tr("已触发 \(device.name)", "Triggered \(device.name)"), isError: false)
+                }
                 return true
             } catch {
-                if let revertIdx = self.devices.firstIndex(where: { $0.id == device.id }) {
-                    self.devices[revertIdx] = previous
+                if !isMomentaryButton {
+                    if let revertIdx = self.devices.firstIndex(where: { $0.id == device.id }) {
+                        self.devices[revertIdx] = previous
+                    }
+                    self.optimisticLockUntil.removeValue(forKey: device.id)
+                    self.showToast(L10n.tr("\(device.name) 响应失败，已回滚", "\(device.name) failed to respond; rolled back"), isError: true)
+                } else {
+                    self.showToast(L10n.tr("\(device.name) 触发失败", "Failed to trigger \(device.name)"), isError: true)
                 }
-                self.optimisticLockUntil.removeValue(forKey: device.id)
-                self.showToast(L10n.tr("\(device.name) 响应失败，已回滚", "\(device.name) failed to respond; rolled back"), isError: true)
                 return false
             }
         }

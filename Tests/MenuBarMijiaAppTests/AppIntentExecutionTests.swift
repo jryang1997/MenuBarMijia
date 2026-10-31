@@ -99,6 +99,31 @@ struct AppIntentExecutionTests {
             #expect(try await succeeded.value == "Activated scene: Test scene")
         }
     }
+
+    @Test("Momentary button device intent reports Triggered instead of Turned off (#100)")
+    func momentaryButtonIntentResult() async throws {
+        let wolDevice = SmartDevice(
+            id: "wol_pc", name: "Study PC", roomId: "study", roomName: "Study",
+            model: "Wake on LAN", isOnline: true,
+            kind: .plug(PlugSpec(switchEntityId: "button.wake_on_lan_pc", isOn: false))
+        )
+        try await L10n.$overrideLanguage.withValue(.en) {
+            let suite = "test.intent.wol.\(UUID().uuidString)"
+            defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
+            let provider = ControlledIntentProvider()
+            let store = HomeStore(provider: provider, defaultsSuiteName: suite)
+            await provider.sendSnapshot(SynthesizedHome(devices: [wolDevice]))
+            let intent = ToggleDeviceIntent()
+            intent.device = DeviceEntity(device: wolDevice)
+            let succeeded = Task { try await intent.execute(in: store) }
+            for _ in 0..<100 where await provider.commandCount == 0 {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+            #expect(await provider.commandCount == 1)
+            await provider.complete(failing: false)
+            #expect(try await succeeded.value == "Triggered Study PC")
+        }
+    }
 }
 
 private actor ControlledIntentProvider: HomeProvider {

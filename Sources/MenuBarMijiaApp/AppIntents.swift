@@ -201,10 +201,16 @@ struct ToggleDeviceIntent: AppIntent {
                 device.name
             )
         }
+        let isMomentary = current.isMomentaryButton
         let task = store.togglePrimary(current)
         let isOn = store.devices.first(where: { $0.id == device.id })?.isActiveOn ?? false
         guard await task?.value == true else {
-            return L10n.format("%@ 响应失败，已回滚", "%@ failed to respond; rolled back", current.name)
+            return isMomentary
+                ? L10n.format("%@ 触发失败", "Failed to trigger %@", current.name)
+                : L10n.format("%@ 响应失败，已回滚", "%@ failed to respond; rolled back", current.name)
+        }
+        if isMomentary {
+            return L10n.format("已触发 %@", "Triggered %@", current.name)
         }
         return isOn
             ? L10n.format("已打开 %@", "Turned on %@", current.name)
