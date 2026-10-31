@@ -73,10 +73,7 @@ extension HomeStore {
         }
 
         guard let cmd = command else { return nil }
-        let isMomentaryButton: Bool = {
-            if case .plug(let s) = updated.kind { return s.switchEntityId.hasPrefix("button.") }
-            return false
-        }()
+        let isMomentaryButton = device.isMomentaryButton
         if !isMomentaryButton {
             devices[idx] = updated
             if case .light = updated.kind, updated.isActiveOn {

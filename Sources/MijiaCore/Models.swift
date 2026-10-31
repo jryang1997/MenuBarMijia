@@ -442,6 +442,14 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         }
     }
 
+    /// Whether this device represents a stateless momentary action button (e.g. Home Assistant `button.*` / Wake on LAN, #100).
+    public var isMomentaryButton: Bool {
+        if case .plug(let s) = kind {
+            return s.switchEntityId.hasPrefix("button.")
+        }
+        return false
+    }
+
     /// Whether this device currently counts as "actively turned on" (lights, AC, heater, fan, plug, vacuum cleaning, TV on)
     public var isActiveOn: Bool {
         guard isOnline else { return false }
