@@ -353,6 +353,10 @@ public struct CameraSpec: Equatable, Sendable {
 
 public enum CameraStreamSource: Equatable, Sendable {
     case hls(URL)
+    /// Progressive fragmented MP4 (H.264/H.265) decoded natively; `mjpegFallback` is played
+    /// if native decoding cannot start (#97).
+    case liveMP4(URL, mjpegFallback: URL?)
+    case mjpeg(URL)
     case snapshot(URL)
     case demo(deviceId: String)
 }

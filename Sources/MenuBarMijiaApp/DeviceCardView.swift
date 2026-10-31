@@ -41,6 +41,11 @@ public struct DeviceCardView: View {
 
     private var layoutScope: String { store.selectedRoomId ?? "all" }
 
+    private var isCameraDevice: Bool {
+        if case .camera = device.kind { return true }
+        return false
+    }
+
     private var chosenSize: TileSize { DeviceLayoutPrefs.cachedSize(raw: tileSizesRaw, id: device.id, scope: layoutScope) }
 
     private var resolvedSize: TileSize {
@@ -374,7 +379,14 @@ public struct DeviceCardView: View {
         HStack(spacing: 8) {
             Button {
                 withAnimation(AppleMotion.snappySpring) {
-                    _ = store.togglePrimary(device)
+                    if case .camera(let cam) = device.kind {
+                        if !cam.isOn {
+                            _ = store.togglePrimary(device)
+                        }
+                        store.openCameraLiveView(device.id)
+                    } else {
+                        _ = store.togglePrimary(device)
+                    }
                 }
                 if device.isOnline { SoundFeedback.playSuccess() }
             } label: {
@@ -382,7 +394,11 @@ public struct DeviceCardView: View {
             }
             .buttonStyle(PressableCardButtonStyle())
             .accessibilityLabel(Text(L10n.tr("\(device.name) 开关", "\(device.name) power")))
-            .panelHelp(L10n.tr("点击直接切换开关", "Click to toggle power"))
+            .panelHelp(
+                isCameraDevice
+                    ? L10n.tr("点击打开摄像头实时小窗", "Click to open live camera window")
+                    : L10n.tr("点击直接切换开关", "Click to toggle power")
+            )
 
             Button {
                 withAnimation(AppleMotion.snappySpring) {
