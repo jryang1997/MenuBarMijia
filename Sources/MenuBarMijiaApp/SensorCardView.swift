@@ -662,7 +662,7 @@ struct SensorCardView: View {
                 .font(.system(size: size, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .contentTransition(.numericText(value: spec.temperature ?? 0))
-                .foregroundStyle(fg)
+                .foregroundStyle(tempColor)
             Text(L10n.temperatureSymbol)
                 .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                 .foregroundStyle(muted)
@@ -704,7 +704,7 @@ struct SensorCardView: View {
                 Text(String(format: "%.0f%%", h))
                     .font(.system(size: DesignTokens.TypeSize.title, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(fg)
+                    .foregroundStyle(humidityColor)
             }
         }
         .frame(width: 62, height: 62)
@@ -712,13 +712,13 @@ struct SensorCardView: View {
     }
 
     private var comfortChip: some View {
-        let state = comfort
-        return Text(state.label)
+        let descriptor = comfortDescriptor
+        return Text(descriptor.label)
             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-            .foregroundStyle(state.color)
+            .foregroundStyle(descriptor.color)
             .padding(.horizontal, isCompact ? 5.5 : 6)
             .padding(.vertical, isCompact ? 1.5 : 2)
-            .background(Capsule(style: .continuous).fill(state.color.opacity(0.16)))
+            .background(Capsule(style: .continuous).fill(descriptor.color.opacity(0.16)))
     }
 
     // MARK: Semantics
@@ -731,24 +731,16 @@ struct SensorCardView: View {
     /// The comfort badge speaks through colour too: green when fine, amber hot, blue cold, teal dry/humid.
     private enum ComfortState {
         case comfy, warm, cool, dry, humid
+    }
 
-        var label: String {
-            switch self {
-            case .comfy: return L10n.tr("舒适", "Comfy")
-            case .warm: return L10n.tr("偏热", "Warm")
-            case .cool: return L10n.tr("偏冷", "Cool")
-            case .dry: return L10n.tr("偏干", "Dry")
-            case .humid: return L10n.tr("偏湿", "Humid")
-            }
-        }
-
-        var color: Color {
-            switch self {
-            case .comfy: return DesignTokens.Orb.plug
-            case .warm: return DesignTokens.Orb.light
-            case .cool: return DesignTokens.Orb.climate
-            case .dry, .humid: return DesignTokens.Orb.fan
-            }
+    /// One table per case, so a new state edits a single line: label and colour travel together.
+    private var comfortDescriptor: (label: String, color: Color) {
+        switch comfort {
+        case .comfy: return (L10n.tr("舒适", "Comfy"), DesignTokens.Orb.plug)
+        case .warm: return (L10n.tr("偏热", "Warm"), DesignTokens.Orb.light)
+        case .cool: return (L10n.tr("偏冷", "Cool"), DesignTokens.Orb.climate)
+        case .dry: return (L10n.tr("偏干", "Dry"), DesignTokens.Orb.fan)
+        case .humid: return (L10n.tr("偏湿", "Humid"), DesignTokens.Orb.fan)
         }
     }
 

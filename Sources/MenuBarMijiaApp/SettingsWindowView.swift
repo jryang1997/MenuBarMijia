@@ -25,9 +25,10 @@ public struct SettingsWindowView: View {
 
     public var body: some View {
         let _ = store.effectiveLanguage
+        let opener = SettingsWindowOpener.shared
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
-                SettingsCategoryPicker(selection: $tab)
+                SettingsCategoryPicker(selection: $tab, hasUpdateBadge: store.updateState.badgeRelease != nil)
                     .frame(maxWidth: DesignTokens.Settings.navigationWidth)
                     .padding(.horizontal, 24)
                     .padding(.top, 16)
@@ -73,6 +74,17 @@ public struct SettingsWindowView: View {
         // Errors shown while the window is open still reach the diagnostics ring buffer (#45).
         .onChange(of: store.toastNotice?.id) { _, _ in
             AppDiagnosticsLog.shared.record(store.toastNotice)
+        }
+        .onAppear {
+            if let requested = opener.requestedTab {
+                tab = requested
+                opener.requestedTab = nil
+            }
+        }
+        .onChange(of: opener.requestedTab) { _, requested in
+            guard let requested else { return }
+            tab = requested
+            opener.requestedTab = nil
         }
     }
     @ViewBuilder
@@ -213,8 +225,13 @@ private struct GeneralSettingsTab: View {
 
     var body: some View {
         let _ = store.effectiveLanguage
+        let hasActiveUpdate = store.updateState.badgeRelease != nil || store.updateState.isFailure
         ScrollView(.vertical, showsIndicators: true) {
             VStack(alignment: .leading, spacing: 16) {
+                if hasActiveUpdate {
+                    UpdateSection(store: store)
+                }
+
                 SettingsSection(title: L10n.tr("菜单栏与交互体验", "Menu Bar & Interface")) {
                     SettingsValueRow(title: L10n.tr("界面语言", "Language")) {
                         Picker(L10n.tr("界面语言", "Language"), selection: Binding(
@@ -457,6 +474,7 @@ private struct GeneralSettingsTab: View {
         }
         .task {
             await HotkeyAndNotificationManager.shared.refreshNotificationPermission()
+            await store.checkForUpdatesIfNeeded()
         }
     }
 

@@ -207,12 +207,38 @@ struct SnapshotTests {
 
     @Test("On and off tiles never share the same ink or fill")
     func platterContrastHoldsInBothSchemes() {
-        #expect(PanelLook.ink(isActive: true) == PanelLook.platterInk)
-        #expect(PanelLook.ink(isActive: false) == .primary)
-        #expect(PanelLook.secondaryInk(isActive: true) == PanelLook.platterInk.opacity(0.55))
-        #expect(PanelLook.secondaryInk(isActive: false) == .secondary)
+        let lit = TileSurface(isActive: true, scheme: .light)
+        let quiet = TileSurface(isActive: false, scheme: .light)
+        #expect(lit.ink == PanelLook.platterInk)
+        #expect(quiet.ink == .primary)
+        #expect(lit.secondaryInk == PanelLook.platterInk.opacity(0.55))
+        #expect(quiet.secondaryInk == .secondary)
         // The platter keeps a defined hairline in light mode; wells get the quieter one.
-        #expect(PanelLook.hairline(scheme: .light, isActive: true) != PanelLook.hairline(scheme: .light, isActive: false))
+        #expect(lit.hairline != quiet.hairline)
+
+        // A tinted lit surface is dark blue glass in dark mode, so it takes white ink and the
+        // family hairline instead of the platter rules.
+        let darkTinted = TileSurface(isActive: true, tint: DesignTokens.Orb.climate, scheme: .dark)
+        #expect(darkTinted.ink == .white)
+        #expect(darkTinted.ink != lit.ink)
+        #expect(darkTinted.secondaryInk == .white.opacity(0.62))
+        #expect(darkTinted.hairline != lit.hairline)
+    }
+
+    @Test("Scene icons map to one visual category per family")
+    func sceneVisualCategoriesMapFromSymbols() {
+        // Quick actions own their category outright; no symbol parsing involved.
+        #expect(QuickAction.lightsOff.visualCategory == .light)
+        #expect(QuickAction.softNightLight.visualCategory == .night)
+        #expect(QuickAction.climateSleepOff.visualCategory == .climate)
+        // Externally supplied scene icons resolve through the centralised keyword map.
+        #expect(SceneVisualCategory(iconSymbol: "moon.stars.fill") == .night)
+        #expect(SceneVisualCategory(iconSymbol: "wind.snow") == .climate)
+        #expect(SceneVisualCategory(iconSymbol: "drop.fill") == .water)
+        #expect(SceneVisualCategory(iconSymbol: "flame.fill") == .heat)
+        #expect(SceneVisualCategory(iconSymbol: "tv.fill") == .media)
+        // Unknown symbols land on the warm default instead of vanishing.
+        #expect(SceneVisualCategory(iconSymbol: "sparkles") == .light)
     }
 
     @Test("Menu-bar tooltip summarises devices, temperature and backend")

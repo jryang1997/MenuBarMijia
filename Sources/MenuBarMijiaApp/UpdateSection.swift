@@ -7,11 +7,22 @@ struct UpdateSection: View {
 
     var body: some View {
         let _ = store.effectiveLanguage
+        let badgeRelease = store.updateState.badgeRelease
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.tr("版本 \(UpdateChecker.bundleVersion)", "Version \(UpdateChecker.bundleVersion)"))
-                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                    if let release = badgeRelease {
+                        HStack(spacing: 6) {
+                            Text(L10n.tr("发现新版本 v\(release.version)", "New Version v\(release.version)"))
+                                .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
+                            Text(L10n.tr("当前 v\(UpdateChecker.bundleVersion)", "Current v\(UpdateChecker.bundleVersion)"))
+                                .font(.system(size: DesignTokens.TypeSize.caption))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(L10n.tr("版本 \(UpdateChecker.bundleVersion)", "Version \(UpdateChecker.bundleVersion)"))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+                    }
                     Text(statusSubtitle)
                         .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(store.updateState.isFailure ? Color.red : Color.secondary)
@@ -63,7 +74,7 @@ struct UpdateSection: View {
             }
         }
         .padding(12)
-        .glassTile(isActive: false, cornerRadius: DesignTokens.Radius.card)
+        .glassTile(isActive: badgeRelease != nil, cornerRadius: DesignTokens.Radius.card)
     }
 
     private var statusSubtitle: String {
@@ -126,8 +137,13 @@ struct UpdateSection: View {
 
         case .available(let release):
             if release.packageAsset != nil {
-                Button(L10n.tr("下载并安装", "Update Now")) {
-                    Task { await store.startUpdateInstallation() }
+                Button(L10n.tr("立即更新", "Update Now")) {
+                    Task {
+                        await store.startUpdateInstallation()
+                        if store.updateState.isReadyToRelaunch {
+                            store.confirmRelaunchForUpdate()
+                        }
+                    }
                 }
                 .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
             }
@@ -160,7 +176,12 @@ struct UpdateSection: View {
         case .failed(let failure):
             if failure.canRetryInstall {
                 Button(L10n.tr("重试", "Retry")) {
-                    Task { await store.startUpdateInstallation() }
+                    Task {
+                        await store.startUpdateInstallation()
+                        if store.updateState.isReadyToRelaunch {
+                            store.confirmRelaunchForUpdate()
+                        }
+                    }
                 }
                 .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
             } else {

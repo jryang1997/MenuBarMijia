@@ -87,9 +87,14 @@ public struct DeviceCardView: View {
     /// On the bright platter, system `primary` would turn white and disappear; text flips to ink.
     private var onPlatter: Bool { device.isActiveOn && device.isOnline }
 
-    private var statusColor: Color { PanelLook.secondaryInk(isActive: onPlatter, tinted: tileTint != nil, scheme: colorScheme) }
+    /// One presentation state drives text ink: lit white platter vs quiet well vs tinted glass.
+    private var surface: TileSurface {
+        TileSurface(isActive: onPlatter, tint: tileTint, scheme: colorScheme)
+    }
 
-    private var nameColor: Color { PanelLook.ink(isActive: onPlatter, tinted: tileTint != nil, scheme: colorScheme) }
+    private var statusColor: Color { surface.secondaryInk }
+
+    private var nameColor: Color { surface.ink }
 
     /// One spoken sentence for the whole card: name, power state and the detail subtitle (#41).
     private var accessibilitySummary: String {

@@ -151,16 +151,17 @@ public enum DevicePalette {
 // MARK: - Scene Semantic Colours
 
 public enum ScenePalette {
-    /// Scene pill icon tint: the colour hints at what the scene does, mirroring the orb language.
-    /// Unrecognised symbols stay warm — scene strips read as "actions" before anything else.
-    public static func iconTint(forSymbol symbol: String) -> Color {
-        let s = symbol.lowercased()
-        if s.contains("moon") || s.contains("zzz") || s.contains("night") { return DesignTokens.Orb.vacuum }
-        if s.contains("snow") || s.contains("wind") || s.contains("therm") || s.contains("fan") { return DesignTokens.Orb.fan }
-        if s.contains("drop") || s.contains("humid") || s.contains("water") { return DesignTokens.Orb.climate }
-        if s.contains("flame") || s.contains("heat") { return DesignTokens.Orb.light }
-        if s.contains("tv") || s.contains("play") || s.contains("film") || s.contains("music") || s.contains("speaker") { return DesignTokens.Orb.speaker }
-        return DesignTokens.Orb.light
+    /// Scene pill icon tint per visual family; the model owns the category, this owns the colour.
+    /// Unrecognised scene icons fall into `.light` — scene strips read as "actions" first.
+    public static func tint(for category: SceneVisualCategory) -> Color {
+        switch category {
+        case .night: return DesignTokens.Orb.vacuum
+        case .climate: return DesignTokens.Orb.fan
+        case .water: return DesignTokens.Orb.climate
+        case .heat: return DesignTokens.Orb.light
+        case .media: return DesignTokens.Orb.speaker
+        case .light: return DesignTokens.Orb.light
+        }
     }
 }
 
@@ -176,16 +177,16 @@ public struct GlassTileBackground: ViewModifier {
     @ViewBuilder
     public func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        let (fill, border) = Self.surface(scheme: colorScheme, isActive: isActive, tint: tint)
+        let surface = TileSurface(isActive: isActive, tint: tint, scheme: colorScheme)
         content
             .background {
-                shape.fill(fill)
+                shape.fill(surface.fill)
             }
             .overlay {
-                shape.strokeBorder(border, lineWidth: DesignTokens.hairline)
+                shape.strokeBorder(surface.hairline, lineWidth: DesignTokens.hairline)
             }
-            // Glass catch-light along the top edge, strongest on a lit platter; it fades before the
-            // hairline so the border still reads.
+            // Glass catch-light along the top edge, strongest on a lit platter. The strip is drawn
+            // inside a full-height frame before clipping so the rounded corners clip it too.
             .overlay(alignment: .top) {
                 LinearGradient(
                     colors: [Color.white.opacity(specularStrength), Color.white.opacity(0)],
@@ -193,6 +194,7 @@ public struct GlassTileBackground: ViewModifier {
                     endPoint: .bottom
                 )
                 .frame(height: 1.5)
+                .frame(maxHeight: .infinity, alignment: .top)
                 .clipShape(shape)
             }
             .shadowIf(isActive, color: PanelLook.platterShadow(isActive: isActive), radius: 8, y: 2)
@@ -206,14 +208,6 @@ public struct GlassTileBackground: ViewModifier {
         case (_, true): return 0.90
         case (_, false): return 0.55
         }
-    }
-
-    /// Fill and hairline for one tile state; a tint only applies on the lit platter.
-    private static func surface(scheme: ColorScheme, isActive: Bool, tint: Color?) -> (AnyShapeStyle, Color) {
-        if isActive, let tint {
-            return (PanelLook.tintedPlatterFill(scheme: scheme, tint: tint), PanelLook.tintedHairline(tint: tint, scheme: scheme))
-        }
-        return (PanelLook.tileFill(scheme: scheme, isActive: isActive), PanelLook.hairline(scheme: scheme, isActive: isActive))
     }
 }
 

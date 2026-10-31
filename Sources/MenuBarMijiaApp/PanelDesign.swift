@@ -78,58 +78,62 @@ public enum AppAppearance: String, CaseIterable, Identifiable, Sendable {
 public enum PanelLook {
     public static let tileRadius: CGFloat = 14
 
-    public static func tileFill(scheme: ColorScheme, isActive: Bool) -> AnyShapeStyle {
-        if isActive {
-            return AnyShapeStyle(scheme == .dark ? Color.white.opacity(0.94) : Color.white)
-        }
-        return AnyShapeStyle(scheme == .dark ? Color.white.opacity(0.07) : Color.black.opacity(0.045))
-    }
-
     /// Ink for a bright platter. `Color.primary` turns white in dark mode, so the platter needs
     /// its own fixed dark ink to stay legible.
     public static let platterInk = DesignTokens.Ink.onPlatter
-
-    public static func ink(isActive: Bool) -> Color {
-        isActive ? platterInk : .primary
-    }
-
-    /// Ink on the tinted platter: it is dark blue glass in dark mode, so white ink reads there;
-    /// every other surface keeps the platter rules above.
-    public static func ink(isActive: Bool, tinted: Bool, scheme: ColorScheme) -> Color {
-        if isActive, tinted, scheme == .dark { return Color.white }
-        return ink(isActive: isActive)
-    }
-
-    public static func secondaryInk(isActive: Bool) -> Color {
-        isActive ? platterInk.opacity(0.55) : Color.secondary
-    }
-
-    public static func secondaryInk(isActive: Bool, tinted: Bool, scheme: ColorScheme) -> Color {
-        if isActive, tinted, scheme == .dark { return Color.white.opacity(0.62) }
-        return secondaryInk(isActive: isActive)
-    }
-
-    public static func hairline(scheme: ColorScheme, isActive: Bool) -> Color {
-        if isActive { return Color.black.opacity(0.07) }
-        return scheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.05)
-    }
 
     /// Soft drop shadow that keeps the platter above the glass; wells stay flat.
     public static func platterShadow(isActive: Bool) -> Color {
         isActive ? Color.black.opacity(0.18) : .clear
     }
+}
 
-    /// Tinted active platter for a semantically coloured family (climate): a wash of the family
-    /// colour over glass instead of the white platter, so the tile's hue itself carries the state.
-    public static func tintedPlatterFill(scheme: ColorScheme, tint: Color) -> AnyShapeStyle {
-        scheme == .dark
-            ? AnyShapeStyle(LinearGradient(colors: [tint.opacity(0.24), Color.white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing))
-            : AnyShapeStyle(LinearGradient(colors: [tint.opacity(0.14), Color.white.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing))
+/// One tile's presentation state: lit or quiet, and when lit, on the white platter or the
+/// family-coloured glass. Ink, fill and hairline all derive from it, so callers pass one value
+/// instead of repeating the active/tint/scheme triple.
+public struct TileSurface: Equatable, Sendable {
+    public var isActive: Bool
+    public var tint: Color?
+    public var scheme: ColorScheme
+
+    public init(isActive: Bool, tint: Color? = nil, scheme: ColorScheme) {
+        self.isActive = isActive
+        self.tint = tint
+        self.scheme = scheme
     }
 
-    /// Hairline for the tinted platter: the family colour instead of the neutral hairline.
-    public static func tintedHairline(tint: Color, scheme: ColorScheme) -> Color {
-        tint.opacity(scheme == .dark ? 0.38 : 0.30)
+    /// Ink on the lit surface. The white platter needs the fixed dark ink; a tinted platter is
+    /// dark blue glass in dark mode, so white ink reads there instead.
+    public var ink: Color {
+        if isActive, tint != nil, scheme == .dark { return Color.white }
+        return isActive ? PanelLook.platterInk : .primary
+    }
+
+    public var secondaryInk: Color {
+        if isActive, tint != nil, scheme == .dark { return Color.white.opacity(0.62) }
+        return isActive ? PanelLook.platterInk.opacity(0.55) : Color.secondary
+    }
+
+    /// The tile fill: bright white platter when lit, quiet glass well when not; a tint swaps the
+    /// white platter for a wash of the family colour so the tile's hue itself carries the state.
+    public var fill: AnyShapeStyle {
+        if isActive, let tint {
+            return scheme == .dark
+                ? AnyShapeStyle(LinearGradient(colors: [tint.opacity(0.24), Color.white.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                : AnyShapeStyle(LinearGradient(colors: [tint.opacity(0.14), Color.white.opacity(0.92)], startPoint: .topLeading, endPoint: .bottomTrailing))
+        }
+        if scheme == .dark {
+            return AnyShapeStyle(Color.white.opacity(isActive ? 0.94 : 0.07))
+        }
+        return isActive ? AnyShapeStyle(Color.white) : AnyShapeStyle(Color.black.opacity(0.045))
+    }
+
+    public var hairline: Color {
+        if isActive, let tint {
+            return tint.opacity(scheme == .dark ? 0.38 : 0.30)
+        }
+        if isActive { return Color.black.opacity(0.07) }
+        return scheme == .dark ? Color.white.opacity(0.09) : Color.black.opacity(0.05)
     }
 }
 

@@ -31,6 +31,7 @@ struct SettingsCategoryGeometry {
 /// A single glass lens follows the pointer; the page changes only when the drag commits.
 struct SettingsCategoryPicker: View {
     @Binding var selection: SettingsTab
+    var hasUpdateBadge: Bool = false
     @Environment(\.effectiveReduceMotion) private var reduceMotion
     @GestureState private var dragCenter: CGFloat?
     @State private var cancelledDrag = false
@@ -148,6 +149,11 @@ struct SettingsCategoryPicker: View {
                 .frame(width: 16, height: 16)
             Text(item.navigationTitle)
                 .lineLimit(1)
+            if item == .about && hasUpdateBadge {
+                Circle()
+                    .fill(Color.accentColor)
+                    .frame(width: 6, height: 6)
+            }
         }
         .font(.system(size: DesignTokens.TypeSize.body, weight: emphasized ? .semibold : .regular))
         .foregroundStyle(emphasized ? Color(nsColor: .labelColor) : Color(nsColor: .secondaryLabelColor))

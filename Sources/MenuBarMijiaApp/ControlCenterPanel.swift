@@ -1123,6 +1123,7 @@ public struct ControlCenterPanel: View {
                         Text(String(format: "%.0fW", watts))
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                             .monospacedDigit()
+                            .foregroundStyle(DesignTokens.Orb.plug)
                     }
                 }
 
@@ -1203,7 +1204,7 @@ public struct ControlCenterPanel: View {
                     HStack(spacing: 4) {
                         Image(systemName: action.sfSymbolName)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                            .foregroundStyle(ScenePalette.iconTint(forSymbol: action.sfSymbolName))
+                            .foregroundStyle(ScenePalette.tint(for: action.visualCategory))
                         Text(action.title)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                             .lineLimit(1)
@@ -1223,7 +1224,7 @@ public struct ControlCenterPanel: View {
                     HStack(spacing: 4) {
                         Image(systemName: scene.iconName)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                            .foregroundStyle(ScenePalette.iconTint(forSymbol: scene.iconName))
+                            .foregroundStyle(ScenePalette.tint(for: scene.visualCategory))
                         Text(scene.name)
                             .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                             .lineLimit(1)
@@ -1409,7 +1410,7 @@ public struct ControlCenterPanel: View {
                 .background {
                     if isSelected {
                         Capsule(style: .continuous)
-                            .fill(PanelLook.tileFill(scheme: effectiveScheme, isActive: true))
+                            .fill(TileSurface(isActive: true, scheme: effectiveScheme).fill)
                             .shadow(color: .black.opacity(effectiveScheme == .dark ? 0.28 : 0.10), radius: 2, y: 1)
                     }
                 }
@@ -1611,7 +1612,7 @@ public struct ControlCenterPanel: View {
                             store.confirmRelaunchForUpdate()
                         }
                     } else {
-                        presentSettingsWindow()
+                        SettingsWindowOpener.shared.show(tab: .about)
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -1621,11 +1622,7 @@ public struct ControlCenterPanel: View {
                                 : "arrow.down.circle.fill"
                         )
                         .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
-                        Text(
-                            store.updateState.isReadyToRelaunch
-                                ? L10n.tr("重启更新 v\(release.version)", "Relaunch v\(release.version)")
-                                : "v\(release.version)"
-                        )
+                        Text(updateBadgeTitle(for: release))
                         .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         .monospacedDigit()
                     }
@@ -1639,7 +1636,7 @@ public struct ControlCenterPanel: View {
                 .panelHelp(
                     store.updateState.isReadyToRelaunch
                         ? L10n.tr("点击立即重启并完成 v\(release.version) 更新", "Click to relaunch and finish updating to v\(release.version)")
-                        : L10n.tr("发现新版本 v\(release.version)，点击前往更新", "New version v\(release.version) available")
+                        : L10n.tr("发现新版本 v\(release.version)，点击直接打开更新", "New version v\(release.version) available")
                 )
             }
 
@@ -1709,6 +1706,22 @@ public struct ControlCenterPanel: View {
     /// `openSettings` is the supported way to reveal the Settings scene from a MenuBarExtra.
     private func presentSettingsWindow() {
         SettingsWindowOpener.shared.show()
+    }
+
+    private func updateBadgeTitle(for release: AppRelease) -> String {
+        switch store.updateState {
+        case .readyToRelaunch:
+            return L10n.tr("重启更新 v\(release.version)", "Relaunch v\(release.version)")
+        case .downloading(_, let progress):
+            if let fraction = progress.fractionCompleted {
+                return L10n.tr("下载 \(Int(fraction * 100))%", "DL \(Int(fraction * 100))%")
+            }
+            return L10n.tr("下载中…", "Downloading…")
+        case .verifying:
+            return L10n.tr("校验中…", "Verifying…")
+        default:
+            return L10n.tr("更新 v\(release.version)", "Update v\(release.version)")
+        }
     }
 
     private var statusDotColor: Color {

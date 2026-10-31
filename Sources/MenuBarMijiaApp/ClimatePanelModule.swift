@@ -20,9 +20,13 @@ struct ClimatePanelModule: View {
 
     private var accent: Color { DevicePalette.accentColor(for: device) }
 
-    /// A running unit sits on the tinted platter: platter ink in light, white ink on the dark blue glass.
-    private var fg: Color { PanelLook.ink(isActive: isRunning, tinted: isRunning, scheme: colorScheme) }
-    private var muted: Color { PanelLook.secondaryInk(isActive: isRunning, tinted: isRunning, scheme: colorScheme) }
+    /// One presentation state drives text ink; a running unit sits on the tinted platter.
+    private var surface: TileSurface {
+        TileSurface(isActive: isRunning, tint: isRunning ? DesignTokens.Orb.climate : nil, scheme: colorScheme)
+    }
+
+    private var fg: Color { surface.ink }
+    private var muted: Color { surface.secondaryInk }
 
     private var isExpanded: Bool { forceExpanded || store.expandedDeviceId == device.id }
 

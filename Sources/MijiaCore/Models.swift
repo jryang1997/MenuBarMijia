@@ -626,6 +626,51 @@ public enum QuickAction: String, CaseIterable, Identifiable, Equatable, Sendable
         case .climateSleepOff: return "wind.snow"
         }
     }
+
+    /// Quick actions own their visual family explicitly; no symbol parsing.
+    public var visualCategory: SceneVisualCategory {
+        switch self {
+        case .lightsOff: return .light
+        case .softNightLight: return .night
+        case .climateSleepOff: return .climate
+        }
+    }
+}
+
+/// Scene visual family, one level above colour: models own the semantics, the UI maps it to tints.
+public enum SceneVisualCategory: String, Sendable {
+    case night
+    case climate
+    case water
+    case heat
+    case media
+    case light
+
+    /// Keyword map for externally supplied scene icons: Home Assistant sends arbitrary symbol
+    /// names, so the family has to be inferred somewhere centralised and testable.
+    public init(iconSymbol: String) {
+        let symbol = iconSymbol.lowercased()
+        if symbol.contains("moon") || symbol.contains("zzz") || symbol.contains("night") {
+            self = .night
+        } else if symbol.contains("snow") || symbol.contains("wind") || symbol.contains("therm") || symbol.contains("fan") {
+            self = .climate
+        } else if symbol.contains("drop") || symbol.contains("humid") || symbol.contains("water") {
+            self = .water
+        } else if symbol.contains("flame") || symbol.contains("heat") {
+            self = .heat
+        } else if symbol.contains("tv") || symbol.contains("play") || symbol.contains("film")
+            || symbol.contains("music") || symbol.contains("speaker") {
+            self = .media
+        } else {
+            self = .light
+        }
+    }
+}
+
+extension HomeScene {
+    public var visualCategory: SceneVisualCategory {
+        SceneVisualCategory(iconSymbol: iconName)
+    }
 }
 
 // MARK: - Commands Dispatched Over the Seam
