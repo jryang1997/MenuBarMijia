@@ -30,7 +30,7 @@ public enum ModelActionPolicy {
             case .hvacMode(let mode): return mode != "off"
             default: return true
             }
-        case .plug:
+        case .plug, .camera:
             if case .power = intent.operation { return true }
             return false
         case .vacuum:

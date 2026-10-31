@@ -112,6 +112,7 @@ public protocol MiCloudAPI: Sendable {
     func getProps(_ keys: [MiotPropKey]) async throws -> [MiotPropKey: JSONValue]
     func setProps(_ writes: [MiotPropWrite]) async throws
     func action(_ call: MiotActionCall) async throws
+    func callAction(_ call: MiotActionCall) async throws -> JSONValue
     func sensorHistory(
         did: String,
         temperatureKey: String?,
@@ -122,6 +123,10 @@ public protocol MiCloudAPI: Sendable {
 }
 
 extension MiCloudAPI {
+    public func callAction(_ call: MiotActionCall) async throws -> JSONValue {
+        try await action(call)
+        return .null
+    }
     public func sensorHistory(
         did: String,
         temperatureKey: String?,
@@ -378,11 +383,16 @@ public actor MiCloudClient: MiCloudAPI {
     }
 
     public func action(_ call: MiotActionCall) async throws {
+        _ = try await callAction(call)
+    }
+
+    public func callAction(_ call: MiotActionCall) async throws -> JSONValue {
         let result = try await request("miotspec/action", data: .object(["params": .object([
             "did": .string(call.did), "siid": .number(Double(call.siid)),
             "aiid": .number(Double(call.aiid)), "in": .array(call.inputs),
         ])]))
         try Self.checkWriteCodes([result])
+        return result
     }
 
     /// MIoT per-item codes: 0 = done, 1 = accepted (async); negatives are device/gateway errors such as -704042011 (offline).

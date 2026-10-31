@@ -798,6 +798,16 @@ extension HomeStore {
                 restore: [restore]
             )
 
+
+        case (.power(let on), .camera(var s)):
+            let restore = DeviceCommand.setSwitch(entityId: s.entityId, isOn: s.isOn)
+            s.isOn = on
+            updated.kind = .camera(s)
+            return AssistantEffect(
+                updated: updated,
+                command: .setSwitch(entityId: s.entityId, isOn: on),
+                restore: [restore]
+            )
         case (.fanSpeed(let preset), .fan(var s)):
             let restore: DeviceCommand
             if !s.isOn {

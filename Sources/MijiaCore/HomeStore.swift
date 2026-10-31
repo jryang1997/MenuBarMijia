@@ -198,6 +198,9 @@ public final class HomeStore {
     public var onSafetyAlert: ((SafetyAlert) -> Void)?
     public var onGlobalHotkeyPreferenceChanged: ((Bool) -> Void)?
 
+    public var onOpenCameraLiveView: ((SmartDevice) -> Void)?
+    public internal(set) var activeLiveCameraDeviceId: String?
+    public static let cameraStreamURLsKey = "camera_stream_urls_v1"
     public static let automaticUpdateCheckInterval: TimeInterval = 6 * 3600
     public internal(set) var updateState: AppUpdateState = .idle
     public var automaticallyChecksForUpdates: Bool = true {

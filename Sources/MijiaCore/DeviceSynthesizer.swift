@@ -254,8 +254,8 @@ public enum DeviceSynthesizer {
         for (eid, state) in states {
             guard eid.hasPrefix("light.") || eid.hasPrefix("climate.")
                     || eid.hasPrefix("fan.") || eid.hasPrefix("vacuum.")
-                    || eid.hasPrefix("switch.") || eid.hasPrefix("media_player.")
-                    || eid.hasPrefix("sensor.") else { continue }
+                    || eid.hasPrefix("camera.") || eid.hasPrefix("switch.")
+                    || eid.hasPrefix("media_player.") || eid.hasPrefix("sensor.") else { continue }
             let entity = entityById[eid]
             guard entity?.disabled_by == nil, entity?.hidden_by == nil else { continue }
             if let deviceId = entity?.device_id, registeredDeviceIds.contains(deviceId) { continue }
@@ -483,7 +483,7 @@ public enum DeviceSynthesizer {
             )
         }
 
-        // 3. Fan
+        // 3. Fan & Air Purifier
         if let fanId = eids.first(where: { $0.hasPrefix("fan.") }),
            let st = states[fanId] {
             let isOn = (st.state == "on")
@@ -491,6 +491,39 @@ public enum DeviceSynthesizer {
             let preset = st.attributes["preset_mode"]?.stringValue
             let presets = st.attributes["preset_modes"]?.stringArrayValue ?? []
             let osc = st.attributes["oscillating"]?.boolValue
+
+            let pm25Id = eids.first {
+                $0.hasPrefix("sensor.")
+                    && (states[$0]?.attributes["device_class"]?.stringValue == "pm25"
+                        || $0.contains("pm2_5") || $0.contains("pm25"))
+            }
+            let aqId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && (states[$0]?.attributes["device_class"]?.stringValue == "aqi"
+                        || $0.contains("air_quality"))
+            }
+            let fanTempId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && (states[$0]?.attributes["device_class"]?.stringValue == "temperature"
+                        || $0.contains("temperature"))
+            }
+            let fanHumId = eids.first {
+                $0.hasPrefix("sensor.")
+                    && (states[$0]?.attributes["device_class"]?.stringValue == "humidity"
+                        || $0.contains("humidity"))
+            }
+            let filterId = eids.first { $0.hasPrefix("sensor.") && $0.contains("filter_life") }
+
+            let pm25 = pm25Id.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state) : nil }.map { Int($0.rounded()) }
+                ?? st.attributes["pm25"]?.intValue
+            let aq = aqId.flatMap { states[$0] }.flatMap { $0.isAvailable ? $0.state : nil }
+                ?? st.attributes["air_quality"]?.stringValue
+            let temp = fanTempId.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state) : nil }
+                ?? st.attributes["temperature"]?.doubleValue
+            let hum = fanHumId.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state) : nil }
+                ?? st.attributes["humidity"]?.doubleValue
+            let filterLife = filterId.flatMap { states[$0] }.flatMap { $0.isAvailable ? Double($0.state) : nil }.map { Int($0.rounded()) }
+                ?? st.attributes["filter_life_remaining"]?.intValue
 
             return SmartDevice(
                 id: deviceId,
@@ -506,7 +539,12 @@ public enum DeviceSynthesizer {
                         percentage: pct,
                         presetMode: preset,
                         availablePresetModes: presets,
-                        isOscillating: osc
+                        isOscillating: osc,
+                        pm25Density: pm25,
+                        airQuality: aq,
+                        temperature: temp,
+                        humidity: hum,
+                        filterLifePercent: filterLife
                     )
                 )
             )
@@ -581,6 +619,71 @@ public enum DeviceSynthesizer {
                     )
                 )
             )
+        }
+
+        // 5b. Smart Camera (camera.* or camera model with control switches)
+        let cameraEntityId = eids.first(where: { $0.hasPrefix("camera.") })
+        let isCameraModel = model.contains("camera") || model.contains("cateye") || model.contains("doorbell")
+        if cameraEntityId != nil || isCameraModel {
+            let powerSwitchId = eids.first { eid in
+                guard eid.hasPrefix("switch.") else { return false }
+                let lower = eid.lowercased()
+                return !lower.contains("motion")
+                    && !lower.contains("indicator")
+                    && !lower.contains("watermark")
+                    && !lower.contains("wdr")
+                    && !lower.contains("tracking")
+                    && !lower.contains("distortion")
+            }
+            let camSt = cameraEntityId.flatMap { states[$0] }
+            let powerSt = powerSwitchId.flatMap { states[$0] }
+            if let primarySt = camSt ?? powerSt {
+                let targetEntityId = powerSwitchId ?? cameraEntityId ?? deviceId
+                let isOn: Bool
+                if let powerSt {
+                    isOn = powerSt.state == "on"
+                } else if let camSt {
+                    isOn = camSt.state != "off"
+                } else {
+                    isOn = false
+                }
+                let motionSw = eids.first { $0.hasPrefix("switch.") && $0.lowercased().contains("motion") }
+                let motionEntityId = motionSw ?? (camSt?.attributes["motion_detection"]?.boolValue != nil && cameraEntityId != nil ? "\(cameraEntityId!)#motion" : nil)
+                let isMotionOn = motionSw.flatMap { states[$0]?.state == "on" } ?? camSt?.attributes["motion_detection"]?.boolValue
+
+                let nightSelectId = eids.first {
+                    $0.hasPrefix("select.") && ($0.lowercased().contains("night") || $0.lowercased().contains("ir_mode"))
+                }
+                let nightSt = nightSelectId.flatMap { states[$0] }
+                let nightShot = (nightSt?.isAvailable == true) ? nightSt?.state : nil
+                let nightOptions = nightSt?.attributes["options"]?.stringArrayValue ?? []
+                let controlEntityId = nightSelectId != nil ? "\(targetEntityId)|\(nightSelectId!)" : targetEntityId
+                let snapshotPath = camSt?.attributes["entity_picture"]?.stringValue
+                    ?? camSt?.attributes["access_token"]?.stringValue.flatMap { token in
+                        cameraEntityId.map { "/api/camera_proxy/\($0)?token=\(token)" }
+                    }
+
+                return SmartDevice(
+                    id: deviceId,
+                    name: name,
+                    roomId: roomId,
+                    roomName: roomName,
+                    model: model,
+                    isOnline: primarySt.isAvailable,
+                    kind: .camera(
+                        CameraSpec(
+                            entityId: controlEntityId,
+                            isOn: isOn,
+                            nightShot: nightShot,
+                            availableNightShots: nightOptions,
+                            motionDetectionEntityId: motionEntityId,
+                            isMotionDetectionOn: isMotionOn,
+                            streamEntityId: cameraEntityId,
+                            snapshotPath: snapshotPath
+                        )
+                    )
+                )
+            }
         }
 
         let tempId = eids.first { eid in
@@ -859,7 +962,8 @@ public enum DeviceSynthesizer {
         case .fridge: return 6
         case .speaker: return 7
         case .tv: return 8
-        case .sensor: return 9
+        case .camera: return 9
+        case .sensor: return 10
         }
     }
 }

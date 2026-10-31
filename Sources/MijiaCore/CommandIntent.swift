@@ -111,9 +111,9 @@ public struct PendingCloudConsent: Equatable, Sendable {
 // MARK: - Device Category Used by Both Resolvers
 
 public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
-    case light, climate, heater, fan, plug, vacuum, speaker, tv, fridge, sensor
-
+    case light, climate, heater, fan, airPurifier, plug, vacuum, speaker, tv, fridge, camera, sensor
     private static let heaterNameHints = ["电暖", "暖气", "取暖", "暖风"]
+    private static let airPurifierNameHints = ["净化", "空净"]
 
     public init(_ device: SmartDevice) {
         switch device.kind {
@@ -122,12 +122,21 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
             let isHeater = device.model.contains("heater")
                 || Self.heaterNameHints.contains(where: device.name.contains)
             self = isHeater ? .heater : .climate
-        case .fan: self = .fan
+        case .fan(let s):
+            let lowerModel = device.model.lowercased()
+            let isPurifier = lowerModel.contains("airp")
+                || lowerModel.contains("purifier")
+                || Self.airPurifierNameHints.contains(where: device.name.contains)
+                || s.pm25Density != nil
+                || s.airQuality != nil
+                || s.filterLifePercent != nil
+            self = isPurifier ? .airPurifier : .fan
         case .plug: self = .plug
         case .vacuum: self = .vacuum
         case .speaker: self = .speaker
         case .tv: self = .tv
         case .fridge: self = .fridge
+        case .camera: self = .camera
         case .sensor: self = .sensor
         }
     }
@@ -135,7 +144,7 @@ public enum IntentDeviceCategory: String, Equatable, Sendable, CaseIterable {
     /// Categories whose state the assistant can change; the rest are omitted from prompts and plans.
     public var isAssistantControllable: Bool {
         switch self {
-        case .light, .climate, .heater, .fan, .plug, .vacuum, .tv: return true
+        case .light, .climate, .heater, .fan, .airPurifier, .plug, .vacuum, .tv, .camera: return true
         case .speaker, .fridge, .sensor: return false
         }
     }
@@ -166,7 +175,7 @@ public enum IntentValidator {
     /// Returns the operation adjusted to the device's limits, or nil when the device cannot perform it.
     public static func normalize(_ operation: IntentOperation, for device: SmartDevice) -> IntentOperation? {
         switch (operation, device.kind) {
-        case (.power, .light), (.power, .climate), (.power, .fan), (.power, .plug), (.power, .vacuum), (.power, .tv):
+        case (.power, .light), (.power, .climate), (.power, .fan), (.power, .plug), (.power, .vacuum), (.power, .tv), (.power, .camera):
             return operation
 
         case (.brightness(let percent), .light):
@@ -215,6 +224,11 @@ public enum IntentValidator {
 
         case (.fanSpeed(let raw), .climate(let s)):
             return FanSpeedMatcher.match(raw, in: s.availableFanModes).map(IntentOperation.fanSpeed)
+
+        // 「自动模式」 parses as hvacMode(auto); on a fan that means its Auto preset,
+        // not an HVAC mode (#98).
+        case (.hvacMode(let raw), .fan(let s)) where raw.lowercased() == "auto":
+            return FanSpeedMatcher.match("auto", in: s.availablePresetModes).map(IntentOperation.fanSpeed)
 
         case (.oscillation, .fan(let s)) where s.isOscillating != nil:
             return operation
@@ -325,6 +339,8 @@ public enum IntentReply {
         case "auto": return L10n.tr("自动", "Auto")
         case "silent": return L10n.tr("静音", "Silent")
         case "sleep": return L10n.tr("睡眠", "Sleep")
+        case "favorite", "favourite": return L10n.tr("最爱", "Favorite")
+        case "manual": return L10n.tr("手动", "Manual")
         default: return raw
         }
     }
@@ -452,6 +468,8 @@ public struct IntentCatalog: Sendable {
             if s.state == "off" || s.state == "standby" { return "关" }
             let src = s.currentSource.map { " \($0)" } ?? ""
             return "开\(src) 音量\(s.volumePercent)%"
+        case .camera(let s):
+            return s.isOn ? "开" : "关"
         case .speaker, .fridge, .sensor: return ""
         }
     }
@@ -463,22 +481,26 @@ public struct IntentCatalog: Sendable {
 /// exposes ("Level1…3", "low/medium/high", "静音"…). Exact names win; otherwise rank among the plain
 /// speed levels (first = low, middle = medium, last = high).
 public enum FanSpeedMatcher {
-    private enum Level { case low, medium, high, auto }
+    private enum Level { case low, medium, high, auto, sleep, favorite }
 
     private static let spoken: [(Level, [String])] = [
         (.auto, ["auto", "自动"]),
+        (.sleep, ["sleep", "睡眠", "silent", "静音"]),
+        (.favorite, ["favorite", "favourite", "最爱", "manual", "手动"]),
         (.high, ["high", "高", "大", "强", "max", "最大", "strong"]),
         (.medium, ["medium", "middle", "mid", "中"]),
         (.low, ["low", "低", "小", "弱", "min", "最小", "微"])
     ]
     private static let optionHints: [Level: [String]] = [
         .auto: ["auto", "自动"],
+        .sleep: ["sleep", "睡眠", "silent", "静音"],
+        .favorite: ["favorite", "favourite", "最爱", "manual", "手动"],
         .high: ["high", "strong", "高", "强"],
         .medium: ["medium", "middle", "mid", "中"],
         .low: ["low", "低", "弱"]
     ]
     /// Options that are modes rather than speed levels, so they never take part in rank matching.
-    private static let nonLevelHints = ["auto", "自动", "sleep", "睡眠", "silent", "静音", "natural", "nature", "自然", "smart", "智能"]
+    private static let nonLevelHints = ["auto", "自动", "sleep", "睡眠", "silent", "静音", "natural", "nature", "自然", "smart", "智能", "favorite", "favourite", "最爱"]
 
     public static func match(_ raw: String, in options: [String]) -> String? {
         let wanted = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -498,7 +520,7 @@ public enum FanSpeedMatcher {
         case .low: return levels.first
         case .high: return levels.last
         case .medium: return levels[levels.count / 2]
-        case .auto: return nil
+        case .auto, .sleep, .favorite: return nil
         }
     }
 }

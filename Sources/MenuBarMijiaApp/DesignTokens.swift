@@ -26,7 +26,17 @@ enum DesignTokens {
         static let speaker = Color(red: 0.75, green: 0.35, blue: 0.95)
         static let tv = Color(red: 0.35, green: 0.34, blue: 0.84)
         static let fridge = Color(red: 0.20, green: 0.70, blue: 0.90)
+        static let camera = Color(red: 0.00, green: 0.62, blue: 1.00)
         static let sensor = Color(red: 0.00, green: 0.48, blue: 1.00)
+    }
+
+    /// Air-quality verdict tints in the air-purifier drawer and the fan-speed slider track.
+    enum Purifier {
+        static let good = Color(red: 0.16, green: 0.72, blue: 0.38)
+        static let moderate = Color.orange
+        static let poor = Color.red
+        static let speedTrackTop = Color(red: 0.16, green: 0.76, blue: 0.68)
+        static let speedTrackBottom = Color(red: 0.08, green: 0.62, blue: 0.56)
     }
 
     /// The panel's own brand marks: the home orb and the All-Off pill.

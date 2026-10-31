@@ -112,7 +112,14 @@ export const IntentValidator = {
     const k = device.kind;
     switch (op.kind) {
       case "power": {
-        if (k.kind === "light" || k.kind === "climate" || k.kind === "fan" || k.kind === "plug" || k.kind === "vacuum") {
+        if (
+          k.kind === "light" ||
+          k.kind === "climate" ||
+          k.kind === "fan" ||
+          k.kind === "plug" ||
+          k.kind === "vacuum" ||
+          k.kind === "camera"
+        ) {
           return op;
         }
         return null;
@@ -139,9 +146,16 @@ export const IntentValidator = {
         return matched ? { kind: "lightEffect", effect: matched } : null;
       }
       case "hvacMode": {
-        if (k.kind !== "climate") return null;
-        const matched = k.availableModes.find((m) => m.toLowerCase() === op.mode.toLowerCase());
-        return matched ? { kind: "hvacMode", mode: matched } : null;
+        if (k.kind === "climate") {
+          const matched = k.availableModes.find((m) => m.toLowerCase() === op.mode.toLowerCase());
+          return matched ? { kind: "hvacMode", mode: matched } : null;
+        }
+        // 「自动模式」 parses as hvacMode(auto); on a fan that means its Auto preset (#98).
+        if (k.kind === "fan" && op.mode.toLowerCase() === "auto") {
+          const m = k.availablePresetModes.find((p) => /auto|自动|smart|natural/i.test(p));
+          return m ? { kind: "fanSpeed", speed: m } : null;
+        }
+        return null;
       }
       case "targetTemperature": {
         if (k.kind !== "climate") return null;
@@ -168,7 +182,15 @@ export const IntentValidator = {
           const autoMatch = list.find((m) => /auto|自动|smart|natural/i.test(m));
           return autoMatch ? { kind: "fanSpeed", speed: autoMatch } : null;
         }
-        const ranked = list.filter((m) => !/auto|自动|sleep|睡眠/i.test(m));
+        if (s === "sleep" || s === "睡眠" || s === "silent" || s === "静音") {
+          const sleepMatch = list.find((m) => /sleep|睡眠|silent|静音/i.test(m));
+          return sleepMatch ? { kind: "fanSpeed", speed: sleepMatch } : null;
+        }
+        if (s === "favorite" || s === "favourite" || s === "最爱" || s === "manual" || s === "手动") {
+          const favMatch = list.find((m) => /favorite|favourite|最爱|manual|手动/i.test(m));
+          return favMatch ? { kind: "fanSpeed", speed: favMatch } : null;
+        }
+        const ranked = list.filter((m) => !/auto|自动|sleep|睡眠|silent|静音|favorite|favourite|最爱/i.test(m));
         const pool = ranked.length > 0 ? ranked : list;
         if (s === "low" || s === "低" || s === "1") {
           const first = pool[0];
@@ -230,6 +252,7 @@ export const IntentValidator = {
           return [{ kind: "setClimatePower", entityId: k.entityId, isOn: op.isOn, resumeMode: "cool" }];
         if (k.kind === "fan") return [{ kind: "setFanPower", entityId: k.entityId, isOn: op.isOn }];
         if (k.kind === "plug") return [{ kind: "setSwitch", entityId: k.switchEntityId, isOn: op.isOn }];
+        if (k.kind === "camera") return [{ kind: "setSwitch", entityId: k.entityId, isOn: op.isOn }];
         if (k.kind === "vacuum")
           return [{ kind: "vacuumAction", entityId: k.entityId, action: op.isOn ? "start" : "returnToBase" }];
         return [];
@@ -273,6 +296,11 @@ export const IntentReply = {
       medium: "中档",
       high: "高档",
       auto: "自动",
+      sleep: "睡眠",
+      silent: "静音",
+      favorite: "最爱",
+      favourite: "最爱",
+      manual: "手动",
     };
     return map[speed.toLowerCase()] ?? speed;
   },
@@ -353,18 +381,33 @@ export const IntentReply = {
 
 // MARK: - 0ms Local Intent Parser
 
-type IntentCategory = "light" | "climate" | "heater" | "fan" | "plug" | "vacuum" | "tv" | "other";
+type IntentCategory = "light" | "climate" | "heater" | "fan" | "airPurifier" | "plug" | "vacuum" | "tv" | "camera" | "other";
 
 const CONSUMED_MARKER = "\u001f";
+
+function isAirPurifierDevice(dev: SmartDevice): boolean {
+  if (dev.kind.kind !== "fan") return false;
+  const m = dev.model.toLowerCase();
+  return (
+    m.includes("airp") ||
+    m.includes("purifier") ||
+    dev.name.includes("净化") ||
+    dev.name.includes("空净") ||
+    dev.kind.pm25Density != null ||
+    dev.kind.airQuality != null ||
+    dev.kind.filterLifePercent != null
+  );
+}
 
 function deviceCategory(dev: SmartDevice): IntentCategory {
   if (dev.kind.kind === "light") return "light";
   if (dev.kind.kind === "climate") {
     return dev.model.includes("heater") || dev.name.includes("暖") ? "heater" : "climate";
   }
-  if (dev.kind.kind === "fan") return "fan";
+  if (dev.kind.kind === "fan") return isAirPurifierDevice(dev) ? "airPurifier" : "fan";
   if (dev.kind.kind === "plug") return "plug";
   if (dev.kind.kind === "vacuum") return "vacuum";
+  if (dev.kind.kind === "camera") return "camera";
   return "other";
 }
 
@@ -389,7 +432,7 @@ function impliedCategories(ops: readonly IntentOperation[]): Set<IntentCategory>
       case "temperatureStep":
         return new Set(["climate", "heater"]);
       case "fanSpeed":
-        return new Set(["fan", "climate"]);
+        return new Set(["fan", "airPurifier", "climate"]);
       case "oscillation":
         return new Set(["fan"]);
       case "power":
@@ -489,7 +532,8 @@ const EN_CATEGORY_WORDS: ReadonlyArray<readonly [string, IntentCategory]> = [
   ["bedside lamp", "light"], ["desk lamp", "light"], ["table lamp", "light"],
   ["screen bar", "light"], ["light strip", "light"],
   ["robot vacuum", "vacuum"], ["smart plug", "plug"], ["space heater", "heater"],
-  ["standing fan", "fan"],
+  ["standing fan", "fan"], ["air purifiers", "airPurifier"], ["air purifier", "airPurifier"],
+  ["purifiers", "airPurifier"], ["purifier", "airPurifier"],
   ["lights", "light"], ["light", "light"], ["lamps", "light"], ["lamp", "light"],
   ["climate", "climate"], ["ac", "climate"],
   ["heater", "heater"],
@@ -497,6 +541,7 @@ const EN_CATEGORY_WORDS: ReadonlyArray<readonly [string, IntentCategory]> = [
   ["plugs", "plug"], ["plug", "plug"], ["socket", "plug"], ["outlet", "plug"],
   ["vacuum", "vacuum"],
   ["television", "tv"], ["tv", "tv"],
+  ["cameras", "camera"], ["camera", "camera"],
 ];
 
 const EN_FILLERS = [
@@ -664,8 +709,14 @@ export const LocalIntentParser = {
       ops.push({ kind: "fanSpeed", speed: "medium" });
     } else if (clean.includes("低档") || clean.includes("一档") || clean.includes("风速调低") || clean.includes("最小风")) {
       ops.push({ kind: "fanSpeed", speed: "low" });
+    } else if (clean.includes("自动模式")) {
+      ops.push({ kind: "fanSpeed", speed: "auto" });
     } else if (clean.includes("自动风") || clean.includes("自动档")) {
       ops.push({ kind: "fanSpeed", speed: "auto" });
+    } else if (clean.includes("睡眠模式") || clean.includes("睡眠档") || clean.includes("静音模式") || clean.includes("静音档")) {
+      ops.push({ kind: "fanSpeed", speed: "sleep" });
+    } else if (clean.includes("最爱模式") || clean.includes("最爱档") || clean.includes("最爱")) {
+      ops.push({ kind: "fanSpeed", speed: "favorite" });
     }
 
     const hasOpen = clean.includes("打开") || clean.includes("开启") || clean.startsWith("开");
@@ -694,7 +745,9 @@ export const LocalIntentParser = {
       const wanted = new Set<IntentCategory>();
       if (clean.includes("灯")) wanted.add("light");
       if (clean.includes("空调")) wanted.add("climate");
-      if (clean.includes("风扇")) wanted.add("fan");
+      if (clean.includes("净化器") || clean.includes("空净")) wanted.add("airPurifier");
+      else if (clean.includes("风扇")) wanted.add("fan");
+      if (clean.includes("摄像") || clean.includes("监控")) wanted.add("camera");
       const effectiveWanted = wanted.size > 0 ? wanted : implied;
 
       candidates = devices.filter((d) => {
@@ -802,6 +855,7 @@ export const LocalIntentParser = {
       ["fan speed medium", "medium"], ["medium fan speed", "medium"], ["medium speed", "medium"],
       ["fan speed low", "low"], ["low fan speed", "low"], ["low speed", "low"], ["min speed", "low"],
       ["fan speed auto", "auto"], ["auto fan speed", "auto"], ["auto speed", "auto"],
+      ["sleep mode", "sleep"], ["favorite mode", "favorite"],
     ];
     for (const [p, val] of fanPhrases) {
       if (consumeEnglishPhrase(p, state)) rawOps.push({ kind: "fanSpeed", speed: val });
@@ -972,6 +1026,7 @@ export const ModelActionPolicy = {
         if (op.kind === "hvacMode") return op.mode !== "off";
         return true;
       case "plug":
+      case "camera":
         return op.kind === "power";
       case "vacuum":
         return op.kind === "power" && op.isOn;
@@ -1356,15 +1411,18 @@ export function buildAssistantContext(options: {
   };
 }
 
-/** `light`/`climate`/`fan`/`plug`/`vacuum`; `null` for sensors (not assistant-controllable). */
+/** `light`/`climate`/`fan`/`airPurifier`/`plug`/`vacuum`; `null` for sensors (not assistant-controllable). */
 export function assistantDeviceCategory(device: SmartDevice): string | null {
   switch (device.kind.kind) {
     case "light":
     case "climate":
-    case "fan":
     case "plug":
     case "vacuum":
+    case "camera":
       return device.kind.kind;
+    case "fan":
+      // Same classification the local parser and the macOS catalog use (#98).
+      return isAirPurifierDevice(device) ? "airPurifier" : "fan";
     case "sensor":
       return null;
   }
@@ -1412,6 +1470,8 @@ export function catalogStateSummary(device: SmartDevice): string {
     case "vacuum":
       // macOS VacuumSpec.isCleaning treats both "cleaning" and "on" as 清扫中 (#38).
       return kind.status === "cleaning" || kind.status === "on" ? "清扫中" : "待机";
+    case "camera":
+      return kind.isOn ? "开" : "关";
     case "sensor":
       return "";
   }
@@ -1592,6 +1652,7 @@ export function deviceSpecificCriteria(device: SmartDevice): Record<string, stri
     }
     case "plug":
     case "vacuum":
+    case "camera":
     case "sensor":
       break;
   }

@@ -452,4 +452,206 @@ struct MijiaCoreTests {
         store.applyDeviceAliases([:])
         #expect(store.devices.first?.name == "领普三键开关（中键）")
     }
+
+    @Test("Issue #97: Home Assistant and Mi Cloud cameras synthesize, map controls, exclude from All Off by default, and resolve live streams")
+    @MainActor
+    func cameraSynthesisControlsAndStreamResolution() async throws {
+        let areas = [HAAreaEntry(area_id: "living", name: "客厅")]
+        let devices = [
+            HADeviceEntry(id: "dev_cam_1", area_id: "living", name: "客厅摄像机", model: "chuangmi.camera.81ac1")
+        ]
+        let entities = [
+            HAEntityEntry(entity_id: "camera.living_cam", device_id: "dev_cam_1"),
+            HAEntityEntry(entity_id: "switch.living_cam_power", device_id: "dev_cam_1"),
+            HAEntityEntry(entity_id: "switch.living_cam_motion_detection", device_id: "dev_cam_1"),
+            HAEntityEntry(entity_id: "select.living_cam_night_shot", device_id: "dev_cam_1")
+        ]
+        let states: [String: HAEntityState] = [
+            "camera.living_cam": HAEntityState(
+                entityId: "camera.living_cam",
+                state: "streaming",
+                attributes: ["access_token": .string("tok123")]
+            ),
+            "switch.living_cam_power": HAEntityState(entityId: "switch.living_cam_power", state: "on"),
+            "switch.living_cam_motion_detection": HAEntityState(entityId: "switch.living_cam_motion_detection", state: "on"),
+            "select.living_cam_night_shot": HAEntityState(
+                entityId: "select.living_cam_night_shot",
+                state: "Auto",
+                attributes: ["options": .array([.string("Off"), .string("On"), .string("Auto")])]
+            )
+        ]
+
+        let home = DeviceSynthesizer.synthesize(areas: areas, devices: devices, entities: entities, states: states)
+        let cam = try #require(home.devices.first(where: { $0.id == "dev_cam_1" }))
+        guard case .camera(let spec) = cam.kind else {
+            Issue.record("Expected .camera DeviceKind")
+            return
+        }
+        #expect(spec.isOn == true)
+        #expect(spec.nightShot == "Auto")
+        #expect(spec.availableNightShots == ["Off", "On", "Auto"])
+        #expect(spec.motionDetectionEntityId == "switch.living_cam_motion_detection")
+        #expect(spec.isMotionDetectionOn == true)
+        #expect(spec.streamEntityId == "camera.living_cam")
+        #expect(spec.snapshotPath == "/api/camera_proxy/camera.living_cam?token=tok123")
+        #expect(HomeStore.joinsAllOffByDefault(cam) == false)
+
+        // Verify HA service mapping for composite power|select entityId and camera#motion
+        let powerCall = HAWebSocketProvider.mapCommandToService(.setSwitch(entityId: spec.entityId, isOn: false))
+        #expect(powerCall.domain == "switch")
+        #expect(powerCall.service == "turn_off")
+        #expect(powerCall.payload["entity_id"] as? String == "switch.living_cam_power")
+
+        let nightCall = HAWebSocketProvider.mapCommandToService(.setSelectOption(entityId: spec.entityId, option: "On"))
+        #expect(nightCall.domain == "select")
+        #expect(nightCall.service == "select_option")
+        #expect(nightCall.payload["entity_id"] as? String == "select.living_cam_night_shot")
+        #expect(nightCall.payload["option"] as? String == "On")
+
+        let motionCall = HAWebSocketProvider.mapCommandToService(.setSwitch(entityId: "camera.living_cam#motion", isOn: true))
+        #expect(motionCall.domain == "camera")
+        #expect(motionCall.service == "enable_motion_detection")
+        #expect(motionCall.payload["entity_id"] as? String == "camera.living_cam")
+
+        // Verify MiCloudProvider stream URL extraction from MIoT start-hls-stream action response
+        let actionResult: JSONValue = .object([
+            "code": .number(0),
+            "out": .array([.string("https://stream.api.io.mi.com/live/cam1/index.m3u8")])
+        ])
+        #expect(MiCloudProvider.extractStreamURL(from: actionResult)?.absoluteString == "https://stream.api.io.mi.com/live/cam1/index.m3u8")
+
+        // Verify HomeStore controls, live view callback, and custom stream URL resolution
+        let mock = MockHomeProvider(snapshot: home)
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.camera.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        var openedCameraId: String?
+        store.onOpenCameraLiveView = { openedCameraId = $0.id }
+        store.openCameraLiveView("dev_cam_1")
+        #expect(openedCameraId == "dev_cam_1")
+        #expect(store.activeLiveCameraDeviceId == "dev_cam_1")
+
+        store.setCameraNightShot("dev_cam_1", mode: "On")
+        store.setCameraMotionDetection("dev_cam_1", enabled: false)
+        try await Task.sleep(for: .milliseconds(40))
+        let cmds = await mock.executedCommands
+        #expect(cmds.contains(.setSelectOption(entityId: spec.entityId, option: "On")))
+        #expect(cmds.contains(.setSwitch(entityId: "switch.living_cam_motion_detection", isOn: false)))
+
+        store.setCameraCustomStreamURL("http://127.0.0.1:1984/api/stream.m3u8?src=living", for: "dev_cam_1")
+        let resolved = try await store.resolveCameraStream(for: "dev_cam_1")
+        #expect(resolved == .hls(URL(string: "http://127.0.0.1:1984/api/stream.m3u8?src=living")!))
+    }
+
+    @Test("Issue #98: Air purifier (zhimi.airp.rma3) synthesizes PM2.5, air quality, temperature/humidity, filter life, and maps speed slider to Favorite fan-level")
+    @MainActor
+    func airPurifierSynthesisAndControls() async throws {
+        let areas = [HAAreaEntry(area_id: "study", name: "书房")]
+        let devices = [
+            HADeviceEntry(id: "dev_airp_1", area_id: "study", name: "米家空气净化器 4 Lite", model: "zhimi.airp.rma3")
+        ]
+        let entities = [
+            HAEntityEntry(entity_id: "fan.study_airp", device_id: "dev_airp_1", area_id: "study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_pm2_5_density", device_id: "dev_airp_1", area_id: "study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_air_quality", device_id: "dev_airp_1", area_id: "study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_temperature", device_id: "dev_airp_1", area_id: "study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_relative_humidity", device_id: "dev_airp_1", area_id: "study"),
+            HAEntityEntry(entity_id: "sensor.study_airp_filter_life_level", device_id: "dev_airp_1", area_id: "study")
+        ]
+        let states: [String: HAEntityState] = [
+            "fan.study_airp": HAEntityState(
+                entityId: "fan.study_airp",
+                state: "on",
+                attributes: [
+                    "percentage": .number(50),
+                    "preset_mode": .string("Auto"),
+                    "preset_modes": .array([.string("Auto"), .string("Sleep"), .string("Favorite")])
+                ]
+            ),
+            "sensor.study_airp_pm2_5_density": HAEntityState(entityId: "sensor.study_airp_pm2_5_density", state: "18"),
+            "sensor.study_airp_air_quality": HAEntityState(entityId: "sensor.study_airp_air_quality", state: "Excellent"),
+            "sensor.study_airp_temperature": HAEntityState(entityId: "sensor.study_airp_temperature", state: "24.5"),
+            "sensor.study_airp_relative_humidity": HAEntityState(entityId: "sensor.study_airp_relative_humidity", state: "52"),
+            "sensor.study_airp_filter_life_level": HAEntityState(entityId: "sensor.study_airp_filter_life_level", state: "86")
+        ]
+
+        let home = DeviceSynthesizer.synthesize(areas: areas, devices: devices, entities: entities, states: states)
+        let purifier = try #require(home.devices.first(where: { $0.id == "dev_airp_1" }))
+        #expect(purifier.sfSymbolName == "aqi.medium")
+        #expect(purifier.statusSubtitle.contains("PM2.5 18"))
+        #expect(purifier.statusSubtitle.contains("52%"))
+        guard case .fan(let spec) = purifier.kind else {
+            Issue.record("Expected .fan(FanSpec) for air purifier")
+            return
+        }
+        #expect(spec.pm25Density == 18)
+        #expect(spec.airQuality == "Excellent")
+        #expect(spec.temperature == 24.5)
+        #expect(spec.humidity == 52)
+        #expect(spec.filterLifePercent == 86)
+
+        let pctCall = HAWebSocketProvider.mapCommandToService(.setFanPercentage(entityId: spec.entityId, percent: 80))
+        #expect(pctCall.domain == "fan")
+        #expect(pctCall.service == "set_percentage")
+        #expect(pctCall.payload["percentage"] as? Int == 80)
+
+        let mock = MockHomeProvider(snapshot: home)
+        let store = HomeStore(provider: mock, defaultsSuiteName: "test.airp.\(UUID().uuidString)")
+        for _ in 0..<50 where store.devices.isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        store.setFanPercentage("dev_airp_1", percent: 80)
+        if let updated = store.devices.first(where: { $0.id == "dev_airp_1" }),
+           case .fan(let updatedSpec) = updated.kind {
+            #expect(updatedSpec.percentage == 80)
+            #expect(updatedSpec.presetMode == "Favorite")
+        }
+    }
+
+    @Test("Issue #98 survey: secondary light services no longer claim hood/airer/bath-heater cards; video-doorbell controls map to camera")
+    func miotServiceSelectionGuards() throws {
+        func spec(_ type: String, _ services: [MiotService]) -> MiotDeviceSpec {
+            MiotDeviceSpec(type: type, services: services)
+        }
+        func prop(_ name: String, _ access: [String], range: [Double]? = nil) -> MiotProperty {
+            MiotProperty(
+                iid: 1,
+                type: "urn:miot-spec-v2:property:\(name):00000000:test:1",
+                format: range == nil ? "bool" : "uint8",
+                access: access,
+                valueRange: range
+            )
+        }
+        func service(_ iid: Int, _ name: String, _ props: [MiotProperty]) -> MiotService {
+            MiotService(iid: iid, type: "urn:miot-spec-v2:service:\(name):00000000:test:1", properties: props)
+        }
+
+        // Hood carries a lamp: the lamp must not become the whole device card.
+        let hood = spec("urn:miot-spec-v2:device:hood:0000A01B:viomi-c4:1", [
+            service(2, "hood", [prop("on", ["read", "write"])]),
+            service(6, "light", [prop("on", ["read", "write"])]),
+        ])
+        #expect(MiotSynthesizer.supportedServiceName(for: hood) == nil)
+
+        // Ceiling fan: the fan service is the device, the light is the accessory.
+        let ceilingFan = spec("urn:miot-spec-v2:device:ceiling-fan:0000A02C:test:1", [
+            service(2, "fan", [prop("on", ["read", "write"]), prop("fan-level", ["read", "write"], range: [1, 100, 1])]),
+            service(3, "light", [prop("on", ["read", "write"])]),
+        ])
+        #expect(MiotSynthesizer.supportedServiceName(for: ceilingFan) == "fan")
+
+        // Video doorbell: the video-doorbell service exposes camera-style controls.
+        let doorbell = spec("urn:miot-spec-v2:device:video-doorbell:0000A03A:xiaomi-4pro:1", [
+            service(2, "video-doorbell", [prop("on", ["read", "write"]), prop("night-shot", ["read", "write"])]),
+        ])
+        #expect(MiotSynthesizer.supportedServiceName(for: doorbell) == "video-doorbell")
+
+        // Real lights keep synthesizing as lights.
+        let plainLight = spec("urn:miot-spec-v2:device:light:0000A001:yeelink-1:1", [
+            service(2, "light", [prop("on", ["read", "write"]), prop("brightness", ["read", "write"], range: [1, 100, 1])]),
+        ])
+        #expect(MiotSynthesizer.supportedServiceName(for: plainLight) == "light")
+    }
 }

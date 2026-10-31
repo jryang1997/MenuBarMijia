@@ -586,6 +586,10 @@ export class MiCloudClient {
   }
 
   async action(call: MiotActionCall): Promise<void> {
+    await this.callAction(call);
+  }
+
+  async callAction(call: MiotActionCall): Promise<unknown> {
     const result = await this.request("miotspec/action", {
       params: {
         did: call.did,
@@ -602,6 +606,7 @@ export class MiCloudClient {
         throw new MiCloudError("api", "设备未响应或离线", code);
       }
     }
+    return result;
   }
 }
 
@@ -907,6 +912,56 @@ export function inferFallbackSpec(record: Pick<MiDeviceRecord, "model" | "name">
     };
   }
 
+  if (
+    m.includes("airp") ||
+    m.includes("airpurifier") ||
+    n.includes("净化器") ||
+    n.includes("空净")
+  ) {
+    return {
+      type: "urn:miot-spec-v2:device:air-purifier:0000A007:fallback:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:air-purifier:00007811:fallback:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:fallback:1", format: "bool", access: ["read", "write"] },
+            {
+              iid: 4,
+              type: "urn:miot-spec-v2:property:mode:00000008:fallback:1",
+              format: "uint8",
+              access: ["read", "write"],
+              valueList: [
+                { value: 0, description: "Auto" },
+                { value: 1, description: "Sleep" },
+                { value: 2, description: "Favorite" },
+              ],
+            },
+          ],
+          actions: [],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:environment:0000780A:fallback:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:relative-humidity:0000000C:fallback:1", format: "uint8", access: ["read"], valueRange: [0, 100, 1] },
+            { iid: 4, type: "urn:miot-spec-v2:property:pm2.5-density:00000034:fallback:1", format: "uint16", access: ["read"], valueRange: [0, 1000, 1] },
+            { iid: 7, type: "urn:miot-spec-v2:property:temperature:00000020:fallback:1", format: "float", access: ["read"], valueRange: [-30, 100, 1] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 4,
+          type: "urn:miot-spec-v2:service:filter:0000780B:fallback:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:filter-life-level:0000001E:fallback:1", format: "uint8", access: ["read"], valueRange: [0, 100, 1] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+  }
+
   if (m.includes("vacuum") || n.includes("扫地") || n.includes("扫拖")) {
     return {
       type: "urn:miot-spec-v2:device:vacuum:0000A006:fallback:1",
@@ -933,6 +988,45 @@ export function inferFallbackSpec(record: Pick<MiDeviceRecord, "model" | "name">
             { iid: 1, type: "urn:miot-spec-v2:action:start-sweep:00002804:fallback:1" },
             { iid: 2, type: "urn:miot-spec-v2:action:stop-sweeping:00002805:fallback:1" },
           ],
+        },
+      ],
+    };
+  }
+
+  if (
+    m.includes("camera") ||
+    m.includes("cateye") ||
+    m.includes("doorbell") ||
+    n.includes("摄像") ||
+    n.includes("监控") ||
+    n.includes("猫眼")
+  ) {
+    return {
+      type: "urn:miot-spec-v2:device:camera:0000A01C:fallback:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:camera-control:0000782F:fallback:1",
+          properties: [
+            {
+              iid: 1,
+              type: "urn:miot-spec-v2:property:on:00000006:fallback:1",
+              format: "bool",
+              access: ["read", "write"],
+            },
+            {
+              iid: 3,
+              type: "urn:miot-spec-v2:property:night-shot:00000057:fallback:1",
+              format: "uint8",
+              access: ["read", "write"],
+              valueList: [
+                { value: 0, description: "Off" },
+                { value: 1, description: "On" },
+                { value: 2, description: "Auto" },
+              ],
+            },
+          ],
+          actions: [],
         },
       ],
     };
@@ -1174,11 +1268,13 @@ export const MiotSynthesizer = {
 
     for (const record of devices) {
       if (splitParents.has(record.did)) continue;
+      // A real spec that yields no builder means the category is unsupported — drop the
+      // device (macOS parity). The offline fallback spec applies only when no real spec
+      // was fetched at all; re-falling back here would re-admit devices the guard rejected.
       const spec = specs[record.model] ?? inferFallbackSpec(record);
       const built = record.splitParentDid
         ? this.buildDeviceKind(miotDid(record), specForRecord(record, spec), values)
-        : this.buildDeviceKind(record.did, spec, values) ??
-          this.buildDeviceKind(record.did, inferFallbackSpec(record), values);
+        : this.buildDeviceKind(record.did, spec, values);
       if (!built) continue;
 
       const room =
@@ -1267,19 +1363,33 @@ export const MiotSynthesizer = {
       "thermostat",
       "light",
       "fan",
+      "air-purifier",
+      "video-doorbell",
       "vacuum",
+      "camera-control",
       "outlet",
       "switch",
       "temperature-humidity-sensor",
     ];
     const devShort = miotShortName(spec.type);
-    const preferredServices = devShort === "outlet" ? ["outlet", "switch"] : [devShort];
+    const preferredServices =
+      devShort === "outlet"
+        ? ["outlet", "switch"]
+        : devShort === "camera" || devShort === "cateye" || devShort === "video-doorbell"
+          ? ["camera-control", "video-doorbell"]
+          : [devShort];
     let primaryService: MiotService | undefined = spec.services.find((s) => {
       const sShort = miotShortName(s.type);
       return preferredServices.includes(sShort) && priority.includes(sShort);
     });
     if (!primaryService) {
       for (const p of priority) {
+        // A secondary `light` service must not claim devices whose own type is something
+        // else (hood / airer / bath-heater / ceiling-fan / gateway), or those cards become
+        // bare lamps that only toggle their lamp while the primary function stays hidden.
+        if (p === "light" && devShort !== "light" && !devShort.includes("light") && !devShort.includes("lamp")) {
+          continue;
+        }
         const found = spec.services.find((s) => miotShortName(s.type) === p);
         if (found) {
           primaryService = found;
@@ -1290,9 +1400,20 @@ export const MiotSynthesizer = {
     if (!primaryService && devShort.endsWith("sensor")) {
       primaryService = spec.services.find((s) => miotShortName(s.type) === "environment");
     }
-    if (!primaryService) {
-      primaryService = spec.services.find((s) =>
-        s.properties.some((p) => miotShortName(p.type) === "on" && p.access.includes("write"))
+    if (
+      !primaryService &&
+      // If the spec names a service of its own device type we simply do not support that
+      // category yet — claiming the first writable `on` as a plug would fake a device
+      // (hood/airer would show up as an outlet).
+      !spec.services.some((s) => miotShortName(s.type) === devShort)
+    ) {
+      // Only genuine plug-like services may fall back to a plug card. macOS has no
+      // generic-on fallback at all, so accepting e.g. a bath-heater's `ptc-bath-heater`
+      // or `light` service here would fake a device the other platform drops (#98).
+      primaryService = spec.services.find(
+        (s) =>
+          ["outlet", "switch"].includes(miotShortName(s.type)) &&
+          s.properties.some((p) => miotShortName(p.type) === "on" && p.access.includes("write"))
       );
     }
     if (!primaryService) return null;
@@ -1441,6 +1562,98 @@ export const MiotSynthesizer = {
       };
     }
 
+    if (sName === "air-purifier") {
+      const on = readProp(primaryService, "on");
+      const mode = readProp(primaryService, "mode");
+      const levels = readProps(primaryService, "fan-level");
+      const favServices = [
+        ...spec.services.filter((s) => miotShortName(s.type) === "air-purifier-favorite"),
+        ...spec.services.filter((s) => miotShortName(s.type) === "motor-speed"),
+        ...spec.services.filter((s) => miotShortName(s.type) === "custom-service"),
+        ...spec.services.filter((s) => miotShortName(s.type) === "fan-control"),
+      ];
+      const favSpeed =
+        readFirst(favServices, "fan-level") ??
+        readFirst(favServices, "favorite-fan-level") ??
+        readFirst(favServices, "favorite-level") ??
+        readFirst(favServices, "favorite-speed");
+      const speedRef =
+        favSpeed ??
+        levels.find((r) => r.prop.valueRange !== undefined) ??
+        levels.find((r) => (r.prop.valueList?.length ?? 0) > 0);
+      const presetRef =
+        (mode?.prop.valueList?.length ?? 0) > 0
+          ? mode
+          : levels.find((r) => (r.prop.valueList?.length ?? 0) > 0);
+
+      let percentage: number | null = null;
+      if (speedRef && typeof speedRef.val === "number") {
+        const raw = speedRef.val;
+        const range = speedRef.prop.valueRange;
+        const list = speedRef.prop.valueList;
+        let scaled = raw;
+        if (range && range.length >= 2 && (range[1] ?? 0) > (range[0] ?? 0)) {
+          const lo = range[0] ?? 0;
+          const hi = range[1] ?? 100;
+          scaled = lo > 1 ? ((raw - lo) / (hi - lo)) * 100 : hi !== 100 ? (raw / hi) * 100 : raw;
+        } else if (list && list.length > 0) {
+          const vals = list.map((i) => i.value);
+          const lo = Math.min(...vals);
+          const hi = Math.max(...vals);
+          if (hi > lo) {
+            scaled = lo > 1 ? ((raw - lo) / (hi - lo)) * 100 : (raw / hi) * 100;
+          }
+        }
+        percentage = Math.max(0, Math.min(100, Math.round(scaled)));
+      }
+
+      const presetVal = typeof presetRef?.val === "number" ? Math.trunc(presetRef.val) : null;
+      const presetDesc =
+        presetVal !== null
+          ? (presetRef?.prop.valueList?.find((i) => i.value === presetVal)?.description ?? null)
+          : null;
+
+      const envServices = [
+        ...spec.services.filter((s) => miotShortName(s.type) === "environment"),
+        ...spec.services.filter((s) => miotShortName(s.type) === "temperature-humidity-sensor"),
+        primaryService,
+      ];
+      const pm25 = readFirst(envServices, "pm2.5-density");
+      const aq = readFirst(envServices, "air-quality");
+      const temp = readFirst(envServices, "temperature");
+      const hum = readFirst(envServices, "relative-humidity");
+      const filterServices = [
+        ...spec.services.filter((s) => miotShortName(s.type) === "filter"),
+        primaryService,
+      ];
+      const filterLife = readFirst(filterServices, "filter-life-level");
+
+      const pm25Density = typeof pm25?.val === "number" ? Math.round(pm25.val) : null;
+      const aqVal = typeof aq?.val === "number" ? Math.trunc(aq.val) : null;
+      const airQuality =
+        aqVal !== null
+          ? (aq?.prop.valueList?.find((i) => i.value === aqVal)?.description ?? null)
+          : null;
+      const temperature = typeof temp?.val === "number" ? temp.val : null;
+      const humidity = typeof hum?.val === "number" ? hum.val : null;
+      const filterLifePercent = typeof filterLife?.val === "number" ? Math.round(filterLife.val) : null;
+
+      return {
+        kind: "fan",
+        entityId: makeMiotAddress(did, primaryService.iid),
+        isOn: miotBool(on?.val) ?? false,
+        percentage,
+        presetMode: presetDesc,
+        availablePresetModes: presetRef?.prop.valueList?.map((i) => i.description) ?? [],
+        isOscillating: null,
+        ...(pm25Density !== null ? { pm25Density } : {}),
+        ...(airQuality !== null ? { airQuality } : {}),
+        ...(temperature !== null ? { temperature } : {}),
+        ...(humidity !== null ? { humidity } : {}),
+        ...(filterLifePercent !== null ? { filterLifePercent } : {}),
+      };
+    }
+
     if (sName === "vacuum") {
       const status = readProp(primaryService, "status");
       const mode = readProp(primaryService, "mode");
@@ -1490,6 +1703,40 @@ export const MiotSynthesizer = {
         modeEntityId: mode ? makeMiotAddress(did, mode.service.iid) : null,
         currentMode,
         availableModes: mode?.prop.valueList?.map((i) => i.description) ?? [],
+      };
+    }
+
+    if (sName === "camera-control" || sName === "video-doorbell") {
+      const on = readProp(primaryService, "on");
+      const nightShot = readProp(primaryService, "night-shot");
+      const motionSvc = spec.services.find((s) => miotShortName(s.type) === "motion-detection");
+      const motion = motionSvc ? readProp(motionSvc, "motion-detection") : null;
+      const streamSvc =
+        spec.services.find(
+          (s) =>
+            miotShortName(s.type) === "camera-stream-for-google-home" &&
+            s.actions.some((a) => miotShortName(a.type) === "start-hls-stream")
+        ) ??
+        spec.services.find(
+          (s) =>
+            miotShortName(s.type) === "camera-stream-for-amazon-alexa" &&
+            s.actions.some((a) => miotShortName(a.type) === "start-rtsp-stream")
+        );
+      const nightVal = typeof nightShot?.val === "number" ? Math.trunc(nightShot.val) : null;
+      const currentNightShot =
+        nightVal !== null
+          ? (nightShot?.prop.valueList?.find((i) => i.value === nightVal)?.description ?? null)
+          : null;
+
+      return {
+        kind: "camera",
+        entityId: makeMiotAddress(did, primaryService.iid),
+        isOn: miotBool(on?.val) ?? false,
+        nightShot: currentNightShot,
+        availableNightShots: nightShot?.prop.valueList?.map((i) => i.description) ?? [],
+        motionDetectionEntityId: motion ? makeMiotAddress(did, motion.service.iid) : null,
+        isMotionDetectionOn: miotBool(motion?.val),
+        streamEntityId: streamSvc ? makeMiotAddress(did, streamSvc.iid) : null,
       };
     }
 
@@ -1581,6 +1828,7 @@ export const MiotCommandMapper = {
         ...(searchAll
           ? [
               ...spec.services.filter((s) => miotShortName(s.type) === "fan-control"),
+              ...spec.services.filter((s) => miotShortName(s.type) === "air-purifier-favorite"),
               ...spec.services.filter((s) => s.iid !== service.iid),
             ]
           : []),
@@ -1710,8 +1958,90 @@ export const MiotCommandMapper = {
           writes: [{ did: addr.did, siid: found.service.iid, piid: found.prop.iid, value: found.item.value }],
         };
       }
+      case "setFanPercentage": {
+        if (command.percent <= 0) {
+          const { prop } = findProp("on");
+          return {
+            kind: "setProps",
+            writes: [{ did: addr.did, siid: service.iid, piid: prop.iid, value: false }],
+          };
+        }
+        let speedFound: { service: MiotService; prop: MiotProperty } | null = null;
+        const directRange = service.properties.find(
+          (p) => miotShortName(p.type) === "fan-level" && p.access.includes("write") && p.valueRange !== undefined
+        );
+        if (directRange) {
+          speedFound = { service, prop: directRange };
+        }
+        if (!speedFound) {
+          const favServices = [
+            ...spec.services.filter((s) => miotShortName(s.type) === "air-purifier-favorite"),
+            ...spec.services.filter((s) => miotShortName(s.type) === "motor-speed"),
+            ...spec.services.filter((s) => miotShortName(s.type) === "custom-service"),
+            ...spec.services.filter((s) => miotShortName(s.type) === "fan-control"),
+          ];
+          const candidates = ["fan-level", "favorite-fan-level", "favorite-level", "favorite-speed"];
+          for (const name of candidates) {
+            if (speedFound) break;
+            for (const s of favServices) {
+              const p = s.properties.find((pr) => miotShortName(pr.type) === name && pr.access.includes("write"));
+              if (p) {
+                speedFound = { service: s, prop: p };
+                break;
+              }
+            }
+          }
+        }
+        if (!speedFound) {
+          const directList = service.properties.find(
+            (p) => miotShortName(p.type) === "fan-level" && p.access.includes("write")
+          );
+          if (directList) speedFound = { service, prop: directList };
+        }
+        if (!speedFound) throw new Error("Unsupported property: fan-level");
+
+        const clamped = Math.max(0, Math.min(100, command.percent));
+        let writeVal: number;
+        const range = speedFound.prop.valueRange;
+        const list = speedFound.prop.valueList;
+        if (range && range.length >= 2 && (range[1] ?? 0) > (range[0] ?? 0)) {
+          const lo = range[0] ?? 0;
+          const hi = range[1] ?? 100;
+          const raw = lo > 1 ? lo + (clamped / 100) * (hi - lo) : hi !== 100 ? (clamped / 100) * hi : clamped;
+          writeVal = coerce(speedFound.prop, raw);
+        } else if (list && list.length > 0) {
+          const vals = list.map((i) => i.value);
+          const lo = Math.min(...vals);
+          const hi = Math.max(...vals);
+          const target = lo === 0 && hi > 0 ? (clamped / 100) * hi : hi > lo ? lo + (clamped / 100) * (hi - lo) : lo;
+          let best = list[0]!;
+          for (const item of list) {
+            if (Math.abs(item.value - target) < Math.abs(best.value - target)) {
+              best = item;
+            }
+          }
+          writeVal = best.value;
+        } else {
+          writeVal = coerce(speedFound.prop, clamped);
+        }
+
+        const prefix = [...powerOnPrefix()];
+        if (speedFound.service.iid !== service.iid) {
+          const favMode = findListProp("mode", "Favorite");
+          if (favMode) {
+            prefix.push({ did: addr.did, siid: favMode.service.iid, piid: favMode.prop.iid, value: favMode.item.value });
+          }
+        }
+        return {
+          kind: "setProps",
+          writes: [
+            ...prefix,
+            { did: addr.did, siid: speedFound.service.iid, piid: speedFound.prop.iid, value: writeVal },
+          ],
+        };
+      }
       case "setFanPresetMode": {
-        const found = findListProp("mode", command.presetMode) ?? findListProp("fan-level", command.presetMode);
+        const found = findListProp("mode", command.presetMode) ?? findListProp("fan-level", command.presetMode, true);
         if (!found) throw new Error(`Unsupported preset: ${command.presetMode}`);
         return {
           kind: "setProps",
@@ -1726,13 +2056,25 @@ export const MiotCommandMapper = {
         };
       }
       case "setSwitch": {
-        const onProp = service.properties.find(
-          (p) => miotShortName(p.type) === "on" && p.access.includes("write")
-        );
+        const onProp =
+          service.properties.find(
+            (p) => miotShortName(p.type) === "on" && p.access.includes("write")
+          ) ??
+          service.properties.find(
+            (p) => miotShortName(p.type) === "motion-detection" && p.access.includes("write")
+          );
         const targetProp = onProp ?? findProp("physical-controls-locked").prop;
         return {
           kind: "setProps",
           writes: [{ did: addr.did, siid: service.iid, piid: targetProp.iid, value: command.isOn }],
+        };
+      }
+      case "setSelectOption": {
+        const found = findListProp("mode", command.option) ?? findListProp("night-shot", command.option);
+        if (!found) throw new Error(`Unsupported select option: ${command.option}`);
+        return {
+          kind: "setProps",
+          writes: [{ did: addr.did, siid: found.service.iid, piid: found.prop.iid, value: found.item.value }],
         };
       }
       case "vacuumAction": {

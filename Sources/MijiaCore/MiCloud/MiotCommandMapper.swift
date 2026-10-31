@@ -70,19 +70,39 @@ public enum MiotCommandMapper {
         case .setClimateFanMode(_, let fanMode):
             return .setProps([try ctx.writeListValue("fan-level", description: fanMode, searchDevice: true)])
 
+        case .setFanPercentage(_, let percent):
+            if percent <= 0 { return .setProps([try ctx.write("on", .bool(false))]) }
+            let speed = try ctx.requireFanSpeedProperty()
+            var prefix = ctx.powerOnPrefix()
+            if speed.service.iid != service.iid,
+               let favMode = try? ctx.writeListValue("mode", description: "Favorite") {
+                prefix.append(favMode)
+            }
+            return .setProps(prefix + [ctx.writePercentage(speed, percent: percent)])
+
         case .setFanPresetMode(_, let preset):
             if let w = try? ctx.writeListValue("mode", description: preset) { return .setProps([w]) }
-            return .setProps([try ctx.writeListValue("fan-level", description: preset)])
+            return .setProps([try ctx.writeListValue("fan-level", description: preset, searchDevice: true)])
 
         case .setFanOscillating(_, let oscillating):
             return .setProps([try ctx.write("horizontal-swing", .bool(oscillating))])
 
         case .setSwitch(_, let isOn):
-            let name = ctx.property("on") != nil ? "on" : "physical-controls-locked"
+            let name: String
+            if ctx.property("on") != nil {
+                name = "on"
+            } else if ctx.property("motion-detection") != nil {
+                name = "motion-detection"
+            } else {
+                name = "physical-controls-locked"
+            }
             return .setProps([try ctx.write(name, .bool(isOn))])
 
         case .setSelectOption(_, let option):
-            return .setProps([try ctx.writeListValue("mode", description: option)])
+            if let w = try? ctx.writeListValue("mode", description: option) {
+                return .setProps([w])
+            }
+            return .setProps([try ctx.writeListValue("night-shot", description: option)])
 
         case .vacuumAction(_, let action):
             let candidates: [String] = switch action {
@@ -141,7 +161,10 @@ public enum MiotCommandMapper {
         }
 
         func writeListValue(_ name: String, description: String, searchDevice: Bool = false) throws -> MiotPropWrite {
-            let services = [service] + (searchDevice ? spec.services(named: "fan-control") + spec.services.filter { $0.iid != service.iid } : [])
+            let extraServices = spec.services(named: "fan-control")
+                + spec.services(named: "air-purifier-favorite")
+                + spec.services.filter { $0.iid != service.iid }
+            let services = [service] + (searchDevice ? extraServices : [])
             for s in services {
                 for p in s.properties where p.shortName == name && p.isWritable {
                     if let item = p.valueList?.first(where: { $0.description.caseInsensitiveCompare(description) == .orderedSame }) {
@@ -150,6 +173,52 @@ public enum MiotCommandMapper {
                 }
             }
             throw MiotCommandError.unsupported("\(name)=\(description)")
+        }
+
+        func requireFanSpeedProperty() throws -> Found {
+            if let p = service.properties.first(where: { $0.shortName == "fan-level" && $0.isWritable && $0.valueRange != nil }) {
+                return Found(service: service, property: p)
+            }
+            let favServices = spec.services(named: "air-purifier-favorite")
+                + spec.services(named: "motor-speed")
+                + spec.services(named: "custom-service")
+                + spec.services(named: "fan-control")
+            let candidates = ["fan-level", "favorite-fan-level", "favorite-level", "favorite-speed"]
+            for name in candidates {
+                for s in favServices {
+                    if let p = s.properties.first(where: { $0.shortName == name && $0.isWritable }) {
+                        return Found(service: s, property: p)
+                    }
+                }
+            }
+            if let p = service.properties.first(where: { $0.shortName == "fan-level" && $0.isWritable }) {
+                return Found(service: service, property: p)
+            }
+            throw MiotCommandError.unsupported("fan-level")
+        }
+
+        func writePercentage(_ found: Found, percent: Int) -> MiotPropWrite {
+            let clamped = Double(Swift.max(0, Swift.min(100, percent)))
+            if let lo = found.property.rangeMin, let hi = found.property.rangeMax, hi > lo {
+                let raw = lo > 1 ? lo + (clamped / 100.0) * (hi - lo) : (hi != 100 ? (clamped / 100.0) * hi : clamped)
+                return write(found, .number(raw))
+            }
+            if let list = found.property.valueList, !list.isEmpty {
+                let vals = list.map(\.value)
+                let lo = vals.min() ?? 0
+                let hi = vals.max() ?? 0
+                let target: Double
+                if lo == 0, hi > 0 {
+                    target = (clamped / 100.0) * Double(hi)
+                } else if hi > lo {
+                    target = Double(lo) + (clamped / 100.0) * Double(hi - lo)
+                } else {
+                    target = Double(lo)
+                }
+                let best = list.min(by: { abs(Double($0.value) - target) < abs(Double($1.value) - target) }) ?? list[0]
+                return write(found, .number(Double(best.value)))
+            }
+            return write(found, .number(clamped))
         }
 
         func action(_ candidates: [String]) throws -> MiotActionCall {
@@ -186,7 +255,7 @@ extension DeviceCommand {
         case .setLightPower(let id, _), .setLightBrightness(let id, _), .setLightColorTemp(let id, _),
              .setLightEffect(let id, _), .setClimatePower(let id, _, _), .setClimateMode(let id, _),
              .setClimateTemperature(let id, _), .setClimateFanMode(let id, _), .setClimateSwingMode(let id, _),
-             .setFanPower(let id, _), .setFanPresetMode(let id, _), .setFanOscillating(let id, _),
+             .setFanPower(let id, _), .setFanPercentage(let id, _), .setFanPresetMode(let id, _), .setFanOscillating(let id, _),
              .setSwitch(let id, _), .setSelectOption(let id, _), .setNumberValue(let id, _),
              .vacuumAction(let id, _), .mediaSetVolume(let id, _), .mediaSelectSource(let id, _),
              .pressButton(let id), .sendNotifyMessage(let id, _), .activateScene(let id):

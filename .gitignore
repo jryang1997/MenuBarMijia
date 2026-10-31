@@ -41,3 +41,7 @@ video_promo/
 docs/assets/AppIcon_*.png
 
 .review/
+
+# 本地诊断脚本与临时实验（摄像机 #97 排错脚本等，保留在本地磁盘）
+.scratch/
+

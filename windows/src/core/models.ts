@@ -43,6 +43,11 @@ export interface FanSpec {
   presetMode: string | null;
   readonly availablePresetModes: readonly string[];
   isOscillating: boolean | null;
+  readonly pm25Density?: number | null;
+  readonly airQuality?: string | null;
+  readonly temperature?: number | null;
+  readonly humidity?: number | null;
+  readonly filterLifePercent?: number | null;
 }
 
 export interface PlugSpec {
@@ -65,6 +70,19 @@ export interface VacuumSpec {
   readonly availableModes: readonly string[];
 }
 
+export interface CameraSpec {
+  readonly kind: "camera";
+  readonly entityId: string;
+  isOn: boolean;
+  nightShot: string | null;
+  readonly availableNightShots: readonly string[];
+  readonly motionDetectionEntityId: string | null;
+  isMotionDetectionOn: boolean | null;
+  readonly streamEntityId: string | null;
+  /** HA-only still frame URL; always absent on the MIoT backend (model parity with macOS). */
+  readonly snapshotPath?: string | null;
+}
+
 export interface SensorSpec {
   readonly kind: "sensor";
   readonly temperature: number | null;
@@ -78,8 +96,8 @@ export type DeviceKind =
   | FanSpec
   | PlugSpec
   | VacuumSpec
+  | CameraSpec
   | SensorSpec;
-
 export interface SmartDevice {
   readonly id: string;
   readonly name: string;
@@ -130,9 +148,11 @@ export type DeviceCommand =
   | { readonly kind: "setClimateTemperature"; readonly entityId: string; readonly temperature: number }
   | { readonly kind: "setClimateFanMode"; readonly entityId: string; readonly fanMode: string }
   | { readonly kind: "setFanPower"; readonly entityId: string; readonly isOn: boolean }
+  | { readonly kind: "setFanPercentage"; readonly entityId: string; readonly percent: number }
   | { readonly kind: "setFanPresetMode"; readonly entityId: string; readonly presetMode: string }
   | { readonly kind: "setFanOscillating"; readonly entityId: string; readonly oscillating: boolean }
   | { readonly kind: "setSwitch"; readonly entityId: string; readonly isOn: boolean }
+  | { readonly kind: "setSelectOption"; readonly entityId: string; readonly option: string }
   | { readonly kind: "vacuumAction"; readonly entityId: string; readonly action: VacuumAction }
   | { readonly kind: "activateScene"; readonly entityId: string };
 
@@ -178,7 +198,11 @@ export interface ScheduledCommand {
 
 /** Plugs often power a router, fridge or NAS, and 全关 should not send a cleaning vacuum home (#23). */
 export function joinsAllOffByDefault(device: SmartDevice): boolean {
-  return device.kind.kind !== "plug" && device.kind.kind !== "vacuum";
+  return (
+    device.kind.kind !== "plug" &&
+    device.kind.kind !== "vacuum" &&
+    device.kind.kind !== "camera"
+  );
 }
 
 export function joinsAllOff(device: SmartDevice, overrides: Readonly<Record<string, boolean>>): boolean {
@@ -229,6 +253,7 @@ export function isDeviceActiveOn(device: SmartDevice): boolean {
     case "climate":
     case "fan":
     case "plug":
+    case "camera":
       return device.kind.isOn;
     case "vacuum":
       return device.kind.status === "cleaning";
@@ -239,6 +264,86 @@ export function isDeviceActiveOn(device: SmartDevice): boolean {
       return _exhaustive;
     }
   }
+}
+
+export function localizeNightShot(mode: string): string {
+  switch (mode.trim().toLowerCase()) {
+    case "off":
+    case "close":
+      return t("夜视关");
+    case "on":
+    case "open":
+      return t("夜视开");
+    case "auto":
+    case "automatic":
+      return t("自动夜视");
+    case "auto full color":
+    case "smart full color":
+    case "auto smart full color":
+      return t("智能全彩");
+    case "on full color":
+    case "full color":
+      return t("全彩夜视");
+    default:
+      return mode;
+  }
+}
+
+export function localizeFanPreset(mode: string): string {
+  switch (mode.trim().toLowerCase()) {
+    case "auto":
+    case "automatic":
+      return t("自动");
+    case "sleep":
+      return t("睡眠");
+    case "favorite":
+    case "favourite":
+      return t("最爱");
+    case "manual":
+    case "none":
+      return t("手动");
+    case "silent":
+      return t("静音");
+    default:
+      return mode;
+  }
+}
+
+export function localizeAirQuality(raw: string | null | undefined, pm25?: number | null): string | null {
+  if (raw && raw.trim() !== "") {
+    switch (raw.trim().toLowerCase()) {
+      case "excellent":
+      case "空气优":
+      case "优":
+        return t("优");
+      case "good":
+      case "空气良":
+      case "良":
+        return t("良");
+      case "moderate":
+      case "轻度污染":
+        return t("轻度污染");
+      case "poor":
+      case "中度污染":
+        return t("中度污染");
+      case "heavy pollution":
+      case "heavy":
+      case "重度污染":
+        return t("重度污染");
+      case "hazardous":
+      case "严重污染":
+        return t("严重污染");
+      default:
+        return raw;
+    }
+  }
+  if (pm25 === undefined || pm25 === null) return null;
+  if (pm25 <= 35) return t("优");
+  if (pm25 <= 75) return t("良");
+  if (pm25 <= 115) return t("轻度污染");
+  if (pm25 <= 150) return t("中度污染");
+  if (pm25 <= 250) return t("重度污染");
+  return t("严重污染");
 }
 
 export function deviceStatusSummary(device: SmartDevice): string {
@@ -279,10 +384,29 @@ export function deviceStatusSummary(device: SmartDevice): string {
       return `${modeLabel} ${formatTemperature(k.targetTemperature)}${roomPart}`;
     }
     case "fan": {
-      if (!k.isOn) return t("已关闭");
+      const envParts: string[] = [];
+      if (k.pm25Density !== undefined && k.pm25Density !== null) {
+        const aq = localizeAirQuality(k.airQuality, k.pm25Density);
+        envParts.push(aq ? `PM2.5 ${k.pm25Density} ${aq}` : `PM2.5 ${k.pm25Density}`);
+      } else if (k.airQuality) {
+        const aq = localizeAirQuality(k.airQuality, null);
+        if (aq) envParts.push(aq);
+      }
+      if (k.temperature !== undefined && k.temperature !== null && k.humidity !== undefined && k.humidity !== null) {
+        envParts.push(`${formatTemperature(k.temperature, undefined, 0)} ${Math.round(k.humidity)}%`);
+      } else if (k.temperature !== undefined && k.temperature !== null) {
+        envParts.push(formatTemperature(k.temperature, undefined, 1));
+      } else if (k.humidity !== undefined && k.humidity !== null) {
+        envParts.push(`${Math.round(k.humidity)}%`);
+      }
+      if (!k.isOn) {
+        return envParts.length > 0 ? [t("已关闭"), ...envParts].join(" · ") : t("已关闭");
+      }
       const parts: string[] = [t("运行中")];
-      if (k.presetMode) parts.push(k.presetMode);
+      if (k.presetMode) parts.push(localizeFanPreset(k.presetMode));
+      if (k.percentage !== null) parts.push(`${k.percentage}%`);
       if (k.isOscillating) parts.push(t("摇头"));
+      parts.push(...envParts);
       return parts.join(" · ");
     }
     case "plug": {
@@ -299,6 +423,14 @@ export function deviceStatusSummary(device: SmartDevice): string {
       };
       const base = map[k.status] ?? k.status;
       return k.battery !== null ? `${base} · ${k.battery}%` : base;
+    }
+    case "camera": {
+      if (!k.isOn) return t("休眠中 · 点击唤醒");
+      const parts: string[] = [t("监控中")];
+      if (k.nightShot) parts.push(localizeNightShot(k.nightShot));
+      if (k.isMotionDetectionOn) parts.push(t("侦测开"));
+      parts.push(t("点击看画面"));
+      return parts.join(" · ");
     }
     case "sensor": {
       const parts: string[] = [];

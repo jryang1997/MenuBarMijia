@@ -7,6 +7,7 @@ import { installWindow } from "./dom.js";
 import { MenuMijiaWindowsApp } from "../src/ui/app.js";
 import { cloudFixture } from "./cloudFixture.js";
 import { MiCloudClient, MiotSynthesizer } from "../src/core/miCloudClient.js";
+import { MiCloudCrypto } from "../src/core/miCloudCrypto.js";
 
 let dom: Window;
 
@@ -1073,5 +1074,201 @@ describe("Customizable global shortcut (#43)", () => {
     await click("#btn-retry-hotkey");
     await setImmediate();
     assert.equal(document.querySelector("#hotkey-conflict-row"), null);
+  });
+});
+
+describe("Smart camera support and live view (#97)", () => {
+  it("clicking a camera card opens the live stream window and supports night-shot, hot-hide reopen, timed teardown, motion detection, and undo", async () => {
+    localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
+      connectionMode: "demo",
+      hasCompletedOnboarding: true,
+    }));
+    const app = new MenuMijiaWindowsApp(element("#app"));
+    assert.match(tile("camera.living_cam"), /监控中 · 自动夜视 · 侦测开 · 点击看画面/);
+
+    // Clicking the camera card body opens the enlarged live camera view modal.
+    await click('[data-body-device="camera.living_cam"]');
+    assert.ok(document.querySelector(".cc-camera-live-sheet"), "live camera modal should open on click");
+    assert.match(document.body.textContent ?? "", /实时看护小窗预览/);
+
+    // Switch night vision mode inside the live modal and verify undo restores Auto.
+    await click('[data-cameranight="camera.living_cam:On"]');
+    assert.match(tile("camera.living_cam"), /夜视开/);
+
+    // 「关闭画面」only hides the modal and keeps the session hot; reopening the card
+    // brings it straight back (the camera needs a long cooldown before a used P2P
+    // session can be re-negotiated, so full teardown waits for the keep-alive window).
+    await click("#btn-close-camera-live");
+    const backdropAfterClose = element(".cc-camera-live-sheet").closest(".cc-sheet-backdrop") as HTMLElement;
+    assert.equal(backdropAfterClose.style.display, "none");
+    await click('[data-body-device="camera.living_cam"]');
+    const backdropAfterReopen = element(".cc-camera-live-sheet").closest(".cc-sheet-backdrop") as HTMLElement;
+    assert.equal(backdropAfterReopen.style.display, "");
+    assert.match(document.body.textContent ?? "", /实时看护小窗预览/);
+
+    // When the keep-alive window expires with nobody watching, the modal is removed
+    // entirely (on the real backend that teardown also stops the bridge and asks the
+    // camera to release its P2P session; here we pin the window short and watch the DOM).
+    app.cameraKeepAliveMs = 30;
+    await click("#btn-close-camera-live");
+    await waitFor(() => document.querySelector(".cc-camera-live-sheet") === null);
+
+    await click("#btn-undo");
+    assert.match(tile("camera.living_cam"), /自动夜视/);
+
+    // Expand the camera drawer and toggle motion detection, then undo.
+    await click('[data-expand-device="camera.living_cam"]');
+    await click('[data-cameramotion="camera.living_cam"]');
+    assert.doesNotMatch(tile("camera.living_cam"), /侦测开/);
+    await click("#btn-undo");
+    assert.match(tile("camera.living_cam"), /侦测开/);
+  });
+});
+
+describe("Air purifier support (#98)", () => {
+  it("displays PM2.5, air quality, temperature/humidity, filter life, and supports mode & fan speed slider with undo", async () => {
+    const rma3Spec = {
+      type: "urn:miot-spec-v2:device:air-purifier:0000A007:zhimi-rma3:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:air-purifier:00007811:zhimi-rma3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:zhimi-rma3:1", format: "bool", access: ["read", "write"] },
+            {
+              iid: 4,
+              type: "urn:miot-spec-v2:property:mode:00000008:zhimi-rma3:1",
+              format: "uint8",
+              access: ["read", "write"],
+              valueList: [
+                { value: 0, description: "Auto" },
+                { value: 1, description: "Sleep" },
+                { value: 2, description: "Favorite" },
+              ],
+            },
+          ],
+          actions: [],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:environment:0000780A:zhimi-rma3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:relative-humidity:0000000C:zhimi-rma3:1", format: "uint8", access: ["read"], valueRange: [0, 100, 1] },
+            { iid: 4, type: "urn:miot-spec-v2:property:pm2.5-density:00000034:zhimi-rma3:1", format: "uint16", access: ["read"], valueRange: [0, 1000, 1] },
+            { iid: 7, type: "urn:miot-spec-v2:property:temperature:00000020:zhimi-rma3:1", format: "float", access: ["read"], valueRange: [-30, 100, 1] },
+            {
+              iid: 8,
+              type: "urn:miot-spec-v2:property:air-quality:0000001C:zhimi-rma3:1",
+              format: "uint8",
+              access: ["read"],
+              valueList: [
+                { value: 0, description: "Excellent" },
+                { value: 1, description: "Good" },
+              ],
+            },
+          ],
+          actions: [],
+        },
+        {
+          iid: 4,
+          type: "urn:miot-spec-v2:service:filter:0000780B:zhimi-rma3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:filter-life-level:0000001E:zhimi-rma3:1", format: "uint8", access: ["read"], valueRange: [0, 100, 1] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 11,
+          type: "urn:miot-spec-v2:service:air-purifier-favorite:000078B2:zhimi-rma3:1",
+          properties: [
+            {
+              iid: 1,
+              type: "urn:miot-spec-v2:property:fan-level:00000016:zhimi-rma3:1",
+              format: "uint8",
+              access: ["read", "write"],
+              valueList: Array.from({ length: 15 }, (_, i) => ({ value: i, description: `Level${i}` })),
+            },
+          ],
+          actions: [],
+        },
+      ],
+    };
+
+    const state = new Map<string, unknown>([
+      ["2.1", true],
+      ["2.4", 0],
+      ["11.1", 7],
+      ["3.4", 18],
+      ["3.8", 0],
+      ["3.7", 24.5],
+      ["3.1", 52],
+      ["4.1", 86],
+    ]);
+
+    const security = "AQIDBAUGBwgJCgsMDQ4PEA==";
+    const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      if (name !== "native_http") return undefined;
+      const url = String(args["url"] ?? "");
+      if (url.includes("/instance?")) {
+        return { status: 200, headers: {}, body: JSON.stringify(rma3Spec) };
+      }
+      if (url.includes("/instances?")) {
+        return { status: 200, headers: {}, body: JSON.stringify({ instances: [{ model: "zhimi.airp.rma3", type: rma3Spec.type }] }) };
+      }
+      let result: unknown = {};
+      if (url.includes("device_list")) {
+        result = {
+          list: [{ did: "airp-rma3", name: "书房空气净化器", model: "zhimi.airp.rma3", isOnline: true, spec_type: rma3Spec.type }],
+          has_more: false,
+        };
+      } else if (url.includes("homeroom/")) {
+        result = { homelist: [{ id: "1", name: "家", dids: [], roomlist: [{ id: "10", name: "书房", dids: ["airp-rma3"] }] }] };
+      } else if (url.includes("miotspec/prop/")) {
+        const fields = new URLSearchParams(String(args["body"] ?? ""));
+        const nonce = fields.get("_nonce") ?? "";
+        const encrypted = fields.get("data") ?? "";
+        const payload = JSON.parse(
+          MiCloudCrypto.decryptResponse(encrypted, MiCloudCrypto.signedNonce(security, nonce))
+        ) as { params?: Array<{ did: string; siid: number; piid: number; value?: unknown }> };
+        result = (payload.params ?? []).map((p) => {
+          if (url.includes("/set")) {
+            state.set(`${p.siid}.${p.piid}`, p.value);
+            return { did: p.did, siid: p.siid, piid: p.piid, code: 0 };
+          }
+          return { did: p.did, siid: p.siid, piid: p.piid, code: 0, value: state.get(`${p.siid}.${p.piid}`) };
+        });
+      }
+      return { status: 200, headers: {}, body: JSON.stringify({ code: 0, result }) };
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem(
+      "menumijia.windows.settings.v2",
+      JSON.stringify({
+        connectionMode: "xiaomiCloud",
+        hasCompletedOnboarding: true,
+        miSession: { userId: "10001", cUserId: "", ssecurity: security, serviceToken: "tok", passToken: "", region: "cn" },
+        cachedModelTypes: { "zhimi.airp.rma3": rma3Spec.type },
+      }),
+    );
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await waitFor(() => Boolean(document.querySelector('[data-body-device="airp-rma3"]')));
+    assert.match(tile("airp-rma3"), /运行中 · 自动 · 50% · PM2\.5 18 优 · 25°C 52%/);
+
+    await click('[data-expand-device="airp-rma3"]');
+    const drawerText = document.body.textContent ?? "";
+    assert.match(drawerText, /空气质量 PM2\.5 18 \(优\)/);
+    assert.match(drawerText, /温湿度 24\.5°C · 52%/);
+    assert.match(drawerText, /滤芯余量 86%/);
+
+    await setRange('[data-fanpercent="airp-rma3"]', "100");
+    await waitFor(() => state.get("11.1") === 14);
+    assert.equal(state.get("2.4"), 2);
+    assert.match(tile("airp-rma3"), /最爱 · 100%/);
+
+    await click("#btn-undo");
+    await waitFor(() => state.get("11.1") === 7);
+    assert.equal(state.get("2.4"), 0);
+    assert.match(tile("airp-rma3"), /自动 · 50%/);
   });
 });

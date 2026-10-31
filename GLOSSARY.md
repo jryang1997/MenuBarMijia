@@ -57,7 +57,7 @@ _Avoid_: Automation（后台自动化规则）、Macro（宏）
 _Avoid_: Local scene（本地场景）、Custom script（自定义脚本）
 
 **AllOffTarget（全关目标）**：
-「全关」实际会关闭的设备集合（`HomeStore.allOffTargets`）：当前视图内、开启中、且能从面板关闭的设备。默认不参与全关的类别（插座、扫地机，`joinsAllOffByDefault` 返回 false）可由用户按设备覆盖（`setJoinsAllOff`），覆盖结果持久化。
+「全关」实际会关闭的设备集合（`HomeStore.allOffTargets`）：当前视图内、开启中、且能从面板关闭的设备。默认不参与全关的类别（插座、扫地机、摄像机，`joinsAllOffByDefault` 返回 false）可由用户按设备覆盖（`setJoinsAllOff`），覆盖结果持久化。
 _Avoid_: All devices（全部设备）
 
 **IntentPlan（意图执行计划）**：
@@ -69,7 +69,7 @@ _Avoid_: Prompt output（模型输出）、Action script（动作脚本）
 _Avoid_: Background job（后台任务）、Cron（计划任务）
 
 **ActiveDevice（活跃开启设备）**：
-当前在线且处于工作状态的受控设备（开着的灯、正在制冷/制热的空调或电暖器、运行中的风扇、通电开启的插座、清扫中的扫地机、播放中的音箱）。顶部「全关」只作用于其中参与全关的 AllOffTarget；插座、扫地机等常年通电或会自行归位的基础设施设备默认不计入全关目标（冰箱、待机电视、纯传感器整体不算活跃设备）。
+当前在线且处于工作状态的受控设备（开着的灯、正在制冷/制热的空调或电暖器、运行中的风扇、通电开启的插座、清扫中的扫地机、播放中的音箱、监控中的摄像机）。顶部「全关」只作用于其中参与全关的 AllOffTarget；插座、扫地机、摄像机等常年通电或看护设备默认不计入全关目标（冰箱、待机电视、纯传感器整体不算活跃设备）。
 _Avoid_: Online device（在线设备）
 
 **CompactTile（双列紧凑磁贴）**：

@@ -386,8 +386,282 @@
           ]
         }
       ]
+    },
+    "chuangmi.camera.81ac1": {
+      "type": "urn:miot-spec-v2:device:camera:0000A01C:chuangmi-81ac1:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:camera-control:0000782F:chuangmi-81ac1:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:on:00000006:chuangmi-81ac1:1",
+              "format": "bool",
+              "access": ["read", "write"]
+            },
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:property:night-shot:00000057:chuangmi-81ac1:1",
+              "format": "uint8",
+              "access": ["read", "write"],
+              "value-list": [
+                { "value": 0, "description": "Off" },
+                { "value": 1, "description": "On" },
+                { "value": 2, "description": "Auto" }
+              ]
+            }
+          ]
+        },
+        {
+          "iid": 5,
+          "type": "urn:miot-spec-v2:service:motion-detection:0000784F:chuangmi-81ac1:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:motion-detection:00000056:chuangmi-81ac1:1",
+              "format": "bool",
+              "access": ["read", "write"]
+            }
+          ]
+        },
+        {
+          "iid": 20,
+          "type": "urn:miot-spec-v2:service:camera-stream-for-google-home:00007863:chuangmi-81ac1:1",
+          "actions": [
+            {
+              "iid": 3,
+              "type": "urn:miot-spec-v2:action:start-hls-stream:00002849:chuangmi-81ac1:1"
+            }
+          ]
+        }
+      ]
+    },
+    "zhimi.airp.rma3": {
+      "type": "urn:miot-spec-v2:device:air-purifier:0000A007:zhimi-rma3:1",
+      "services": [
+        {
+          "iid": 2,
+          "type": "urn:miot-spec-v2:service:air-purifier:00007811:zhimi-rma3:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:on:00000006:zhimi-rma3:1",
+              "format": "bool",
+              "access": ["read", "write", "notify"]
+            },
+            {
+              "iid": 4,
+              "type": "urn:miot-spec-v2:property:mode:00000008:zhimi-rma3:1",
+              "format": "uint8",
+              "access": ["read", "write", "notify"],
+              "value-list": [
+                { "value": 0, "description": "Auto" },
+                { "value": 1, "description": "Sleep" },
+                { "value": 2, "description": "Favorite" }
+              ]
+            }
+          ]
+        },
+        {
+          "iid": 3,
+          "type": "urn:miot-spec-v2:service:environment:0000780A:zhimi-rma3:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:relative-humidity:0000000C:zhimi-rma3:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-range": [0, 100, 1]
+            },
+            {
+              "iid": 4,
+              "type": "urn:miot-spec-v2:property:pm2.5-density:00000034:zhimi-rma3:1",
+              "format": "uint16",
+              "access": ["read", "notify"],
+              "value-range": [0, 1000, 1]
+            },
+            {
+              "iid": 7,
+              "type": "urn:miot-spec-v2:property:temperature:00000020:zhimi-rma3:1",
+              "format": "float",
+              "access": ["read", "notify"],
+              "value-range": [-30, 100, 1]
+            },
+            {
+              "iid": 8,
+              "type": "urn:miot-spec-v2:property:air-quality:0000001C:zhimi-rma3:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-list": [
+                { "value": 0, "description": "Excellent" },
+                { "value": 1, "description": "Good" },
+                { "value": 2, "description": "Moderate" },
+                { "value": 3, "description": "Poor" },
+                { "value": 4, "description": "Heavy Pollution" },
+                { "value": 5, "description": "Hazardous" }
+              ]
+            }
+          ]
+        },
+        {
+          "iid": 4,
+          "type": "urn:miot-spec-v2:service:filter:0000780B:zhimi-rma3:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:filter-life-level:0000001E:zhimi-rma3:1",
+              "format": "uint8",
+              "access": ["read", "notify"],
+              "value-range": [0, 100, 1]
+            }
+          ]
+        },
+        {
+          "iid": 11,
+          "type": "urn:miot-spec-v2:service:air-purifier-favorite:000078B2:zhimi-rma3:1",
+          "properties": [
+            {
+              "iid": 1,
+              "type": "urn:miot-spec-v2:property:fan-level:00000016:zhimi-rma3:1",
+              "format": "uint8",
+              "access": ["read", "write", "notify"],
+              "value-list": [
+                { "value": 0, "description": "Level0" },
+                { "value": 1, "description": "Level1" },
+                { "value": 2, "description": "Level2" },
+                { "value": 3, "description": "Level3" },
+                { "value": 4, "description": "Level4" },
+                { "value": 5, "description": "Level5" },
+                { "value": 6, "description": "Level6" },
+                { "value": 7, "description": "Level7" },
+                { "value": 8, "description": "Level8" },
+                { "value": 9, "description": "Level9" },
+                { "value": 10, "description": "Level10" },
+                { "value": 11, "description": "Level11" },
+                { "value": 12, "description": "Level12" },
+                { "value": 13, "description": "Level13" },
+                { "value": 14, "description": "Level14" }
+              ]
+            }
+          ]
+        }
+      ]
     }
   },
+  "fallbackSpecs": [
+    {
+      "did": "fb_airp",
+      "model": "zhimi.airp.rma3",
+      "name": "空气净化器",
+      "spec": {
+        "type": "urn:miot-spec-v2:device:air-purifier:0000A007:fallback:1",
+        "services": [
+          {
+            "iid": 2,
+            "type": "urn:miot-spec-v2:service:air-purifier:00007811:fallback:1",
+            "properties": [
+              { "iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:fallback:1", "format": "bool", "access": ["read", "write"] },
+              {
+                "iid": 4,
+                "type": "urn:miot-spec-v2:property:mode:00000008:fallback:1",
+                "format": "uint8",
+                "access": ["read", "write"],
+                "value-list": [
+                  { "value": 0, "description": "Auto" },
+                  { "value": 1, "description": "Sleep" },
+                  { "value": 2, "description": "Favorite" }
+                ]
+              }
+            ],
+            "actions": []
+          },
+          {
+            "iid": 3,
+            "type": "urn:miot-spec-v2:service:environment:0000780A:fallback:1",
+            "properties": [
+              { "iid": 1, "type": "urn:miot-spec-v2:property:relative-humidity:0000000C:fallback:1", "format": "uint8", "access": ["read"], "value-range": [0, 100, 1] },
+              { "iid": 4, "type": "urn:miot-spec-v2:property:pm2.5-density:00000034:fallback:1", "format": "uint16", "access": ["read"], "value-range": [0, 1000, 1] },
+              { "iid": 7, "type": "urn:miot-spec-v2:property:temperature:00000020:fallback:1", "format": "float", "access": ["read"], "value-range": [-30, 100, 1] }
+            ],
+            "actions": []
+          },
+          {
+            "iid": 4,
+            "type": "urn:miot-spec-v2:service:filter:0000780B:fallback:1",
+            "properties": [
+              { "iid": 1, "type": "urn:miot-spec-v2:property:filter-life-level:0000001E:fallback:1", "format": "uint8", "access": ["read"], "value-range": [0, 100, 1] }
+            ],
+            "actions": []
+          }
+        ]
+      },
+      "values": [
+        { "siid": 2, "piid": 1, "value": true },
+        { "siid": 2, "piid": 4, "value": 0 },
+        { "siid": 3, "piid": 4, "value": 18 },
+        { "siid": 3, "piid": 7, "value": 24.5 },
+        { "siid": 3, "piid": 1, "value": 52 },
+        { "siid": 4, "piid": 1, "value": 86 }
+      ],
+      "expectedKind": {
+        "kind": "fan",
+        "entityId": "miot:fb_airp:2",
+        "isOn": true,
+        "percentage": null,
+        "presetMode": "Auto",
+        "availablePresetModes": ["Auto", "Sleep", "Favorite"],
+        "isOscillating": null,
+        "pm25Density": 18,
+        "temperature": 24.5,
+        "humidity": 52,
+        "filterLifePercent": 86
+      }
+    },
+    {
+      "did": "fb_cam",
+      "model": "chuangmi.camera.061a01",
+      "name": "摄像机",
+      "spec": {
+        "type": "urn:miot-spec-v2:device:camera:0000A01C:fallback:1",
+        "services": [
+          {
+            "iid": 2,
+            "type": "urn:miot-spec-v2:service:camera-control:0000782F:fallback:1",
+            "properties": [
+              { "iid": 1, "type": "urn:miot-spec-v2:property:on:00000006:fallback:1", "format": "bool", "access": ["read", "write"] },
+              {
+                "iid": 3,
+                "type": "urn:miot-spec-v2:property:night-shot:00000057:fallback:1",
+                "format": "uint8",
+                "access": ["read", "write"],
+                "value-list": [
+                  { "value": 0, "description": "Off" },
+                  { "value": 1, "description": "On" },
+                  { "value": 2, "description": "Auto" }
+                ]
+              }
+            ],
+            "actions": []
+          }
+        ]
+      },
+      "values": [
+        { "siid": 2, "piid": 1, "value": 1 },
+        { "siid": 2, "piid": 3, "value": 2 }
+      ],
+      "expectedKind": {
+        "kind": "camera",
+        "entityId": "miot:fb_cam:2",
+        "isOn": true,
+        "nightShot": "Auto",
+        "availableNightShots": ["Off", "On", "Auto"],
+        "motionDetectionEntityId": null,
+        "isMotionDetectionOn": null,
+        "streamEntityId": null
+      }
+    }
+  ],
   "devices": [
     {
       "did": "did_light",
@@ -458,11 +732,23 @@
       "isOnline": true,
       "splitParentDid": "did_panel",
       "splitSiid": 3
+    },
+    {
+      "did": "did_camera",
+      "name": "客厅摄像机",
+      "model": "chuangmi.camera.81ac1",
+      "isOnline": true
+    },
+    {
+      "did": "did_purifier",
+      "name": "米家空气净化器 4 Lite",
+      "model": "zhimi.airp.rma3",
+      "isOnline": true
     }
   ],
   "rooms": [
-    { "id": "r_study", "name": "书房", "dids": ["did_light", "did_plug"] },
-    { "id": "r_living", "name": "客厅", "dids": ["did_ac", "did_vacuum", "group.living_lights", "did_panel"] },
+    { "id": "r_study", "name": "书房", "dids": ["did_light", "did_plug", "did_purifier"] },
+    { "id": "r_living", "name": "客厅", "dids": ["did_ac", "did_vacuum", "group.living_lights", "did_panel", "did_camera"] },
     { "id": "r_bed", "name": "主卧", "dids": ["did_fan", "did_sensor"] }
   ],
   "values": [
@@ -497,7 +783,18 @@
     { "did": "did_sensor", "siid": 2, "piid": 2, "value": 54 },
     { "did": "did_sensor", "siid": 3, "piid": 1, "value": 91 },
     { "did": "did_panel", "siid": 2, "piid": 1, "value": true },
-    { "did": "did_panel", "siid": 3, "piid": 1, "value": false }
+    { "did": "did_panel", "siid": 3, "piid": 1, "value": false },
+    { "did": "did_camera", "siid": 2, "piid": 1, "value": 1 },
+    { "did": "did_camera", "siid": 2, "piid": 3, "value": 2 },
+    { "did": "did_camera", "siid": 5, "piid": 1, "value": true },
+    { "did": "did_purifier", "siid": 2, "piid": 1, "value": true },
+    { "did": "did_purifier", "siid": 2, "piid": 4, "value": 0 },
+    { "did": "did_purifier", "siid": 11, "piid": 1, "value": 7 },
+    { "did": "did_purifier", "siid": 3, "piid": 4, "value": 18 },
+    { "did": "did_purifier", "siid": 3, "piid": 8, "value": 0 },
+    { "did": "did_purifier", "siid": 3, "piid": 7, "value": 24.5 },
+    { "did": "did_purifier", "siid": 3, "piid": 1, "value": 52 },
+    { "did": "did_purifier", "siid": 4, "piid": 1, "value": 86 }
   ],
   "expectedKinds": {
     "did_light": {
@@ -593,6 +890,30 @@
       "powerWatts": null,
       "childLockEntityId": null,
       "isChildLocked": false
+    },
+    "did_camera": {
+      "kind": "camera",
+      "entityId": "miot:did_camera:2",
+      "isOn": true,
+      "nightShot": "Auto",
+      "availableNightShots": ["Off", "On", "Auto"],
+      "motionDetectionEntityId": "miot:did_camera:5",
+      "isMotionDetectionOn": true,
+      "streamEntityId": "miot:did_camera:20"
+    },
+    "did_purifier": {
+      "kind": "fan",
+      "entityId": "miot:did_purifier:2",
+      "isOn": true,
+      "percentage": 50,
+      "presetMode": "Auto",
+      "availablePresetModes": ["Auto", "Sleep", "Favorite"],
+      "isOscillating": null,
+      "pm25Density": 18,
+      "airQuality": "Excellent",
+      "temperature": 24.5,
+      "humidity": 52,
+      "filterLifePercent": 86
     }
   },
   "expectedEnvironmentReadings": [
@@ -661,6 +982,21 @@
     ],
     "did_panel.s3": [
       { "did": "did_panel", "siid": 3, "piid": 1 }
+    ],
+    "did_camera": [
+      { "did": "did_camera", "siid": 2, "piid": 1 },
+      { "did": "did_camera", "siid": 2, "piid": 3 },
+      { "did": "did_camera", "siid": 5, "piid": 1 }
+    ],
+    "did_purifier": [
+      { "did": "did_purifier", "siid": 2, "piid": 1 },
+      { "did": "did_purifier", "siid": 2, "piid": 4 },
+      { "did": "did_purifier", "siid": 11, "piid": 1 },
+      { "did": "did_purifier", "siid": 3, "piid": 4 },
+      { "did": "did_purifier", "siid": 3, "piid": 8 },
+      { "did": "did_purifier", "siid": 3, "piid": 7 },
+      { "did": "did_purifier", "siid": 3, "piid": 1 },
+      { "did": "did_purifier", "siid": 4, "piid": 1 }
     ]
   },
   "commandCases": [
@@ -818,6 +1154,58 @@
       "expected": {
         "kind": "action",
         "call": { "did": "did_vacuum", "siid": 3, "aiid": 1, "inputs": [] }
+      }
+    },
+    {
+      "model": "chuangmi.camera.81ac1",
+      "command": { "kind": "setSwitch", "entityId": "miot:did_camera:2", "isOn": false },
+      "expected": {
+        "kind": "setProps",
+        "writes": [{ "did": "did_camera", "siid": 2, "piid": 1, "value": false }]
+      }
+    },
+    {
+      "model": "chuangmi.camera.81ac1",
+      "command": { "kind": "setSwitch", "entityId": "miot:did_camera:5", "isOn": false },
+      "expected": {
+        "kind": "setProps",
+        "writes": [{ "did": "did_camera", "siid": 5, "piid": 1, "value": false }]
+      }
+    },
+    {
+      "model": "chuangmi.camera.81ac1",
+      "command": { "kind": "setSelectOption", "entityId": "miot:did_camera:2", "option": "On" },
+      "expected": {
+        "kind": "setProps",
+        "writes": [{ "did": "did_camera", "siid": 2, "piid": 3, "value": 1 }]
+      }
+    },
+    {
+      "model": "zhimi.airp.rma3",
+      "command": { "kind": "setFanPower", "entityId": "miot:did_purifier:2", "isOn": false },
+      "expected": {
+        "kind": "setProps",
+        "writes": [{ "did": "did_purifier", "siid": 2, "piid": 1, "value": false }]
+      }
+    },
+    {
+      "model": "zhimi.airp.rma3",
+      "command": { "kind": "setFanPresetMode", "entityId": "miot:did_purifier:2", "presetMode": "Sleep" },
+      "expected": {
+        "kind": "setProps",
+        "writes": [{ "did": "did_purifier", "siid": 2, "piid": 4, "value": 1 }]
+      }
+    },
+    {
+      "model": "zhimi.airp.rma3",
+      "command": { "kind": "setFanPercentage", "entityId": "miot:did_purifier:2", "percent": 50 },
+      "expected": {
+        "kind": "setProps",
+        "writes": [
+          { "did": "did_purifier", "siid": 2, "piid": 1, "value": true },
+          { "did": "did_purifier", "siid": 2, "piid": 4, "value": 2 },
+          { "did": "did_purifier", "siid": 11, "piid": 1, "value": 7 }
+        ]
       }
     }
   ]

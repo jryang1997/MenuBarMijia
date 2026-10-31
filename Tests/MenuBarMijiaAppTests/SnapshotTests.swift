@@ -359,7 +359,7 @@ private struct SnapshotFixture {
         defaults.set(false, forKey: "automatically_checks_for_updates")
 
         store = HomeStore(
-            provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome()),
+            provider: MockHomeProvider(snapshot: DemoHomeProvider.defaultHome(includeCamera: false)),
             defaultsSuiteName: suiteName
         )
 

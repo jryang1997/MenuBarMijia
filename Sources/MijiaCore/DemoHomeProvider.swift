@@ -65,6 +65,22 @@ public actor MockHomeProvider: HomeProvider {
     ) async -> [SensorHistorySample] {
         sensorHistoryByDevice[deviceId] ?? []
     }
+
+    private var cameraStreamByDevice: [String: CameraStreamSource] = [:]
+
+    public func setCameraStream(_ source: CameraStreamSource, forDevice deviceId: String) {
+        cameraStreamByDevice[deviceId] = source
+    }
+
+    public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
+        if shouldFailCommands {
+            throw HomeProviderError.serviceCallFailed(500, "模拟网络失败")
+        }
+        if let source = cameraStreamByDevice[device.id] {
+            return source
+        }
+        return .demo(deviceId: device.id)
+    }
 }
 
 // MARK: - Demo Mode (#47)
@@ -104,9 +120,16 @@ public actor DemoHomeProvider: HomeProvider {
         continuation?.yield(.snapshotUpdated(snapshot))
     }
 
+    public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
+        guard case .camera = device.kind else {
+            throw HomeProviderError.serviceCallFailed(400, L10n.tr("非摄像头设备", "Not a camera device"))
+        }
+        return .demo(deviceId: device.id)
+    }
+
     // MARK: Virtual Home
 
-    public static func defaultHome() -> SynthesizedHome {
+    public static func defaultHome(includeCamera: Bool = true) -> SynthesizedHome {
         let rooms = [
             RoomArea(id: "living_room", name: L10n.tr("客厅", "Living Room"), sortOrder: 0),
             RoomArea(id: "bedroom", name: L10n.tr("卧室", "Bedroom"), sortOrder: 1),
@@ -116,7 +139,7 @@ public actor DemoHomeProvider: HomeProvider {
         let bedroom = rooms[1].name
         let study = rooms[2].name
 
-        let devices: [SmartDevice] = [
+        var devices: [SmartDevice] = [
             SmartDevice(
                 id: "demo_living_light",
                 name: L10n.tr("客厅吸顶灯", "Living Room Ceiling"),
@@ -292,6 +315,27 @@ public actor DemoHomeProvider: HomeProvider {
                 kind: .sensor(SensorSpec(temperature: 26.4, humidity: 50, battery: 88))
             )
         ]
+        if includeCamera {
+            devices.append(
+                SmartDevice(
+                    id: "demo_living_camera",
+                    name: L10n.tr("客厅摄像机", "Living Room Camera"),
+                    roomId: rooms[0].id,
+                    roomName: living,
+                    model: "chuangmi.camera.81ac1",
+                    isOnline: true,
+                    kind: .camera(CameraSpec(
+                        entityId: "camera.demo_living_camera",
+                        isOn: true,
+                        nightShot: "Auto",
+                        availableNightShots: ["Off", "On", "Auto"],
+                        motionDetectionEntityId: "switch.demo_living_camera_motion",
+                        isMotionDetectionOn: true,
+                        streamEntityId: "camera.demo_living_camera"
+                    ))
+                )
+            )
+        }
 
         let readings = [
             EnvironmentReading(
@@ -381,6 +425,23 @@ public actor DemoHomeProvider: HomeProvider {
                 }
                 next.devices[idx].kind = .climate(spec)
 
+
+            case .fan(var spec):
+                switch command {
+                case .setFanPower(let entityId, let isOn) where entityId == spec.entityId:
+                    spec.isOn = isOn
+                case .setFanPercentage(let entityId, let percent) where entityId == spec.entityId:
+                    spec.isOn = percent > 0
+                    spec.percentage = percent
+                case .setFanPresetMode(let entityId, let preset) where entityId == spec.entityId:
+                    spec.isOn = true
+                    spec.presetMode = preset
+                case .setFanOscillating(let entityId, let oscillating) where entityId == spec.entityId:
+                    spec.isOscillating = oscillating
+                default:
+                    continue
+                }
+                next.devices[idx].kind = .fan(spec)
             case .plug(var spec):
                 if case .setSwitch(let entityId, let isOn) = command, entityId == spec.switchEntityId {
                     spec.isOn = isOn
@@ -400,6 +461,19 @@ public actor DemoHomeProvider: HomeProvider {
                 }
                 next.devices[idx].kind = .tv(spec)
 
+
+            case .camera(var spec):
+                switch command {
+                case .setSwitch(let entityId, let isOn) where entityId == spec.entityId:
+                    spec.isOn = isOn
+                case .setSwitch(let entityId, let isOn) where entityId == spec.motionDetectionEntityId:
+                    spec.isMotionDetectionOn = isOn
+                case .setSelectOption(let entityId, let option) where entityId == spec.entityId:
+                    spec.nightShot = option
+                default:
+                    continue
+                }
+                next.devices[idx].kind = .camera(spec)
             default:
                 continue
             }
