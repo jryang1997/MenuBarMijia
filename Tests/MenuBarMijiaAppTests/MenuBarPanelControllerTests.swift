@@ -403,21 +403,17 @@ struct MenuBarPanelControllerTests {
         #expect(controller.isPanelWindow(NSApp.keyWindow) == (NSApp.keyWindow === panel))
     }
 
-    @Test("Classic skin in dark mode renders a dark panel background instead of light material")
+    @Test("Dark appearance renders a dark panel background instead of light material")
     func classicDarkModeRendersDarkBackground() async throws {
         let (store, suite) = try await makeStore()
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
 
-        let prevSkin = UserDefaults.standard.string(forKey: AppSkin.storageKey)
         let prevAppearance = UserDefaults.standard.string(forKey: AppAppearance.storageKey)
         defer {
-            if let prevSkin { UserDefaults.standard.set(prevSkin, forKey: AppSkin.storageKey) }
-            else { UserDefaults.standard.removeObject(forKey: AppSkin.storageKey) }
             if let prevAppearance { UserDefaults.standard.set(prevAppearance, forKey: AppAppearance.storageKey) }
             else { UserDefaults.standard.removeObject(forKey: AppAppearance.storageKey) }
         }
 
-        UserDefaults.standard.set(AppSkin.classic.rawValue, forKey: AppSkin.storageKey)
         UserDefaults.standard.set(AppAppearance.dark.rawValue, forKey: AppAppearance.storageKey)
 
         let controller = makeController(store: store)
@@ -608,7 +604,7 @@ struct MenuBarPanelControllerTests {
         #expect(!movedWhenFitting)
     }
 
-    @Test("Classic skin room strip scrolls hidden rooms into view when selected or cycled")
+    @Test("Room strip scrolls hidden rooms into view when selected or cycled")
     func classicSkinRoomStripScrollsToSelectedRoom() async throws {
         let rooms = [
             RoomArea(id: "r1", name: "书房", sortOrder: 0),
@@ -631,7 +627,6 @@ struct MenuBarPanelControllerTests {
         defaults.set(true, forKey: "has_completed_onboarding")
         defaults.set(false, forKey: "automatically_checks_for_updates")
         defaults.set(false, forKey: "show_quick_actions_bar")
-        defaults.set(AppSkin.classic.rawValue, forKey: AppSkin.storageKey)
 
         let store = HomeStore(provider: MockHomeProvider(snapshot: base), defaultsSuiteName: suite)
         for _ in 0..<50 where store.rooms.count < rooms.count {

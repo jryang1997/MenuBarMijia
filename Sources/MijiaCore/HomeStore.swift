@@ -310,7 +310,7 @@ public final class HomeStore {
         self.showQuickActionsBar = boolOrDefaultTrue("show_quick_actions_bar")
         self.enableGlobalHotkey = boolOrDefaultTrue("enable_global_hotkey")
         self.enableSafetyAlerts = boolOrDefaultTrue("enable_safety_alerts")
-        self.isCompactGridMode = ud.bool(forKey: "compact_grid_mode")
+        self.isCompactGridMode = (ud.object(forKey: "compact_grid_mode") as? Bool) ?? true
         self.menuBarTargetId = ud.string(forKey: "menubar_target_id") ?? "auto:primary"
         self.lastManuallyUsedLightId = ud.string(forKey: Self.lastManualLightIdKey)
         self.lowBatteryAlertedAt = Self.loadLowBatteryAlertedAt(from: ud)

@@ -26,34 +26,28 @@ struct SnapshotTests {
         ProcessInfo.processInfo.environment["SNAPSHOT_RECORD"] == "1" ? .all : .missing
     }
 
-    // MARK: - Panel: one snapshot per skin (Chinese, light, single column)
+    // MARK: - Panel: one system look (Chinese, light, single column)
 
-    @Test("Panel renders in all nine skins")
-    func panelSnapshotsAcrossSkins() async throws {
+    @Test("Panel renders in the system look")
+    func panelSnapshot() async throws {
         let fixture = try await SnapshotFixture()
         defer { fixture.restore() }
 
-        for skin in AppSkin.allCases {
-            UserDefaults.standard.set(skin.rawValue, forKey: AppSkin.storageKey)
-            UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
+        UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
 
-            let view = snapshotReady(ControlCenterPanel(store: fixture.store))
-            assertRendered(
-                view,
-                size: CGSize(width: 376, height: 560),
-                named: "panel-\(skin.rawValue)-zh-light"
-            )
-        }
+        assertRendered(
+            snapshotReady(ControlCenterPanel(store: fixture.store)),
+            size: CGSize(width: 376, height: 560),
+            named: "panel-zh-light"
+        )
     }
 
-    // MARK: - Device cards: light / climate / plug / sensor / TV (classic skin)
+    // MARK: - Device cards: light / climate / plug / sensor / TV
 
-    @Test("Five device card families render in the classic skin")
+    @Test("Five device card families render")
     func deviceCardSnapshots() async throws {
         let fixture = try await SnapshotFixture()
         defer { fixture.restore() }
-        UserDefaults.standard.set(AppSkin.classic.rawValue, forKey: AppSkin.storageKey)
-
         let light = try #require(fixture.store.devices.first { device in
             if case .light = device.kind { return true } else { return false }
         })
@@ -83,33 +77,168 @@ struct SnapshotTests {
                 DeviceCardView(device: device, store: fixture.store, showRoomBadge: true)
                     .padding(8)
                     .frame(width: 360)
-                    .environment(\.skinPalette, AppSkin.classic.palette)
             )
             assertRendered(
                 view,
                 size: CGSize(width: 376, height: 140),
-                named: "card-\(name)-classic-zh-light"
+                named: "card-\(name)-zh-light"
+            )
+        }
+    }
+
+    @Test("Climate card wears its tinted platter when on")
+    func climateOnCardSnapshot() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        var climate = try #require(fixture.store.devices.first { device in
+            if case .climate = device.kind { return true } else { return false }
+        })
+        await fixture.store.togglePrimary(climate)?.value
+        climate = try #require(fixture.store.devices.first { $0.id == climate.id })
+        #expect(climate.isActiveOn, "MockHomeProvider should apply the power toggle")
+
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: climate, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360)
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-climate-on-zh-light"
+        )
+        assertRendered(
+            snapshotReady(
+                DeviceCardView(device: climate, store: fixture.store, showRoomBadge: true)
+                    .padding(8)
+                    .frame(width: 360),
+                scheme: .dark
+            ),
+            size: CGSize(width: 376, height: 140),
+            named: "card-climate-on-zh-dark",
+            scheme: .dark
+        )
+    }
+
+    @Test("Settings remain readable in light and dark appearances")
+    func settingsSnapshots() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        for tab in [SettingsTab.general, .connection, .assistant, .appearance, .privacy, .about] {
+            for scheme in [ColorScheme.light, .dark] {
+                assertRendered(
+                    SettingsWindowView(store: fixture.store, selectedTab: tab)
+                        .environment(\.colorScheme, scheme)
+                        .environment(\.reduceMotionOverride, true)
+                        .environment(\.reduceTransparencyOverride, true),
+                    size: CGSize(width: 780, height: 680),
+                    named: "settings-\(tab.rawValue)-\(scheme == .dark ? "dark" : "light")",
+                    scheme: scheme
+                )
+            }
+        }
+    }
+
+    @Test("Settings capsule fits English at minimum window size with glass enabled")
+    func settingsCapsuleVariants() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        for language in [AppLanguage.zhHans, .en] {
+            L10n.currentLanguage = language
+            fixture.store.appLanguagePreference = AppLanguagePreference(language)
+            for scheme in [ColorScheme.light, .dark] {
+                assertRendered(
+                    SettingsWindowView(store: fixture.store, selectedTab: .privacy)
+                        .environment(\.colorScheme, scheme)
+                        .environment(\.reduceMotionOverride, true)
+                        .environment(\.reduceTransparencyOverride, false),
+                    size: CGSize(width: 740, height: 600),
+                    named: "settings-capsule-\(language == .en ? "en" : "zh")-\(scheme == .dark ? "dark" : "light")",
+                    scheme: scheme
+                )
+            }
+        }
+    }
+
+    @Test("Settings stay proportional in wide windows and with motion enabled")
+    func settingsWideWindows() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        for width: CGFloat in [900, 1200] {
+            for scheme in [ColorScheme.light, .dark] {
+                assertRendered(
+                    SettingsWindowView(store: fixture.store)
+                        .environment(\.colorScheme, scheme)
+                        .environment(\.reduceMotionOverride, false)
+                        .environment(\.reduceTransparencyOverride, false),
+                    size: CGSize(width: width, height: 680),
+                    named: "settings-wide-\(Int(width))-\(scheme == .dark ? "dark" : "light")",
+                    scheme: scheme
+                )
+            }
+        }
+    }
+
+    @Test("Panel supports dark, compact and expanded controls")
+    func panelInteractionStates() async throws {
+        let fixture = try await SnapshotFixture()
+        defer { fixture.restore() }
+        for compact in [false, true] {
+            fixture.store.isCompactGridMode = compact
+            assertRendered(
+                snapshotReady(ControlCenterPanel(store: fixture.store), scheme: .dark),
+                size: CGSize(width: 376, height: 560),
+                named: compact ? "panel-compact-dark" : "panel-dark",
+                scheme: .dark
+            )
+        }
+        let light = try #require(fixture.store.devices.first { if case .light = $0.kind { true } else { false } })
+        fixture.store.expandedDeviceId = light.id
+        for scheme in [ColorScheme.light, .dark] {
+            assertRendered(
+                snapshotReady(DeviceCardView(device: light, store: fixture.store, showRoomBadge: true).padding(8), scheme: scheme),
+                size: CGSize(width: 376, height: 260),
+                named: "expanded-light-\(scheme == .dark ? "dark" : "light")",
+                scheme: scheme
             )
         }
     }
 
     // MARK: - Non-visual guards for the appearance work (#51) and tooltip (#54)
 
-    @Test("Light and dark skins pair with the opposite scheme")
-    func skinsPairWithTheOppositeScheme() {
-        #expect(AppSkin.frost.palette(for: .light).scheme == .light)
-        #expect(AppSkin.frost.palette(for: .dark).scheme == .dark)
-        #expect(AppSkin.night.palette(for: .light).scheme == .light)
-        #expect(AppSkin.night.palette(for: .dark).scheme == .dark)
-        #expect(AppSkin.dawn.palette(for: .dark).scheme == .dark)
-        #expect(AppSkin.neon.palette(for: .light).scheme == .light)
-        #expect(AppSkin.soft.palette(for: .dark).scheme == .dark)
-        #expect(AppSkin.capsule.palette(for: .light).scheme == .light)
-        #expect(AppSkin.bento.palette(for: .dark).scheme == .dark)
-        #expect(AppSkin.glass.palette(for: .light).scheme == .light)
-        // Classic follows the system, so it never declares a fixed scheme.
-        #expect(AppSkin.classic.palette(for: .light).scheme == nil)
-        #expect(AppSkin.classic.palette(for: .dark).scheme == nil)
+    @Test("On and off tiles never share the same ink or fill")
+    func platterContrastHoldsInBothSchemes() {
+        let lit = TileSurface(isActive: true, scheme: .light)
+        let quiet = TileSurface(isActive: false, scheme: .light)
+        #expect(lit.ink == PanelLook.platterInk)
+        #expect(quiet.ink == .primary)
+        #expect(lit.secondaryInk == PanelLook.platterInk.opacity(0.55))
+        #expect(quiet.secondaryInk == .secondary)
+        // The platter keeps a defined hairline in light mode; wells get the quieter one.
+        #expect(lit.hairline != quiet.hairline)
+
+        // A tinted lit surface is dark blue glass in dark mode, so it takes white ink and the
+        // family hairline instead of the platter rules.
+        let darkTinted = TileSurface(isActive: true, tint: DesignTokens.Orb.climate, scheme: .dark)
+        #expect(darkTinted.ink == .white)
+        #expect(darkTinted.ink != lit.ink)
+        #expect(darkTinted.secondaryInk == .white.opacity(0.62))
+        #expect(darkTinted.hairline != lit.hairline)
+    }
+
+    @Test("Scene icons map to one visual category per family")
+    func sceneVisualCategoriesMapFromSymbols() {
+        // Quick actions own their category outright; no symbol parsing involved.
+        #expect(QuickAction.lightsOff.visualCategory == .light)
+        #expect(QuickAction.softNightLight.visualCategory == .night)
+        #expect(QuickAction.climateSleepOff.visualCategory == .climate)
+        // Externally supplied scene icons resolve through the centralised keyword map.
+        #expect(SceneVisualCategory(iconSymbol: "moon.stars.fill") == .night)
+        #expect(SceneVisualCategory(iconSymbol: "wind.snow") == .climate)
+        #expect(SceneVisualCategory(iconSymbol: "drop.fill") == .water)
+        #expect(SceneVisualCategory(iconSymbol: "flame.fill") == .heat)
+        #expect(SceneVisualCategory(iconSymbol: "tv.fill") == .media)
+        // Unknown symbols land on the warm default instead of vanishing.
+        #expect(SceneVisualCategory(iconSymbol: "sparkles") == .light)
     }
 
     @Test("Menu-bar tooltip summarises devices, temperature and backend")
@@ -125,9 +254,9 @@ struct SnapshotTests {
 
     // MARK: - Rendering switches
 
-    private func snapshotReady<V: View>(_ view: V) -> some View {
+    private func snapshotReady<V: View>(_ view: V, scheme: ColorScheme = .light) -> some View {
         view
-            .environment(\.colorScheme, .light)
+            .environment(\.colorScheme, scheme)
             .environment(\.reduceMotionOverride, true)
             .environment(\.reduceTransparencyOverride, true)
             .transaction { transaction in
@@ -141,6 +270,7 @@ struct SnapshotTests {
         _ view: V,
         size: CGSize,
         named name: String,
+        scheme: ColorScheme = .light,
         file: StaticString = #filePath,
         testName: String = #function
     ) {
@@ -158,7 +288,7 @@ struct SnapshotTests {
             defer: false
         )
         window.isReleasedWhenClosed = false
-        window.appearance = NSAppearance(named: .aqua)
+        window.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
         window.contentView = hosting
         window.layoutIfNeeded()
         hosting.layoutSubtreeIfNeeded()
@@ -205,7 +335,6 @@ private struct SnapshotFixture {
     struct MissingDefaults: Error {}
 
     let store: HomeStore
-    private let previousSkin: String?
     private let previousAppearance: String?
     private let previousTemperatureUnit: String?
     private let previousLanguage: AppLanguage
@@ -213,10 +342,8 @@ private struct SnapshotFixture {
     init() async throws {
         previousLanguage = L10n.currentLanguage
         L10n.currentLanguage = .zhHans
-        previousSkin = UserDefaults.standard.string(forKey: AppSkin.storageKey)
         previousAppearance = UserDefaults.standard.string(forKey: AppAppearance.storageKey)
         previousTemperatureUnit = UserDefaults.standard.string(forKey: TemperatureUnitPreference.storageKey)
-        UserDefaults.standard.set(AppSkin.classic.rawValue, forKey: AppSkin.storageKey)
         UserDefaults.standard.set(AppAppearance.system.rawValue, forKey: AppAppearance.storageKey)
         UserDefaults.standard.set(TemperatureUnitPreference.celsius.rawValue, forKey: TemperatureUnitPreference.storageKey)
 
@@ -245,11 +372,6 @@ private struct SnapshotFixture {
     }
 
     func restore() {
-        if let previousSkin {
-            UserDefaults.standard.set(previousSkin, forKey: AppSkin.storageKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: AppSkin.storageKey)
-        }
         if let previousAppearance {
             UserDefaults.standard.set(previousAppearance, forKey: AppAppearance.storageKey)
         } else {

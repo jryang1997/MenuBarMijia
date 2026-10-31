@@ -33,11 +33,10 @@ public struct MiAccountSection: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text(L10n.tr("云端服务器地区", "Cloud Region"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: DesignTokens.TypeSize.body))
                 Spacer()
                 Picker(
-                    "",
+                    L10n.tr("云端服务器地区", "Cloud Region"),
                     selection: Binding(
                         get: { store.miCloudRegion },
                         set: { store.miCloudRegion = $0 }
@@ -48,8 +47,8 @@ public struct MiAccountSection: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 176)
-                .controlSize(.small)
+                .frame(width: DesignTokens.Settings.fieldWidth)
+                .controlSize(.regular)
             }
 
             switch phase {
@@ -63,9 +62,9 @@ public struct MiAccountSection: View {
             case .loadingTicket:
                 HStack(spacing: 8) {
                     ProgressView()
-                        .controlSize(.small)
+                        .controlSize(.regular)
                     Text(L10n.tr("正在获取小米登录二维码…", "Fetching Xiaomi QR code…"))
-                        .font(.system(size: 11.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                     Spacer()
                     Button(L10n.tr("取消", "Cancel")) {
@@ -84,7 +83,7 @@ public struct MiAccountSection: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                         Text(message)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                             .foregroundStyle(.primary.opacity(0.9))
                     }
 
@@ -113,16 +112,16 @@ public struct MiAccountSection: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle.badge.checkmark")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                     .foregroundStyle(.green)
                 Text(L10n.tr("已登录米家账号：\(maskedUserId)", "Signed in to Xiaomi Home: \(maskedUserId)"))
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 Spacer()
             }
 
             if case .disconnected(let reason) = store.connectionStatus, !reason.isEmpty {
                 Text(reason)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.orange)
             }
 
@@ -154,7 +153,7 @@ public struct MiAccountSection: View {
                 "无需额外部署 Home Assistant，扫码即可通过米家云端直连同步设备与房间。直连使用非官方客户端接口；若介意账号风控，请改用官方开源的 Home Assistant (xiaomi_home) 模式。",
                 "No Home Assistant needed. Scan with the Mi Home app to sync devices and rooms directly from Xiaomi Cloud. Direct mode uses an unofficial client API; switch to Home Assistant (xiaomi_home) if you prefer Xiaomi's official integration."
             ))
-                .font(.system(size: 11))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
 
             HStack {
@@ -176,17 +175,17 @@ public struct MiAccountSection: View {
                     .scaledToFit()
                     .frame(width: 144, height: 144)
                     .padding(8)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.inset, style: .continuous))
             }
 
             Text(L10n.tr("使用手机「米家」App 或小米账号扫码确认登录", "Scan with the Mi Home app on your phone to confirm sign-in"))
-                .font(.system(size: 11.5, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .multilineTextAlignment(.center)
 
             TimelineView(.periodic(from: .now, by: 1.0)) { context in
                 let remaining = max(0, Int(expiresAt.timeIntervalSince(context.date).rounded()))
                 Text(L10n.tr("二维码有效剩余 \(remaining)s", "QR code expires in \(remaining)s"))
-                    .font(.system(size: 10.5))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }

@@ -19,10 +19,14 @@ final class SettingsWindowOpener {
     static let shared = SettingsWindowOpener()
 
     @ObservationIgnored var open: (() -> Void)?
+    var requestedTab: SettingsTab?
 
     private init() {}
 
-    func show() {
+    func show(tab: SettingsTab? = nil) {
+        if let tab {
+            requestedTab = tab
+        }
         NSApp.activate()
         // Both paths are attempted because either can be inert: this app hosts the control center in
         // a plain `NSHostingView`, which is not part of a scene, so the `openSettings` action it sees

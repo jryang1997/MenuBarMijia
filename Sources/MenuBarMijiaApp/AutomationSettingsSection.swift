@@ -40,7 +40,7 @@ struct AutomationSettingsSection: View {
                 "规则默认没有任何内容。锁屏、合盖、睡眠会合并成一个「离开」触发；解锁与唤醒合并成「回来」。同一触发一分钟内只执行一次。",
                 "No rules exist by default. Lock, lid close and sleep are grouped as Away; unlock and wake as Back. The same trigger runs at most once per minute."
             ))
-            .font(.system(size: 10.5))
+            .font(.system(size: DesignTokens.TypeSize.caption))
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
@@ -49,7 +49,7 @@ struct AutomationSettingsSection: View {
                     "还没有规则。下面新建一条，例如「离开 → 关闭书房灯」。",
                     "No rules yet. Create one below, for example “Away → turn off the study light”."
                 ))
-                .font(.system(size: 11))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
                 .padding(.vertical, 4)
             } else {
@@ -76,7 +76,7 @@ struct AutomationSettingsSection: View {
                     "默认每次都会先列出设备与动作，确认后才执行。链接格式：menumijia://toggle?device=<id>、menumijia://scene?name=<场景>、menumijia://ask?text=<一句话>。",
                     "By default every link lists the device and action and waits for confirmation. Formats: menumijia://toggle?device=<id>, menumijia://scene?name=<scene>, menumijia://ask?text=<sentence>."
                 ))
-            .font(.system(size: 10))
+            .font(.system(size: DesignTokens.TypeSize.caption))
             .foregroundStyle(allowDirectControl ? .orange : .secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -90,15 +90,15 @@ struct AutomationSettingsSection: View {
     private func ruleRow(_ rule: AutomationRule) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: rule.trigger.symbolName)
-                .font(.system(size: 11.5, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(rule.trigger.title)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 Text(rule.action.summary(devices: store.devices, scenes: store.scenes))
-                    .font(.system(size: 10.5))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -107,14 +107,14 @@ struct AutomationSettingsSection: View {
 
             Toggle("", isOn: enabledBinding(for: rule))
                 .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.mini)
+                .toggleStyle(.glass)
+                .controlSize(.regular)
 
             Button {
                 delete(rule)
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
             }
             .buttonStyle(.borderless)
             .foregroundStyle(.secondary)
@@ -144,12 +144,12 @@ struct AutomationSettingsSection: View {
     private var newRuleBuilder: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(L10n.tr("新建规则", "New Rule"))
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                 .foregroundStyle(.secondary)
 
             HStack(spacing: 6) {
                 Text(L10n.tr("触发", "When"))
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                 Picker(L10n.tr("触发", "When"), selection: $newTrigger) {
                     ForEach(AutomationTrigger.allCases) { trigger in
@@ -158,10 +158,10 @@ struct AutomationSettingsSection: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: 185)
-                .controlSize(.small)
+                .controlSize(.regular)
 
                 Text(L10n.tr("动作", "Then"))
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                 Picker(L10n.tr("动作", "Then"), selection: $newActionKind) {
                     ForEach(AutomationActionKind.allCases) { kind in
@@ -170,7 +170,7 @@ struct AutomationSettingsSection: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: 130)
-                .controlSize(.small)
+                .controlSize(.regular)
             }
 
             actionEditor
@@ -181,7 +181,7 @@ struct AutomationSettingsSection: View {
                     addRule()
                 } label: {
                     Label(L10n.tr("添加规则", "Add Rule"), systemImage: "plus")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 }
                 .buttonStyle(PillActionButtonStyle(isSelected: canAdd))
                 .disabled(!canAdd)
@@ -200,7 +200,7 @@ struct AutomationSettingsSection: View {
             }
             .labelsHidden()
             .frame(maxWidth: 240, alignment: .leading)
-            .controlSize(.small)
+            .controlSize(.regular)
 
         case .scene:
             if store.scenes.isEmpty {
@@ -208,7 +208,7 @@ struct AutomationSettingsSection: View {
                     "当前没有可用的场景。连接 Home Assistant 并同步场景后再试。",
                     "No scenes available. Connect Home Assistant and sync scenes first."
                 ))
-                .font(.system(size: 10.5))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
             } else {
                 Picker("", selection: sceneSelection) {
@@ -218,7 +218,7 @@ struct AutomationSettingsSection: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: 240, alignment: .leading)
-                .controlSize(.small)
+                .controlSize(.regular)
             }
 
         case .devices:
@@ -230,7 +230,7 @@ struct AutomationSettingsSection: View {
                     "当前没有可控设备（隐藏、离线或只能展开详情的设备不会列出）。连接数据源或取消隐藏后再试。",
                     "No controllable devices (hidden, offline, or detail-only devices are not listed). Connect a data source or unhide a device first."
                 ))
-                .font(.system(size: 10.5))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
@@ -238,10 +238,10 @@ struct AutomationSettingsSection: View {
                         ForEach(selectable) { device in
                             Toggle(isOn: deviceSelectionBinding(device.id)) {
                                 Text("\(device.name) · \(L10n.displayRoomName(device.roomName))")
-                                    .font(.system(size: 11))
+                                    .font(.system(size: DesignTokens.TypeSize.caption))
                             }
                             .toggleStyle(.checkbox)
-                            .controlSize(.small)
+                            .controlSize(.regular)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -255,7 +255,7 @@ struct AutomationSettingsSection: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .frame(width: 150)
-                .controlSize(.small)
+                .controlSize(.regular)
             }
         }
     }

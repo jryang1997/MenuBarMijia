@@ -328,11 +328,11 @@ struct AssistantCommandBar: View {
 
     var body: some View {
         let _ = store.effectiveLanguage
-        let shape = RoundedRectangle(cornerRadius: 11, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: DesignTokens.Radius.card, style: .continuous)
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 7) {
                 Image(systemName: speech.isListening ? "waveform" : "sparkles")
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(speech.isListening ? Color.red : Color.accentColor)
                     .symbolEffect(.variableColor.iterative, isActive: speech.isListening)
                     .symbolEffect(.pulse, isActive: store.assistantState == .thinking)
@@ -342,7 +342,7 @@ struct AssistantCommandBar: View {
                     text: $speech.draft
                 )
                 .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.body, weight: .medium))
                 .focused($isFieldFocused)
                 .onSubmit {
                     if speech.isListening {
@@ -363,7 +363,7 @@ struct AssistantCommandBar: View {
                     speech.isListening
                         ? Color.red.opacity(0.65)
                         : Color.accentColor.opacity(isFieldFocused ? 0.55 : 0.18),
-                    lineWidth: 0.8
+                    lineWidth: DesignTokens.hairline
                 )
             )
 
@@ -378,7 +378,7 @@ struct AssistantCommandBar: View {
                         .foregroundStyle(.primary.opacity(0.85))
                         .lineLimit(2)
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .padding(.horizontal, 4)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -401,7 +401,7 @@ struct AssistantCommandBar: View {
                     }
                     .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .orange))
                 }
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .padding(.horizontal, 4)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
@@ -481,7 +481,7 @@ struct AssistantCommandBar: View {
                 "会发送：这句话、设备名称/房间/状态、时间段、室温\(store.isHabitLearningEnabled ? "、习惯摘要" : "")。只问这一次，可在设置里撤销。",
                 "Sends: your words, device names/rooms/states, time of day, room temperature\(store.isHabitLearningEnabled ? ", habit summary" : ""). Asked once; revoke in Settings."
             ))
-                .font(.system(size: 10))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 6) {
@@ -501,7 +501,7 @@ struct AssistantCommandBar: View {
                 .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
             }
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
         .padding(.horizontal, 4)
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
@@ -532,7 +532,7 @@ struct AssistantCommandBar: View {
                 .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: .accentColor))
             }
         }
-        .font(.system(size: 11, weight: .medium))
+        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
         .padding(.horizontal, 4)
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
@@ -562,7 +562,7 @@ struct AssistantCommandBar: View {
                     .accessibilityLabel(Text(L10n.tr("忽略已错过的定时", "Dismiss missed timer")))
                     .help(L10n.tr("忽略这个已错过的定时", "Dismiss this missed timer"))
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .padding(.horizontal, 4)
             }
         }
@@ -593,7 +593,7 @@ struct AssistantCommandBar: View {
                     .accessibilityLabel(Text(L10n.tr("取消这个定时", "Cancel this timer")))
                     .help(L10n.tr("取消这个定时", "Cancel this timer"))
                 }
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .padding(.horizontal, 4)
             }
         }
@@ -614,10 +614,10 @@ struct AssistantCommandBar: View {
                                 .scaleEffect(0.65)
                         } else {
                             Image(systemName: "wand.and.stars")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         }
                         Text(isJev ? L10n.tr("Jev 猜你想做", "Jev Suggests") : L10n.tr("AI 猜你想做", "AI Suggests"))
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     }
                     .foregroundStyle(Color.accentColor)
                     .padding(.horizontal, 8)
@@ -637,14 +637,14 @@ struct AssistantCommandBar: View {
                     } label: {
                         HStack(spacing: 3.5) {
                             Image(systemName: suggestion.confidencePercent != nil ? "sparkle" : "clock.arrow.circlepath")
-                                .font(.system(size: 9.5, weight: .semibold))
+                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                                 .foregroundStyle(suggestion.confidencePercent != nil ? Color.orange : Color.secondary)
                             Text(suggestion.title)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                                 .foregroundStyle(.primary.opacity(0.88))
                             if let pct = suggestion.confidencePercent {
                                 Text("\(pct)%")
-                                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .bold, design: .rounded))
                                     .monospacedDigit()
                                     .foregroundStyle(Color.orange)
                             }
@@ -689,7 +689,7 @@ struct AssistantCommandBar: View {
             speech.toggle(store: store)
         } label: {
             Image(systemName: speech.isListening ? "stop.circle.fill" : "mic.fill")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                 .foregroundStyle(speech.isListening ? Color.red : Color.accentColor)
                 .frame(width: 20, height: 18)
                 .contentShape(Rectangle())
@@ -718,7 +718,7 @@ struct AssistantCommandBar: View {
                 }
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(.system(size: DesignTokens.TypeSize.body))
                     .foregroundStyle(.secondary)
                     .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
@@ -780,7 +780,7 @@ private struct ExecutionRouteBadge: View {
                 Text("· 💡 \(L10n.tr("习惯", "Habit"))")
             }
         }
-        .font(.system(size: 9.5, weight: .medium))
+        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
         .foregroundStyle(.secondary)
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -823,35 +823,35 @@ struct AssistantSettingsSection: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text(L10n.tr("AI 决策模型与习惯记忆", "AI Decision Model & Habit Memory"))
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if isInsecure {
                     Text(L10n.tr("● 地址需用 https，否则不会发送", "● Use https; nothing will be sent"))
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                         .foregroundStyle(.orange)
                 } else if let importedSource {
                     Text(L10n.tr("● 已从 \(importedSource) 导入", "● Imported from \(importedSource)"))
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                         .foregroundStyle(.green)
                 } else if hasCustomKey {
                     Text(L10n.tr("● 已配置自定义密钥", "● Custom API Key Set"))
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                         .foregroundStyle(.green)
                 } else if isLoopback {
                     Text(L10n.tr("● 本机免密接口", "● Local Endpoint"))
-                        .font(.system(size: 10.5, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                         .foregroundStyle(.green)
                 } else {
                     Text(L10n.tr("● 待填 API Key（常规指令本地可用）", "● No Key (Local Rules Active)"))
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                 }
             }
 
             HStack {
                 Text(L10n.tr("AI 服务商预设", "AI Provider"))
-                    .font(.system(size: 11.5))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                 Spacer()
                 Picker(
                     "",
@@ -881,8 +881,8 @@ struct AssistantSettingsSection: View {
                     }
                 }
                 .labelsHidden()
-                .frame(width: 210)
-                .controlSize(.small)
+                .frame(width: DesignTokens.Settings.fieldWidth)
+                .controlSize(.regular)
             }
 
             labeledField(L10n.tr(
@@ -924,7 +924,7 @@ struct AssistantSettingsSection: View {
                     Text(isSystemOne
                          ? L10n.tr("模型 (System One 协议 · 单次多头并发决策)", "Model (System One · Multi-Head Decision)")
                          : L10n.tr("模型 (OpenAI 兼容 Chat Completions)", "Model (OpenAI-Compatible Chat)"))
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                     Spacer()
                     ForEach(selectedPreset.recommendedModels.prefix(2), id: \.self) { candidate in
@@ -932,7 +932,7 @@ struct AssistantSettingsSection: View {
                             modelDraft = candidate
                         }
                         .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: modelDraft == candidate ? .semibold : .regular, design: .monospaced))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: modelDraft == candidate ? .semibold : .regular, design: .monospaced))
                         .foregroundStyle(modelDraft == candidate ? Color.accentColor : Color.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
@@ -947,8 +947,8 @@ struct AssistantSettingsSection: View {
                     text: $modelDraft
                 )
                 .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .font(.system(size: 11.5, design: .monospaced))
+                .controlSize(.regular)
+                .font(.system(size: DesignTokens.TypeSize.body, design: .monospaced))
             }
 
             labeledField(L10n.tr(
@@ -1002,7 +1002,7 @@ struct AssistantSettingsSection: View {
             .padding(.top, 2)
         }
         .padding(12)
-        .glassTile(isActive: false, accent: .accentColor, cornerRadius: 12)
+        .glassTile(isActive: false, cornerRadius: DesignTokens.Radius.card)
         .onAppear {
             let config = store.assistantConfig
             baseURLDraft = config.baseURL
@@ -1049,20 +1049,20 @@ struct AssistantSettingsSection: View {
                 set: { store.isHabitLearningEnabled = $0 }
             )) {
                 Text(L10n.tr("学习我的使用习惯（用于猜你想做）", "Learn my usage habits (for proactive suggestions)"))
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
             }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
+            .toggleStyle(.glass)
+            .controlSize(.regular)
 
             Toggle(isOn: Binding(
                 get: { store.prefersOnDeviceSpeech },
                 set: { store.prefersOnDeviceSpeech = $0 }
             )) {
                 Text(L10n.tr("语音只在本机识别（不把声音发给苹果，系统支持时生效）", "On-device speech recognition only (when supported by macOS)"))
-                    .font(.system(size: 11))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
             }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
+            .toggleStyle(.glass)
+            .controlSize(.regular)
 
             // #50: say so instead of silently falling back to Apple's servers.
             if store.prefersOnDeviceSpeech && !Self.supportsOnDeviceSpeech(for: store.effectiveLanguage) {
@@ -1073,7 +1073,7 @@ struct AssistantSettingsSection: View {
                     ),
                     systemImage: "exclamationmark.triangle.fill"
                 )
-                .font(.system(size: 10))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.orange)
                 .fixedSize(horizontal: false, vertical: true)
             }
@@ -1085,7 +1085,7 @@ struct AssistantSettingsSection: View {
                     isShowingHabits.toggle()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .foregroundStyle(Color.accentColor)
                 .disabled(habitCount == 0)
                 Spacer()
@@ -1103,7 +1103,7 @@ struct AssistantSettingsSection: View {
                 ForEach(habitItems) { item in
                     HStack(spacing: 6) {
                         Text(item.text)
-                            .font(.system(size: 10.5))
+                            .font(.system(size: DesignTokens.TypeSize.caption))
                             .foregroundStyle(.primary.opacity(0.85))
                             .lineLimit(2)
                         Spacer(minLength: 4)
@@ -1114,7 +1114,7 @@ struct AssistantSettingsSection: View {
                             habitRevision &+= 1
                         } label: {
                             Image(systemName: "trash")
-                                .font(.system(size: 10))
+                                .font(.system(size: DesignTokens.TypeSize.caption))
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
@@ -1127,7 +1127,7 @@ struct AssistantSettingsSection: View {
             if !consented.isEmpty {
                 HStack(spacing: 6) {
                     Text(L10n.tr("已允许发送到：\(consented.joined(separator: "、"))", "Allowed to send to: \(consented.joined(separator: ", "))"))
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                     Spacer(minLength: 4)
@@ -1144,7 +1144,7 @@ struct AssistantSettingsSection: View {
                 "发给 AI 的内容：你说的那句话、设备名称/房间/当前状态、时间段、室温\(store.isHabitLearningEnabled ? "、习惯摘要" : "")。只有本机解析不了的指令才会发送。API Key 和米家登录信息只存在本机钥匙串，不会发送。",
                 "Sent to AI only when local parsing cannot resolve: your command text, device names/rooms/states, time slot, room temperature\(store.isHabitLearningEnabled ? ", and habit summary" : ""). API keys and Xiaomi credentials stay in your local Keychain."
             ))
-                .font(.system(size: 10))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1159,7 +1159,7 @@ struct AssistantSettingsSection: View {
         HStack(spacing: 6) {
             if let importedSource {
                 Text(L10n.tr("来源：\(importedSource)（已复制到本机钥匙串）", "Source: \(importedSource) (copied to Keychain)"))
-                    .font(.system(size: 10))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(.secondary)
                 Button(L10n.tr("撤销导入", "Remove")) {
                     AssistantConfig.removeStoredAPIKey(forBaseURL: target)
@@ -1168,7 +1168,7 @@ struct AssistantSettingsSection: View {
                     store.showToast(L10n.tr("已删除导入的 Key", "Removed the imported key"))
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .foregroundStyle(Color.accentColor)
             } else {
                 Button(L10n.tr("从 CodexBar / 环境变量导入 Key", "Import key from CodexBar / environment")) {
@@ -1184,7 +1184,7 @@ struct AssistantSettingsSection: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                 .foregroundStyle(Color.accentColor)
                 .help(L10n.tr("点了才会读取 ~/.config/codexbar/config.json 和环境变量", "Reads ~/.config/codexbar/config.json and environment variables only when clicked"))
             }
@@ -1195,11 +1195,11 @@ struct AssistantSettingsSection: View {
     private func labeledField<Field: View>(_ title: String, @ViewBuilder field: () -> Field) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(.system(size: 10.5))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
             field()
-                .controlSize(.small)
-                .font(.system(size: 11.5, design: .monospaced))
+                .controlSize(.regular)
+                .font(.system(size: DesignTokens.TypeSize.body, design: .monospaced))
         }
     }
 }

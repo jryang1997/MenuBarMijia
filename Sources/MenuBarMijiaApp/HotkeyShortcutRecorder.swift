@@ -261,7 +261,7 @@ struct HotkeyRecorderRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(L10n.tr("呼出面板的快捷键", "Show Dashboard Shortcut"))
-                    .font(.system(size: 12))
+                    .font(.system(size: DesignTokens.TypeSize.body))
                 Spacer()
 
                 Button {
@@ -269,11 +269,11 @@ struct HotkeyRecorderRow: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: recorder.isRecording ? "record.circle" : "keyboard")
-                            .font(.system(size: 10.5, weight: .semibold))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         Text(recorder.isRecording
                              ? L10n.tr("按下组合…", "Press keys…")
                              : state.shortcut.displayString)
-                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                     }
                 }
                 .buttonStyle(PillActionButtonStyle(isSelected: recorder.isRecording, tintColor: .accentColor))
@@ -294,17 +294,17 @@ struct HotkeyRecorderRow: View {
                     "需要至少一个 ⌘ / ⌥ / ⌃ / ⇧，或单按 F1–F20。Esc 取消。",
                     "Use at least one of ⌘ / ⌥ / ⌃ / ⇧, or a single F1–F20 key. Esc cancels."
                 ))
-                .font(.system(size: 10))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(.secondary)
             }
 
             if let error = state.registrationError {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.orange)
                     Text(error)
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 4)
@@ -329,11 +329,11 @@ struct NotificationPermissionRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: state.isAuthorized ? "bell.badge.fill" : (state.isDenied ? "bell.slash.fill" : "bell"))
-                .font(.system(size: 10.5))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(state.isAuthorized ? .green : (state.isDenied ? .orange : .secondary))
 
             Text(state.statusText)
-                .font(.system(size: 10.5))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(state.isDenied ? .orange : .secondary)
 
             Spacer(minLength: 4)

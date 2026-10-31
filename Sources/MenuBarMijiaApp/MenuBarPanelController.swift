@@ -12,7 +12,7 @@ import MijiaCore
 /// - icon + text from `HomeStore.menuBarSymbolName` / `menuBarText`, with the listening waveform and
 ///   the live transcript while `SpeechInputController` records;
 /// - tooltip and accessibility label from `MenuBarStatusSummary`;
-/// - a left click toggles the panel; holding either button for 0.2 s starts hold-to-talk;
+/// - a left click toggles the panel; holding either button for 0.5 s starts hold-to-talk;
 /// - the panel closes on an outside click or when the app deactivates (unless dictation is running);
 /// - it becomes key, so arrow keys, Esc, ⌘, and its text fields behave as they did before;
 /// - it is anchored under the item's own screen and stays on screen across display changes;
@@ -37,8 +37,9 @@ final class MenuBarPanelController: NSObject {
 
     private static let topGap: CGFloat = 6
     private static let screenMargin: CGFloat = 8
-    /// Press-and-hold on the icon starts dictation instead of toggling the panel.
-    private static let holdThreshold: TimeInterval = 0.2
+    /// Press-and-hold on the icon starts dictation instead of toggling the panel. 0.5 s is long
+    /// enough that an ordinary slow click toggles the panel instead of dictating.
+    private static let holdThreshold: TimeInterval = 0.5
     private static let holdTick: TimeInterval = 0.03
 
     private(set) var statusItem: NSStatusItem?
@@ -403,7 +404,7 @@ final class MenuBarPanelController: NSObject {
 
     // MARK: - Status Item Gesture
 
-    /// A short left click toggles the panel and holding either button for 0.2 s starts dictation.
+    /// A short left click toggles the panel and holding either button for 0.5 s starts dictation.
     /// On macOS 26+, the system menu bar (`NSMenuBarNavigationSceneExtension`) hosts status items
     /// out-of-process: it delivers holds via `setLongPressAction:` (`_performSecondaryAction:type:`)
     /// and delivers short clicks as a synthesized mouseDown+mouseUp pair upon release. Combining

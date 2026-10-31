@@ -5,8 +5,6 @@ import MijiaCore
 /// plus an expandable time-series trend chart drawer (`24h` hourly / `7d` daily).
 /// Compact (half row) stacks temperature over a humidity bar; full row lays them out side by side.
 struct SensorCardView: View {
-    @Environment(\.appSkin) private var skin
-    @Environment(\.skinPalette) private var palette
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.isEditingLayout) private var isEditingLayout
     /// Observed so a temperature-unit change in Settings re-renders open cards (#52).
@@ -28,9 +26,9 @@ struct SensorCardView: View {
         return store?.expandedDeviceId == device.id
     }
 
-    private var fg: Color { skin.isClassic ? .primary : palette.fg }
-    private var muted: Color { skin.isClassic ? .secondary : palette.muted }
-    private var track: Color { skin.isClassic ? Color.primary.opacity(0.08) : palette.chip }
+    private var fg: Color { .primary }
+    private var muted: Color { .secondary }
+    private var track: Color { Color.primary.opacity(0.08) }
 
     var body: some View {
         Group {
@@ -42,7 +40,7 @@ struct SensorCardView: View {
                 wide
             }
         }
-        .frame(minHeight: (isCompact && !isExpanded) ? (skin.isClassic ? 50 : 60) : nil, maxHeight: isExpanded ? nil : .infinity)
+        .frame(minHeight: (isCompact && !isExpanded) ? 50 : nil, maxHeight: isExpanded ? nil : .infinity)
         .contentShape(Rectangle())
         .onTapGesture {
             guard !isEditingLayout, let store else { return }
@@ -50,13 +48,13 @@ struct SensorCardView: View {
                 store.toggleExpanded(device.id)
             }
         }
-        .glassTile(isActive: false, accent: .teal, cornerRadius: 14)
+        .glassTile(isActive: false, cornerRadius: DesignTokens.Radius.card)
         .opacity(device.isOnline ? 1 : 0.58)
         // Display-only card when collapsed: VoiceOver reads one sentence instead of five loose labels (#41).
         .accessibilityElement(children: isExpanded ? .contain : .ignore)
         .accessibilityLabel(Text(accessibilitySummary))
         .accessibilityAddTraits(.isButton)
-        .skinHelp(isExpanded
+        .panelHelp(isExpanded
             ? L10n.tr("点击卡片顶部收起折线图", "Click header to collapse chart")
             : L10n.tr("点击展开温湿度分时段折线", "Click to expand temperature & humidity chart"))
     }
@@ -81,26 +79,26 @@ struct SensorCardView: View {
     // MARK: Layouts
 
     private var compact: some View {
-        VStack(alignment: .leading, spacing: skin.isClassic ? 2.5 : 3.5) {
+        VStack(alignment: .leading, spacing: 2.5) {
             HStack(spacing: 4) {
                 Image(systemName: "thermometer.medium")
-                    .font(.system(size: 9.5, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(tempColor)
                 Text(displayName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                     .foregroundStyle(muted)
                     .lineLimit(1)
                 Spacer(minLength: 2)
                 comfortChip
             }
             HStack(alignment: .firstTextBaseline, spacing: 5) {
-                temperatureText(size: skin.isClassic ? 16.5 : 19)
+                temperatureText(size: DesignTokens.TypeSize.reading)
                 if let h = spec.humidity {
                     HStack(alignment: .firstTextBaseline, spacing: 2) {
                         Image(systemName: "drop.fill")
-                            .font(.system(size: 8.5, weight: .semibold))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                         Text(String(format: "%.0f%%", h))
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                             .monospacedDigit()
                     }
                     .foregroundStyle(humidityColor)
@@ -108,8 +106,8 @@ struct SensorCardView: View {
             }
             humidityBar
         }
-        .padding(.horizontal, !skin.isClassic && palette.capsuleTiles ? 15 : (skin.isClassic ? 9 : 11))
-        .padding(.vertical, skin.isClassic ? 6 : 7.5)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
     }
 
     private var wide: some View {
@@ -121,27 +119,27 @@ struct SensorCardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
                     Text(displayName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold))
                         .foregroundStyle(fg)
                         .lineLimit(1)
                     if showRoomBadge {
                         Text(L10n.displayRoomName(device.roomName))
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                             .foregroundStyle(muted)
                     }
                     if showCollapseChevron {
                         Image(systemName: "chevron.up")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .bold))
                             .foregroundStyle(muted)
                             .padding(.leading, 1)
                     }
                 }
-                temperatureText(size: 34)
+                temperatureText(size: DesignTokens.TypeSize.reading)
                 HStack(spacing: 6) {
                     comfortChip
                     if let b = spec.battery {
                         Label("\(b)%", systemImage: batterySymbol(b))
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                             .monospacedDigit()
                             .foregroundStyle(b <= 20 ? Color.red : muted)
                     }
@@ -168,7 +166,7 @@ struct SensorCardView: View {
                 }
 
             Rectangle()
-                .fill(skin.isClassic ? Color.primary.opacity(0.08) : palette.line)
+                .fill(Color.primary.opacity(0.08))
                 .frame(height: 1)
                 .padding(.horizontal, 14)
 
@@ -246,10 +244,10 @@ struct SensorCardView: View {
         } label: {
             HStack(spacing: 3.5) {
                 Image(systemName: symbol)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(isSelected ? tint : muted)
                 Text(title)
-                    .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
                     .foregroundStyle(isSelected ? fg : muted)
             }
             .padding(.horizontal, 8)
@@ -257,9 +255,7 @@ struct SensorCardView: View {
             .background {
                 if isSelected {
                     Capsule(style: .continuous)
-                        .fill(skin.isClassic
-                            ? Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.10)
-                            : palette.tile)
+                        .fill(Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.10))
                 }
             }
             .contentShape(Capsule(style: .continuous))
@@ -284,16 +280,14 @@ struct SensorCardView: View {
             }
         } label: {
             Text(title)
-                .font(.system(size: 10.5, weight: isSelected ? .semibold : .medium))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: isSelected ? .semibold : .medium))
                 .foregroundStyle(isSelected ? fg : muted)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3.5)
                 .background {
                     if isSelected {
                         Capsule(style: .continuous)
-                            .fill(skin.isClassic
-                                ? Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.10)
-                                : palette.tile)
+                            .fill(Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.10))
                     }
                 }
                 .contentShape(Capsule(style: .continuous))
@@ -306,7 +300,7 @@ struct SensorCardView: View {
             if let idx = hoveredSlotIndex, points.indices.contains(idx) {
                 let pt = points[idx]
                 Text(slotDetailLabel(pt.bucketStart))
-                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(fg)
 
@@ -314,20 +308,20 @@ struct SensorCardView: View {
                     HStack(spacing: 6) {
                         if let t = pt.temperature {
                             Text(formattedTemperaturePoint(pt, fallback: t))
-                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(tempColor)
                         }
                         if let h = pt.humidity {
                             Text(formattedHumidityPoint(pt, fallback: h))
-                                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
                                 .foregroundStyle(humidityColor)
                         }
                     }
                 } else {
                     Text(L10n.tr("该时段无记录", "No reading"))
-                        .font(.system(size: 10.5))
+                        .font(.system(size: DesignTokens.TypeSize.caption))
                         .foregroundStyle(muted)
                 }
             } else if let summary = historySummary {
@@ -339,7 +333,7 @@ struct SensorCardView: View {
                 }
             } else {
                 Text(L10n.tr("正在收集分时段温湿度样本…", "Collecting time-series readings…"))
-                    .font(.system(size: 10.5))
+                    .font(.system(size: DesignTokens.TypeSize.caption))
                     .foregroundStyle(muted)
             }
 
@@ -351,7 +345,7 @@ struct SensorCardView: View {
                         .controlSize(.mini)
                         .scaleEffect(0.7)
                     Text(L10n.tr("同步中", "Syncing"))
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                         .foregroundStyle(muted)
                 }
             } else if let store {
@@ -359,7 +353,7 @@ struct SensorCardView: View {
                 Text(hasCloud
                     ? (store.homeBackend == .demo ? L10n.tr("演示曲线", "Demo") : L10n.tr("云端+本机", "Cloud + Local"))
                     : L10n.tr("本机记录", "Local"))
-                    .font(.system(size: 9.5, weight: .medium))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium))
                     .foregroundStyle(muted.opacity(0.85))
             }
         }
@@ -369,10 +363,10 @@ struct SensorCardView: View {
     private func statBadge(label: String, value: String) -> some View {
         HStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 10))
+                .font(.system(size: DesignTokens.TypeSize.caption))
                 .foregroundStyle(muted)
             Text(value)
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(fg)
         }
@@ -413,8 +407,8 @@ struct SensorCardView: View {
                         p.addLine(to: CGPoint(x: size.width, y: y))
                     }
                     .stroke(
-                        skin.isClassic ? Color.primary.opacity(0.06) : palette.line.opacity(0.6),
-                        style: StrokeStyle(lineWidth: 0.8, dash: frac == 0.5 ? [3, 3] : [])
+                        Color.primary.opacity(0.06),
+                        style: StrokeStyle(lineWidth: DesignTokens.hairline, dash: frac == 0.5 ? [3, 3] : [])
                     )
                 }
 
@@ -485,7 +479,7 @@ struct SensorCardView: View {
                         p.addLine(to: CGPoint(x: x, y: size.height - 2))
                     }
                     .stroke(
-                        skin.isClassic ? Color.primary.opacity(0.24) : palette.fg.opacity(0.3),
+                        Color.primary.opacity(0.24),
                         style: StrokeStyle(lineWidth: 1, dash: [2.5, 2.5])
                     )
                 }
@@ -493,12 +487,12 @@ struct SensorCardView: View {
                 // Y-axis top & bottom scale labels
                 VStack(alignment: .trailing) {
                     Text(formatMetric(bounds.max, kind: selectedMetric))
-                        .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(muted.opacity(0.75))
                     Spacer()
                     Text(formatMetric(bounds.min, kind: selectedMetric))
-                        .font(.system(size: 8.5, weight: .medium, design: .rounded))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(muted.opacity(0.75))
                 }
@@ -533,7 +527,7 @@ struct SensorCardView: View {
                 if pos > 0 { Spacer(minLength: 2) }
                 if points.indices.contains(idx) {
                     Text(axisLabel(for: points[idx].bucketStart, isLast: idx == points.count - 1))
-                        .font(.system(size: 9.5, weight: .medium, design: .rounded))
+                        .font(.system(size: DesignTokens.TypeSize.caption, weight: .medium, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(hoveredSlotIndex == idx ? fg : muted)
                 }
@@ -668,9 +662,9 @@ struct SensorCardView: View {
                 .font(.system(size: size, weight: .semibold, design: .rounded))
                 .monospacedDigit()
                 .contentTransition(.numericText(value: spec.temperature ?? 0))
-                .foregroundStyle(fg)
+                .foregroundStyle(tempColor)
             Text(L10n.temperatureSymbol)
-                .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
+                .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold, design: .rounded))
                 .foregroundStyle(muted)
         }
     }
@@ -694,7 +688,7 @@ struct SensorCardView: View {
             // Comfortable band 40–60% drawn faintly behind the value arc.
             Circle()
                 .trim(from: 0.4, to: 0.6)
-                .stroke(Color.green.opacity(0.25), style: StrokeStyle(lineWidth: 6, lineCap: .butt))
+                .stroke(humidityColor.opacity(0.15), style: StrokeStyle(lineWidth: 6, lineCap: .butt))
                 .rotationEffect(.degrees(-90))
             Circle()
                 .trim(from: 0, to: CGFloat(min(max(h / 100, 0), 1)))
@@ -705,12 +699,12 @@ struct SensorCardView: View {
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 0) {
                 Image(systemName: "drop.fill")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
                     .foregroundStyle(humidityColor)
                 Text(String(format: "%.0f%%", h))
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .font(.system(size: DesignTokens.TypeSize.title, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(fg)
+                    .foregroundStyle(humidityColor)
             }
         }
         .frame(width: 62, height: 62)
@@ -718,13 +712,13 @@ struct SensorCardView: View {
     }
 
     private var comfortChip: some View {
-        let c = comfort
-        return Text(c.label)
-            .font(.system(size: isCompact ? 10 : 10.5, weight: .semibold))
-            .foregroundStyle(c.color)
+        let descriptor = comfortDescriptor
+        return Text(descriptor.label)
+            .font(.system(size: DesignTokens.TypeSize.caption, weight: .semibold))
+            .foregroundStyle(descriptor.color)
             .padding(.horizontal, isCompact ? 5.5 : 6)
             .padding(.vertical, isCompact ? 1.5 : 2)
-            .background(Capsule(style: .continuous).fill(c.color.opacity(0.14)))
+            .background(Capsule(style: .continuous).fill(descriptor.color.opacity(0.16)))
     }
 
     // MARK: Semantics
@@ -734,23 +728,34 @@ struct SensorCardView: View {
         return n.isEmpty ? device.name : n
     }
 
-    private var comfort: (label: String, color: Color) {
+    /// The comfort badge speaks through colour too: green when fine, amber hot, blue cold, teal dry/humid.
+    private enum ComfortState {
+        case comfy, warm, cool, dry, humid
+    }
+
+    /// One table per case, so a new state edits a single line: label and colour travel together.
+    private var comfortDescriptor: (label: String, color: Color) {
+        switch comfort {
+        case .comfy: return (L10n.tr("舒适", "Comfy"), DesignTokens.Orb.plug)
+        case .warm: return (L10n.tr("偏热", "Warm"), DesignTokens.Orb.light)
+        case .cool: return (L10n.tr("偏冷", "Cool"), DesignTokens.Orb.climate)
+        case .dry: return (L10n.tr("偏干", "Dry"), DesignTokens.Orb.fan)
+        case .humid: return (L10n.tr("偏湿", "Humid"), DesignTokens.Orb.fan)
+        }
+    }
+
+    private var comfort: ComfortState {
         let t = spec.temperature ?? 24, h = spec.humidity ?? 50
-        if t >= 28 { return (L10n.tr("偏热", "Warm"), .orange) }
-        if t <= 16 { return (L10n.tr("偏冷", "Cool"), .blue) }
-        if h < 35 { return (L10n.tr("偏干", "Dry"), Color(red: 0.85, green: 0.55, blue: 0.1)) }
-        if h > 70 { return (L10n.tr("偏湿", "Humid"), .teal) }
-        return (L10n.tr("舒适", "Comfy"), Color(red: 0.2, green: 0.68, blue: 0.4))
+        if t >= 28 { return .warm }
+        if t <= 16 { return .cool }
+        if h < 35 { return .dry }
+        if h > 70 { return .humid }
+        return .comfy
     }
 
-    private var tempColor: Color {
-        guard let t = spec.temperature else { return muted }
-        if t >= 28 { return .orange }
-        if t <= 16 { return .blue }
-        return Color(red: 0.2, green: 0.68, blue: 0.4)
-    }
+    private var tempColor: Color { DesignTokens.Orb.climate }
 
-    private var humidityColor: Color { Color(red: 0.25, green: 0.62, blue: 0.98) }
+    private var humidityColor: Color { DesignTokens.Orb.fan }
 
     private func batterySymbol(_ b: Int) -> String {
         switch b {
