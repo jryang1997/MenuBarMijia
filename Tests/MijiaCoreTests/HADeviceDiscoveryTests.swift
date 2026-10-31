@@ -79,12 +79,14 @@ struct HADeviceDiscoveryTests {
             areas: [HAAreaEntry(area_id: "study", name: "书房")],
             devices: [
                 HADeviceEntry(id: "wol_pc", area_id: "study", name: "书房台式机", model: "Wake on LAN"),
-                HADeviceEntry(id: "router", area_id: "study", name: "路由器", model: "OpenWrt")
+                HADeviceEntry(id: "router", area_id: "study", name: "路由器", model: "OpenWrt"),
+                HADeviceEntry(id: "disabled_wol", area_id: "study", name: "禁用台式机", model: "Wake on LAN", disabled_by: "user")
             ],
             entities: [
                 HAEntityEntry(entity_id: "button.wake_on_lan_aa_bb_cc_dd_ee_ff", device_id: "wol_pc"),
                 HAEntityEntry(entity_id: "button.router_reboot", device_id: "router", entity_category: "config"),
-                HAEntityEntry(entity_id: "button.router_restart", device_id: "router")
+                HAEntityEntry(entity_id: "button.router_restart", device_id: "router"),
+                HAEntityEntry(entity_id: "button.wake_on_lan_disabled", device_id: "disabled_wol")
             ],
             states: [
                 // HA stateless button entities report "unknown" before their first press since startup
@@ -101,6 +103,11 @@ struct HADeviceDiscoveryTests {
                 "button.router_restart": HAEntityState(
                     entityId: "button.router_restart",
                     state: "unknown"
+                ),
+                "button.wake_on_lan_disabled": HAEntityState(
+                    entityId: "button.wake_on_lan_disabled",
+                    state: "unknown",
+                    attributes: ["friendly_name": .string("禁用台式机")]
                 ),
                 // Orphan YAML-configured Wake on LAN button without a device registry entry
                 "button.wake_on_lan_nas": HAEntityState(
@@ -134,5 +141,12 @@ struct HADeviceDiscoveryTests {
         let mappedPress = HAWebSocketProvider.mapCommandToService(.pressButton(entityId: "button.wake_on_lan_aa_bb_cc_dd_ee_ff"))
         #expect(mappedPress.domain == "button")
         #expect(mappedPress.service == "press")
+
+        let reply = IntentReply.describe(
+            [DeviceIntent(targetId: pc.id, operation: .power(true))],
+            devices: home.devices,
+            scenes: []
+        )
+        #expect(reply == "已触发书房台式机" || reply == "Triggered 书房台式机")
     }
 }

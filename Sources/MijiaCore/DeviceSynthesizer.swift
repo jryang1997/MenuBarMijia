@@ -250,6 +250,7 @@ public enum DeviceSynthesizer {
         }
 
         let registeredDeviceIds = Set(devices.map(\.id))
+        let disabledDeviceIds = Set(devices.filter { $0.disabled_by != nil }.map(\.id))
         let entityById = Dictionary(uniqueKeysWithValues: entities.map { ($0.entity_id, $0) })
         for (eid, state) in states {
             guard eid.hasPrefix("light.") || eid.hasPrefix("climate.")
@@ -259,7 +260,10 @@ public enum DeviceSynthesizer {
                     || eid.hasPrefix("button.") else { continue }
             let entity = entityById[eid]
             guard entity?.disabled_by == nil, entity?.hidden_by == nil else { continue }
-            if let deviceId = entity?.device_id, registeredDeviceIds.contains(deviceId) { continue }
+            if let deviceId = entity?.device_id,
+               registeredDeviceIds.contains(deviceId) || disabledDeviceIds.contains(deviceId) {
+                continue
+            }
 
             let areaId = entity?.area_id ?? "other"
             let roomName = normalizeRoomName(areaNameById[areaId] ?? "全屋")

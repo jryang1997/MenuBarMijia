@@ -602,7 +602,14 @@ extension HomeStore {
                     habitSummary: usedHabitContext ? habitSummary : nil
                 )
             }
-            setAssistantState(.done(plan.reply), receipt: receipt)
+            let momentaryIds = Set(devices.filter(\.isMomentaryButton).map(\.id))
+            let resolvedReply: String
+            if plan.intents.contains(where: { momentaryIds.contains($0.targetId) }) {
+                resolvedReply = IntentReply.describe(plan.intents, devices: devices, scenes: scenes)
+            } else {
+                resolvedReply = plan.reply
+            }
+            setAssistantState(.done(resolvedReply), receipt: receipt)
         }
         return plan
     }
@@ -639,18 +646,22 @@ extension HomeStore {
         guard previous.isOnline else { return .offline(previous.name) }
         guard let effect = Self.assistantEffect(of: intent.operation, on: previous) else { return .skipped }
 
-        devices[idx] = effect.updated
-        lockOptimistic(previous.id, duration: .seconds(3.0))
+        if !previous.isMomentaryButton {
+            devices[idx] = effect.updated
+            lockOptimistic(previous.id, duration: .seconds(3.0))
+        }
         do {
             try await executeDeviceCommand(effect.command)
             guard context == controlContextID else { return .skipped }
-            return .applied(deviceId: previous.id, restore: effect.restore)
+            return .applied(deviceId: previous.isMomentaryButton ? nil : previous.id, restore: effect.restore)
         } catch {
             guard context == controlContextID else { return .skipped }
-            if let revertIdx = devices.firstIndex(where: { $0.id == previous.id }) {
-                devices[revertIdx] = previous
+            if !previous.isMomentaryButton {
+                if let revertIdx = devices.firstIndex(where: { $0.id == previous.id }) {
+                    devices[revertIdx] = previous
+                }
+                optimisticLockUntil.removeValue(forKey: previous.id)
             }
-            optimisticLockUntil.removeValue(forKey: previous.id)
             return .failed(previous.name)
         }
     }

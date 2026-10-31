@@ -273,22 +273,33 @@ public enum IntentReply {
             devices.map { ($0.id, $0.name) } + scenes.map { ($0.id, $0.name) },
             uniquingKeysWith: { first, _ in first }
         )
-        var order: [IntentOperation] = []
+        let momentaryIds = Set(devices.filter(\.isMomentaryButton).map(\.id))
+        var order: [(key: String, op: IntentOperation, isMomentaryTrigger: Bool)] = []
         var targetsByOp: [String: [String]] = [:]
         for intent in intents {
-            let key = String(describing: intent.operation)
-            if targetsByOp[key] == nil { order.append(intent.operation) }
+            let isMomentaryTrigger: Bool = {
+                if case .power(true) = intent.operation, momentaryIds.contains(intent.targetId) {
+                    return true
+                }
+                return false
+            }()
+            let key = isMomentaryTrigger ? "momentaryTrigger" : String(describing: intent.operation)
+            if targetsByOp[key] == nil { order.append((key, intent.operation, isMomentaryTrigger)) }
             targetsByOp[key, default: []].append(nameById[intent.targetId] ?? intent.targetId)
         }
         let isEn = L10n.isEnglish
-        let clauses = order.map { op -> String in
-            let names = targetsByOp[String(describing: op)] ?? []
+        let clauses = order.map { entry -> String in
+            let op = entry.op
+            let names = targetsByOp[entry.key] ?? []
             let sep = isEn ? ", " : "、"
             let joined = names.count > 3
                 ? names.prefix(3).joined(separator: sep) + L10n.format(
                     " 等 %@ 台", " (+%@ more)", String(isEn ? names.count - 3 : names.count)
                 )
                 : names.joined(separator: sep)
+            if entry.isMomentaryTrigger {
+                return L10n.format("触发%@", "Triggered %@", joined)
+            }
             switch op {
             case .power(true): return L10n.format("打开%@", "Turned on %@", joined)
             case .power(false): return L10n.format("关闭%@", "Turned off %@", joined)
