@@ -78,6 +78,46 @@
         "availablePresetModes": ["Level1", "Level2", "Level3"],
         "isOscillating": false
       }
+    },
+    {
+      "id": "dev_camera",
+      "name": "客厅摄像机",
+      "roomId": "living",
+      "roomName": "客厅",
+      "model": "chuangmi.camera.81ac1",
+      "isOnline": true,
+      "kind": {
+        "kind": "camera",
+        "entityId": "miot:dev_camera:2",
+        "isOn": true,
+        "nightShot": "Auto",
+        "availableNightShots": ["Off", "On", "Auto"],
+        "motionDetectionEntityId": "miot:dev_camera:5",
+        "isMotionDetectionOn": true,
+        "streamEntityId": "miot:dev_camera:20"
+      }
+    },
+    {
+      "id": "dev_purifier",
+      "name": "书房空气净化器",
+      "roomId": "study",
+      "roomName": "书房",
+      "model": "zhimi.airp.rma3",
+      "isOnline": true,
+      "kind": {
+        "kind": "fan",
+        "entityId": "miot:dev_purifier:2",
+        "isOn": true,
+        "percentage": 50,
+        "presetMode": "Auto",
+        "availablePresetModes": ["Auto", "Sleep", "Favorite"],
+        "isOscillating": null,
+        "pm25Density": 18,
+        "airQuality": "Excellent",
+        "temperature": 24.5,
+        "humidity": 52,
+        "filterLifePercent": 86
+      }
     }
   ],
   "intentCases": [
@@ -217,6 +257,48 @@
     {
       "utterance": "play some jazz in the study",
       "expected": null
+    },
+    {
+      "utterance": "关闭客厅摄像机",
+      "expected": [
+        { "targetId": "dev_camera", "kind": "power", "value": false }
+      ]
+    },
+    {
+      "utterance": "turn on camera",
+      "expected": [
+        { "targetId": "dev_camera", "kind": "power", "value": true }
+      ]
+    },
+    {
+      "utterance": "关闭空气净化器",
+      "expected": [
+        { "targetId": "dev_purifier", "kind": "power", "value": false }
+      ]
+    },
+    {
+      "utterance": "空气净化器睡眠模式",
+      "expected": [
+        { "targetId": "dev_purifier", "kind": "fanSpeed", "value": "Sleep" }
+      ]
+    },
+    {
+      "utterance": "空气净化器自动模式",
+      "expected": [
+        { "targetId": "dev_purifier", "kind": "fanSpeed", "value": "Auto" }
+      ]
+    },
+    {
+      "utterance": "air purifier sleep mode",
+      "expected": [
+        { "targetId": "dev_purifier", "kind": "fanSpeed", "value": "Sleep" }
+      ]
+    },
+    {
+      "utterance": "turn on air purifier",
+      "expected": [
+        { "targetId": "dev_purifier", "kind": "power", "value": true }
+      ]
     }
   ],
   "delayCases": [

@@ -24,6 +24,7 @@ import {
   MiotCommandMapper,
   MiotSpecResolver,
   MiotSynthesizer,
+  inferFallbackSpec,
   maskedMiUserId,
   miApiBaseURL,
   miCloudRegionLabel,
@@ -301,6 +302,125 @@ describe("MiAccountLogin", () => {
 });
 
 describe("MiotSynthesizer & MiotCommandMapper", () => {
+  it("does not let a secondary light service claim hood/gateway cards; video-doorbell maps to camera (#98 survey)", () => {
+    const hoodSpec: MiotDeviceSpec = {
+      type: "urn:miot-spec-v2:device:hood:0000A01B:viomi-c4:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:hood:00007825:viomi-c4:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:viomi-c4:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 6,
+          type: "urn:miot-spec-v2:service:light:00007802:viomi-c4:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:viomi-c4:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    assert.equal(MiotSynthesizer.buildDeviceKind("did_hood", hoodSpec, new Map()), null);
+
+    const ceilingFanSpec: MiotDeviceSpec = {
+      type: "urn:miot-spec-v2:device:ceiling-fan:0000A02C:test:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:fan:00007808:test:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:test:1", format: "bool", access: ["read", "write"] },
+            { iid: 2, type: "urn:miot-spec-v2:property:fan-level:00000016:test:1", format: "uint8", access: ["read", "write"], valueRange: [1, 100, 1] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:light:00007802:test:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:test:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    const fanKind = MiotSynthesizer.buildDeviceKind("did_cfan", ceilingFanSpec, new Map());
+    assert.equal(fanKind?.kind, "fan");
+
+    const doorbellSpec: MiotDeviceSpec = {
+      type: "urn:miot-spec-v2:device:video-doorbell:0000A03A:xiaomi-4pro:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:video-doorbell:00007848:xiaomi-4pro:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:xiaomi-4pro:1", format: "bool", access: ["read", "write"] },
+            { iid: 3, type: "urn:miot-spec-v2:property:night-shot:00000057:xiaomi-4pro:1", format: "uint8", access: ["read", "write"], valueList: [{ value: 0, description: "Off" }, { value: 2, description: "Auto" }] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    const doorbellKind = MiotSynthesizer.buildDeviceKind("did_db", doorbellSpec, new Map([["did_db.2.3", 2]]));
+    assert.equal(doorbellKind?.kind, "camera");
+    if (doorbellKind?.kind === "camera") {
+      assert.equal(doorbellKind.nightShot, "Auto");
+    }
+  });
+
+  it("guards the writable-on fallback against bath-heater lamp services and covers offline fallback specs (#98 survey)", () => {
+    // bath-heater has no same-name service, so the same-name guard cannot help; the
+    // generic writable-on fallback must still refuse the lamp service.
+    const bathHeaterSpec: MiotDeviceSpec = {
+      type: "urn:miot-spec-v2:device:bath-heater:0000A028:viomi-v3:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:light:00007802:viomi-v3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:viomi-v3:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 4,
+          type: "urn:miot-spec-v2:service:ptc-bath-heater:00007836:viomi-v3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:viomi-v3:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    assert.equal(MiotSynthesizer.buildDeviceKind("did_bh", bathHeaterSpec, new Map()), null);
+
+    // Offline fallback specs (miot-spec.org unreachable) still synthesize the two
+    // categories added in #98.
+    const purifierFallback = inferFallbackSpec({ model: "zhimi.airp.rma3", name: "空气净化器" });
+    const purifierKind = MiotSynthesizer.buildDeviceKind(
+      "did_fb_airp",
+      purifierFallback,
+      new Map<string, unknown>([["did_fb_airp.2.1", true], ["did_fb_airp.3.4", 18]]),
+    );
+    assert.equal(purifierKind?.kind, "fan");
+    if (purifierKind?.kind === "fan") {
+      assert.equal(purifierKind.pm25Density, 18);
+      assert.deepEqual(purifierKind.availablePresetModes, ["Auto", "Sleep", "Favorite"]);
+    }
+
+    const cameraFallback = inferFallbackSpec({ model: "chuangmi.camera.061a01", name: "摄像机" });
+    const cameraKind = MiotSynthesizer.buildDeviceKind(
+      "did_fb_cam",
+      cameraFallback,
+      new Map<string, unknown>([["did_fb_cam.2.1", true]]),
+    );
+    assert.equal(cameraKind?.kind, "camera");
+  });
+
   const lightSpec: MiotDeviceSpec = {
     type: "urn:miot-spec-v2:device:light:0000A001:yeelink-ceiling22:1",
     services: [
@@ -548,6 +668,14 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
         command: Parameters<typeof MiotCommandMapper.map>[0];
         expected: ReturnType<typeof MiotCommandMapper.map>;
       }>;
+      fallbackSpecs: Array<{
+        did: string;
+        model: string;
+        name: string;
+        spec: unknown;
+        values: Array<{ siid: number; piid: number; value: unknown }>;
+        expectedKind: unknown;
+      }>;
     };
 
     const parsedSpecs: Record<string, MiotDeviceSpec> = {};
@@ -590,6 +718,27 @@ describe("MiotSynthesizer & MiotCommandMapper", () => {
     }
     const dev2 = home.devices.find((d) => d.id === "did_panel.s2");
     assert.equal(dev2?.roomName, "客厅");
+
+    // Offline fallback specs are shared synthesis rules: the corpus pins the exact
+    // spec inferFallbackSpec must produce, and both platforms assert synthesis (#98).
+    for (const entry of corpus.fallbackSpecs) {
+      const parsedFallback = parseMiotDeviceSpec(entry.spec);
+      assert.ok(parsedFallback, `Failed to parse fallback spec for ${entry.model}`);
+      assert.deepEqual(
+        inferFallbackSpec({ model: entry.model, name: entry.name }),
+        parsedFallback,
+        `fallback spec drift for ${entry.model}`,
+      );
+      const fallbackHome = MiotSynthesizer.synthesize(
+        [{ did: entry.did, name: entry.name, model: entry.model, isOnline: true, specType: null }],
+        [],
+        { [entry.model]: parsedFallback },
+        new Map(entry.values.map((v) => [`${entry.did}.${v.siid}.${v.piid}`, v.value])),
+      );
+      const fallbackDev = fallbackHome.devices.find((d) => d.id === entry.did);
+      assert.ok(fallbackDev, `Missing fallback device ${entry.model}`);
+      assert.deepEqual(fallbackDev.kind, entry.expectedKind, `fallback kind mismatch on ${entry.model}`);
+    }
   });
 
   it("parses split Mesh switch keys and multi-home rooms with room-less home dids", () => {

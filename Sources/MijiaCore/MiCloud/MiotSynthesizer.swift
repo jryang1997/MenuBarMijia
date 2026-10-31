@@ -26,7 +26,10 @@ public enum MiotSynthesizer {
         ("thermostat", buildClimate),
         ("light", buildLight),
         ("fan", buildFan),
+        ("air-purifier", buildAirPurifier),
         ("vacuum", buildVacuum),
+        ("camera-control", buildCamera),
+        ("video-doorbell", buildCamera),
         ("outlet", buildPlug),
         ("switch", buildPlug),
         ("temperature-humidity-sensor", buildSensor),
@@ -136,7 +139,11 @@ public enum MiotSynthesizer {
 
     static func primary(for spec: MiotDeviceSpec) -> (MiotService, KindBuilder)? {
         let deviceType = spec.shortName
-        let preferredServices = deviceType == "outlet" ? ["outlet", "switch"] : [deviceType]
+        let preferredServices: [String] = switch deviceType {
+        case "outlet": ["outlet", "switch"]
+        case "camera", "cateye", "video-doorbell": ["camera-control", "video-doorbell"]
+        default: [deviceType]
+        }
         for serviceName in preferredServices {
             if let entry = registry.first(where: { $0.service == serviceName }),
                let service = spec.services(named: entry.service).first {
@@ -144,6 +151,13 @@ public enum MiotSynthesizer {
             }
         }
         for entry in registry {
+            // A secondary `light` service must not claim devices whose own type is something
+            // else (hood / airer / bath-heater / ceiling-fan / gateway), or those cards become
+            // bare lamps that only toggle their lamp while the primary function stays hidden.
+            if entry.service == "light",
+               deviceType != "light", !deviceType.contains("light"), !deviceType.contains("lamp") {
+                continue
+            }
             if let service = spec.services(named: entry.service).first {
                 return (service, entry.build)
             }
@@ -225,6 +239,50 @@ public enum MiotSynthesizer {
         ))
     }
 
+    static func buildAirPurifier(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
+        let on = r.ref("on", in: s)
+        let mode = r.ref("mode", in: s)
+        let levels = r.refs("fan-level", in: s)
+        let favServices = r.spec.services(named: "air-purifier-favorite")
+            + r.spec.services(named: "motor-speed")
+            + r.spec.services(named: "custom-service")
+            + r.spec.services(named: "fan-control")
+        let favSpeed = r.first("fan-level", in: favServices)
+            ?? r.first("favorite-fan-level", in: favServices)
+            ?? r.first("favorite-level", in: favServices)
+            ?? r.first("favorite-speed", in: favServices)
+        let speedRef = favSpeed
+            ?? levels.first { $0.property.valueRange != nil }
+            ?? levels.first { $0.property.valueList?.isEmpty == false }
+        let presetRef = (mode?.property.valueList?.isEmpty == false)
+            ? mode
+            : levels.first { $0.property.valueList?.isEmpty == false }
+
+        let envServices = r.spec.services(named: "environment")
+            + r.spec.services(named: "temperature-humidity-sensor")
+            + [s]
+        let pm25 = r.first("pm2.5-density", in: envServices)
+        let airQuality = r.first("air-quality", in: envServices)
+        let temp = r.first("temperature", in: envServices)
+        let hum = r.first("relative-humidity", in: envServices)
+        let filterServices = r.spec.services(named: "filter") + [s]
+        let filterLife = r.first("filter-life-level", in: filterServices)
+
+        return .fan(FanSpec(
+            entityId: MiotAddress.make(did: r.did, siid: s.iid),
+            isOn: on?.value?.miotBool ?? false,
+            percentage: speedRef.flatMap { ref in ref.value?.doubleValue.map { speedPercent(fromRaw: $0, property: ref.property) } },
+            presetMode: presetRef?.valueDescription,
+            availablePresetModes: presetRef?.property.valueList?.map(\.description) ?? [],
+            isOscillating: nil,
+            pm25Density: pm25?.value?.intValue,
+            airQuality: airQuality?.valueDescription,
+            temperature: temp?.value?.doubleValue,
+            humidity: hum?.value?.doubleValue,
+            filterLifePercent: filterLife?.value?.intValue
+        ))
+    }
+
     static func buildPlug(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
         let on = r.ref("on", in: s)
         let consumptionServices = r.spec.services(named: "power-consumption") + r.spec.services
@@ -263,6 +321,25 @@ public enum MiotSynthesizer {
         ))
     }
 
+    static func buildCamera(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
+        let on = r.ref("on", in: s)
+        let nightShot = r.ref("night-shot", in: s)
+        let motionService = r.spec.services(named: "motion-detection").first
+        let motion = motionService.flatMap { r.ref("motion-detection", in: $0) }
+        let streamService = r.spec.services(named: "camera-stream-for-google-home")
+            .first { $0.action(named: "start-hls-stream") != nil }
+
+        return .camera(CameraSpec(
+            entityId: MiotAddress.make(did: r.did, siid: s.iid),
+            isOn: on?.value?.miotBool ?? false,
+            nightShot: nightShot?.valueDescription,
+            availableNightShots: nightShot?.property.valueList?.map(\.description) ?? [],
+            motionDetectionEntityId: motion.map { MiotAddress.make(did: r.did, siid: $0.service.iid) },
+            isMotionDetectionOn: motion?.value?.miotBool,
+            streamEntityId: streamService.map { MiotAddress.make(did: r.did, siid: $0.iid) }
+        ))
+    }
+
     static func buildSensor(_ r: MiotReader, _ s: MiotService) -> DeviceKind {
         let readingServices = [s] + r.spec.services(named: "environment") + r.spec.services(named: "temperature-humidity-sensor")
         let temp = r.first("temperature", in: readingServices)
@@ -285,6 +362,23 @@ public enum MiotSynthesizer {
             scaled = raw
         }
         return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
+    }
+
+    static func speedPercent(fromRaw raw: Double, property: MiotProperty) -> Int {
+        if let lo = property.rangeMin, let hi = property.rangeMax, hi > lo {
+            let scaled = lo > 1 ? (raw - lo) / (hi - lo) * 100 : (hi != 100 ? raw / hi * 100 : raw)
+            return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
+        }
+        if let list = property.valueList, !list.isEmpty {
+            let vals = list.map(\.value)
+            if let hi = vals.max(), let lo = vals.min(), hi > lo {
+                let scaled = lo > 1
+                    ? (raw - Double(lo)) / Double(hi - lo) * 100
+                    : raw / Double(hi) * 100
+                return Swift.max(0, Swift.min(100, Int(scaled.rounded())))
+            }
+        }
+        return percent(fromRaw: raw, property: property)
     }
 
     private static func hasScaleToken(_ comment: String, _ token: String) -> Bool {

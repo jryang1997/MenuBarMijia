@@ -125,6 +125,11 @@ public struct FanSpec: Equatable, Sendable {
     public var presetMode: String?
     public var availablePresetModes: [String]
     public var isOscillating: Bool?
+    public var pm25Density: Int?
+    public var airQuality: String?
+    public var temperature: Double?
+    public var humidity: Double?
+    public var filterLifePercent: Int?
 
     public init(
         entityId: String,
@@ -132,7 +137,12 @@ public struct FanSpec: Equatable, Sendable {
         percentage: Int? = nil,
         presetMode: String? = nil,
         availablePresetModes: [String] = [],
-        isOscillating: Bool? = nil
+        isOscillating: Bool? = nil,
+        pm25Density: Int? = nil,
+        airQuality: String? = nil,
+        temperature: Double? = nil,
+        humidity: Double? = nil,
+        filterLifePercent: Int? = nil
     ) {
         self.entityId = entityId
         self.isOn = isOn
@@ -140,6 +150,11 @@ public struct FanSpec: Equatable, Sendable {
         self.presetMode = presetMode
         self.availablePresetModes = availablePresetModes
         self.isOscillating = isOscillating
+        self.pm25Density = pm25Density
+        self.airQuality = airQuality
+        self.temperature = temperature
+        self.humidity = humidity
+        self.filterLifePercent = filterLifePercent
     }
 }
 
@@ -305,6 +320,43 @@ public struct TVSpec: Equatable, Sendable {
     }
 }
 
+public struct CameraSpec: Equatable, Sendable {
+    public var entityId: String
+    public var isOn: Bool
+    public var nightShot: String?
+    public var availableNightShots: [String]
+    public var motionDetectionEntityId: String?
+    public var isMotionDetectionOn: Bool?
+    public var streamEntityId: String?
+    public var snapshotPath: String?
+
+    public init(
+        entityId: String,
+        isOn: Bool,
+        nightShot: String? = nil,
+        availableNightShots: [String] = [],
+        motionDetectionEntityId: String? = nil,
+        isMotionDetectionOn: Bool? = nil,
+        streamEntityId: String? = nil,
+        snapshotPath: String? = nil
+    ) {
+        self.entityId = entityId
+        self.isOn = isOn
+        self.nightShot = nightShot
+        self.availableNightShots = availableNightShots
+        self.motionDetectionEntityId = motionDetectionEntityId
+        self.isMotionDetectionOn = isMotionDetectionOn
+        self.streamEntityId = streamEntityId
+        self.snapshotPath = snapshotPath
+    }
+}
+
+public enum CameraStreamSource: Equatable, Sendable {
+    case hls(URL)
+    case snapshot(URL)
+    case demo(deviceId: String)
+}
+
 public struct SensorSpec: Equatable, Sendable {
     public var temperature: Double?
     public var humidity: Double?
@@ -333,6 +385,7 @@ public enum DeviceKind: Equatable, Sendable {
     case vacuum(VacuumSpec)
     case speaker(SpeakerSpec)
     case tv(TVSpec)
+    case camera(CameraSpec)
     case sensor(SensorSpec)
 }
 
@@ -368,7 +421,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
     /// Whether this device can be toggled on/off with a single primary click
     public var isPrimaryToggleable: Bool {
         switch kind {
-        case .light, .climate, .fan, .plug, .vacuum, .tv:
+        case .light, .climate, .fan, .plug, .vacuum, .tv, .camera:
             return true
         case .speaker, .fridge, .sensor:
             return false
@@ -386,6 +439,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case .vacuum(let s): return s.isCleaning
         case .speaker(let s): return s.state == "playing"
         case .tv(let s): return s.state != "off" && s.state != "standby"
+        case .camera(let s): return s.isOn
         case .fridge, .sensor: return false
         }
     }
@@ -393,7 +447,7 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
     /// Whether this device has an expandable secondary control drawer
     public var hasDetailDrawer: Bool {
         switch kind {
-        case .light, .climate, .fan, .fridge, .vacuum, .speaker, .tv:
+        case .light, .climate, .fan, .fridge, .vacuum, .speaker, .tv, .camera:
             return true
         case .plug(let s):
             return s.powerWatts != nil || s.energyKwh != nil || s.childLockEntityId != nil
@@ -414,7 +468,11 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
                 return s.isOn ? "heater.vertical.fill" : "heater.vertical"
             }
             return s.isOn ? "snowflake" : "air.conditioner.horizontal"
-        case .fan:
+        case .fan(let s):
+            if model.contains("airp") || model.contains("purifier") || name.contains("净化")
+                || s.pm25Density != nil || s.airQuality != nil || s.filterLifePercent != nil {
+                return "aqi.medium"
+            }
             return "fan.floor.fill"
         case .plug(let s):
             if name.contains("咖啡") {
@@ -435,6 +493,8 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return s.isMuted ? "hifispeaker.slash.fill" : "hifispeaker.fill"
         case .tv:
             return "tv.fill"
+        case .camera(let s):
+            return s.isOn ? "web.camera.fill" : "web.camera"
         case .sensor(let s):
             if name.contains("门锁") {
                 return "lock.shield.fill"
@@ -478,11 +538,32 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             return "\(modeLabel) · \(tempStr)"
 
         case .fan(let s):
-            if !s.isOn { return L10n.tr("已关闭", "Off") }
+            var envParts: [String] = []
+            if let pm25 = s.pm25Density {
+                if let aq = Self.localizeAirQuality(s.airQuality, pm25: pm25) {
+                    envParts.append("PM2.5 \(pm25) \(aq)")
+                } else {
+                    envParts.append("PM2.5 \(pm25)")
+                }
+            } else if let aq = Self.localizeAirQuality(s.airQuality, pm25: nil) {
+                envParts.append(aq)
+            }
+            if let t = s.temperature, let h = s.humidity {
+                envParts.append("\(L10n.temperature(t, fractionDigits: 0)) \(Int(h.rounded()))%")
+            } else if let t = s.temperature {
+                envParts.append(L10n.temperature(t, fractionDigits: 1))
+            } else if let h = s.humidity {
+                envParts.append("\(Int(h.rounded()))%")
+            }
+            if !s.isOn {
+                if envParts.isEmpty { return L10n.tr("已关闭", "Off") }
+                return ([L10n.tr("已关闭", "Off")] + envParts).joined(separator: " · ")
+            }
             var parts: [String] = []
-            if let mode = s.presetMode { parts.append(mode) }
+            if let mode = s.presetMode { parts.append(Self.localizeFanPreset(mode)) }
             if let pct = s.percentage { parts.append("\(pct)%") }
             if parts.isEmpty { parts.append(L10n.tr("运行中", "Running")) }
+            parts.append(contentsOf: envParts)
             return parts.joined(separator: " · ")
 
         case .plug(let s):
@@ -543,6 +624,18 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
             parts.append(s.isMuted ? L10n.tr("已静音", "Muted") : L10n.tr("音量 \(s.volumePercent)%", "Vol \(s.volumePercent)%"))
             return parts.joined(separator: " · ")
 
+        case .camera(let s):
+            if !s.isOn { return L10n.tr("休眠中 · 点击唤醒", "Sleeping · Click to Wake") }
+            var parts: [String] = [L10n.tr("监控中", "Monitoring")]
+            if let night = s.nightShot, !night.isEmpty {
+                parts.append(Self.localizeNightShot(night))
+            }
+            if s.isMotionDetectionOn == true {
+                parts.append(L10n.tr("侦测开", "Motion On"))
+            }
+            parts.append(L10n.tr("点击看画面", "Live View"))
+            return parts.joined(separator: " · ")
+
         case .sensor(let s):
             if let t = s.temperature, let h = s.humidity {
                 return "\(L10n.temperature(t, fractionDigits: 1)) · \(String(format: "%.0f%%", h))"
@@ -583,6 +676,53 @@ public struct SmartDevice: Identifiable, Equatable, Sendable {
         case "fan_only": return L10n.tr("送风", "Fan")
         case "auto", "heat_cool": return L10n.tr("自动", "Auto")
         case "off": return L10n.tr("关闭", "Off")
+        default: return mode
+        }
+    }
+
+    public static func localizeFanPreset(_ mode: String) -> String {
+        switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "auto", "automatic": return L10n.tr("自动", "Auto")
+        case "sleep": return L10n.tr("睡眠", "Sleep")
+        case "favorite", "favourite": return L10n.tr("最爱", "Favorite")
+        case "manual", "none": return L10n.tr("手动", "Manual")
+        case "silent": return L10n.tr("静音", "Silent")
+        default: return mode
+        }
+    }
+
+    public static func localizeAirQuality(_ raw: String?, pm25: Int?) -> String? {
+        if let raw, !raw.isEmpty {
+            switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "excellent", "空气优", "优": return L10n.tr("优", "Excellent")
+            case "good", "空气良", "良": return L10n.tr("良", "Good")
+            case "moderate", "轻度污染": return L10n.tr("轻度污染", "Moderate")
+            case "poor", "中度污染": return L10n.tr("中度污染", "Poor")
+            case "heavy pollution", "heavy", "重度污染": return L10n.tr("重度污染", "Heavy")
+            case "hazardous", "严重污染": return L10n.tr("严重污染", "Hazardous")
+            default: return raw
+            }
+        }
+        guard let pm25 else { return nil }
+        switch pm25 {
+        case ...35: return L10n.tr("优", "Excellent")
+        case ...75: return L10n.tr("良", "Good")
+        case ...115: return L10n.tr("轻度污染", "Moderate")
+        case ...150: return L10n.tr("中度污染", "Poor")
+        case ...250: return L10n.tr("重度污染", "Heavy")
+        default: return L10n.tr("严重污染", "Hazardous")
+        }
+    }
+
+    public static func localizeNightShot(_ mode: String) -> String {
+        switch mode.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "off", "close": return L10n.tr("夜视关", "Night Off")
+        case "on", "open": return L10n.tr("夜视开", "Night On")
+        case "auto", "automatic": return L10n.tr("自动夜视", "Auto Night")
+        case "auto full color", "smart full color", "auto smart full color":
+            return L10n.tr("智能全彩", "Smart Color")
+        case "on full color", "full color":
+            return L10n.tr("全彩夜视", "Full Color")
         default: return mode
         }
     }
@@ -688,6 +828,7 @@ public enum DeviceCommand: Equatable, Sendable {
     case setClimateSwingMode(entityId: String, swingMode: String)
 
     case setFanPower(entityId: String, isOn: Bool)
+    case setFanPercentage(entityId: String, percent: Int)
     case setFanPresetMode(entityId: String, presetMode: String)
     case setFanOscillating(entityId: String, oscillating: Bool)
 

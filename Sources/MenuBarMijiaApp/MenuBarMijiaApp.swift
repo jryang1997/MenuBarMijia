@@ -18,6 +18,7 @@ struct MenuBarMijiaApp: App {
         HotkeyAndNotificationManager.shared.start(with: sharedStore)
         SystemActivityMonitor.shared.start(with: sharedStore)
         AutomationEngine.shared.start(with: sharedStore)
+        CameraLivePanelController.shared.install(with: sharedStore)
     }
 
     var body: some Scene {

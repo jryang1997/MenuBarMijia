@@ -58,6 +58,11 @@ extension HomeStore {
                 return nil
             }
 
+
+        case .camera(var s):
+            s.isOn.toggle()
+            updated.kind = .camera(s)
+            command = .setSwitch(entityId: s.entityId, isOn: s.isOn)
         case .speaker, .fridge, .sensor:
             toggleExpanded(device.id)
             return nil
@@ -225,6 +230,27 @@ extension HomeStore {
             deviceId: deviceId,
             fallback: previous,
             command: .setClimateSwingMode(entityId: s.entityId, swingMode: swingMode)
+        )
+    }
+
+    public func setFanPercentage(_ deviceId: String, percent: Int) {
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .fan(var s) = devices[idx].kind else { return }
+        let previous = devices[idx]
+        let clamped = max(1, min(100, percent))
+        s.isOn = true
+        s.percentage = clamped
+        if let favMode = s.availablePresetModes.first(where: { $0.caseInsensitiveCompare("Favorite") == .orderedSame }) {
+            s.presetMode = favMode
+        }
+        devices[idx].kind = .fan(s)
+        lockOptimistic(deviceId, duration: .seconds(2.5))
+
+        dispatchDebounced(
+            key: "\(deviceId).fanpercent",
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setFanPercentage(entityId: s.entityId, percent: clamped)
         )
     }
 
@@ -457,6 +483,89 @@ extension HomeStore {
                 showToast(L10n.tr("\(label) 执行失败", "\(label) failed"), isError: true)
             }
         }
+    }
+
+    // MARK: - Camera Controls & Live Stream Resolution (#97)
+
+    public func setCameraMotionDetection(_ deviceId: String, enabled: Bool) {
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .camera(var s) = devices[idx].kind,
+              let motionEid = s.motionDetectionEntityId else { return }
+        let previous = devices[idx]
+        s.isMotionDetectionOn = enabled
+        devices[idx].kind = .camera(s)
+        lockOptimistic(deviceId, duration: .seconds(2.2))
+
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setSwitch(entityId: motionEid, isOn: enabled)
+        )
+    }
+
+    public func setCameraNightShot(_ deviceId: String, mode: String) {
+        guard let idx = devices.firstIndex(where: { $0.id == deviceId }),
+              case .camera(var s) = devices[idx].kind,
+              s.availableNightShots.contains(mode) else { return }
+        let previous = devices[idx]
+        s.nightShot = mode
+        devices[idx].kind = .camera(s)
+        lockOptimistic(deviceId, duration: .seconds(2.2))
+
+        dispatchImmediate(
+            deviceId: deviceId,
+            fallback: previous,
+            command: .setSelectOption(entityId: s.entityId, option: mode)
+        )
+    }
+
+    public func openCameraLiveView(_ deviceId: String) {
+        guard let device = devices.first(where: { $0.id == deviceId }),
+              case .camera = device.kind else { return }
+        guard device.isOnline else {
+            showToast(L10n.tr("\(device.name) 当前离线", "\(device.name) is offline"), isError: true)
+            return
+        }
+        activeLiveCameraDeviceId = device.id
+        onOpenCameraLiveView?(device)
+    }
+
+    public func cameraCustomStreamURL(for deviceId: String) -> String? {
+        guard let map = userDefaults.dictionary(forKey: Self.cameraStreamURLsKey) as? [String: String],
+              let raw = map[deviceId]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
+        }
+        return raw
+    }
+
+    public func setCameraCustomStreamURL(_ urlString: String?, for deviceId: String) {
+        var map = (userDefaults.dictionary(forKey: Self.cameraStreamURLsKey) as? [String: String]) ?? [:]
+        let trimmed = urlString?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            map.removeValue(forKey: deviceId)
+        } else {
+            map[deviceId] = trimmed
+        }
+        userDefaults.set(map, forKey: Self.cameraStreamURLsKey)
+    }
+
+    public func resolveCameraStream(for deviceId: String) async throws -> CameraStreamSource {
+        guard let device = devices.first(where: { $0.id == deviceId }),
+              case .camera = device.kind else {
+            throw HomeProviderError.serviceCallFailed(400, L10n.tr("未找到该摄像头设备", "Camera device not found"))
+        }
+        if let custom = cameraCustomStreamURL(for: deviceId),
+           let url = URL(string: custom),
+           let scheme = url.scheme?.lowercased(),
+           (scheme == "http" || scheme == "https") {
+            let lower = custom.lowercased()
+            if lower.contains(".jpg") || lower.contains(".jpeg") || lower.contains("snapshot") || lower.contains("camera_proxy") || lower.contains("frame.jpeg") {
+                return .snapshot(url)
+            }
+            return .hls(url)
+        }
+        return try await provider.resolveCameraStream(for: device)
     }
 
     // MARK: - Internal Dispatch Helpers

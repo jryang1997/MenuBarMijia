@@ -263,6 +263,14 @@ public struct DeviceCardView: View {
                 }
             }
 
+            if case .camera = device.kind {
+                Button {
+                    store.openCameraLiveView(device.id)
+                } label: {
+                    Label(L10n.tr("打开实时画面小窗", "Open Floating Live View"), systemImage: "pip.enter")
+                }
+            }
+
             if device.hasDetailDrawer {
                 Button {
                     withAnimation(AppleMotion.snappySpring) {
@@ -312,7 +320,14 @@ public struct DeviceCardView: View {
 
     private var bentoBody: some View {
         Button {
-            withAnimation(AppleMotion.snappySpring) { _ = store.togglePrimary(device) }
+            if case .camera(let cam) = device.kind {
+                if !cam.isOn {
+                    withAnimation(AppleMotion.snappySpring) { _ = store.togglePrimary(device) }
+                }
+                store.openCameraLiveView(device.id)
+            } else {
+                withAnimation(AppleMotion.snappySpring) { _ = store.togglePrimary(device) }
+            }
             if device.isOnline { SoundFeedback.playSuccess() }
         } label: {
             VStack(alignment: .leading, spacing: 0) {
@@ -371,7 +386,13 @@ public struct DeviceCardView: View {
 
             Button {
                 withAnimation(AppleMotion.snappySpring) {
-                    if device.hasDetailDrawer {
+                    if case .camera(let cam) = device.kind {
+                        if !cam.isOn {
+                            _ = store.togglePrimary(device)
+                        }
+                        store.openCameraLiveView(device.id)
+                        if device.isOnline { SoundFeedback.playSuccess() }
+                    } else if device.hasDetailDrawer {
                         store.toggleExpanded(device.id)
                     } else {
                         _ = store.togglePrimary(device)
@@ -421,7 +442,14 @@ public struct DeviceCardView: View {
         HStack(spacing: 8) {
             Button {
                 withAnimation(AppleMotion.snappySpring) {
-                    _ = store.togglePrimary(device)
+                    if case .camera(let cam) = device.kind {
+                        if !cam.isOn {
+                            _ = store.togglePrimary(device)
+                        }
+                        store.openCameraLiveView(device.id)
+                    } else {
+                        _ = store.togglePrimary(device)
+                    }
                 }
                 if device.isOnline { SoundFeedback.playSuccess() }
             } label: {
@@ -472,6 +500,21 @@ public struct DeviceCardView: View {
                 if let quickIndex, shouldShowQuickBadge {
                     quickIndexPill(quickIndex)
                 }
+                if case .camera = device.kind {
+                    Button {
+                        store.openCameraLiveView(device.id)
+                    } label: {
+                        Image(systemName: "pip.enter")
+                            .font(.system(size: DesignTokens.TypeSize.control, weight: .semibold))
+                            .foregroundStyle(accent)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(accent.opacity(0.12)))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text(L10n.tr("打开 \(device.name) 实时画面小窗", "Open \(device.name) floating live view")))
+                }
+
 
                 if isHovered || isExpanded || isFavorite {
                     Button {
@@ -579,6 +622,8 @@ public struct DeviceCardView: View {
             speakerDrawer(spec)
         case .tv(let spec):
             tvDrawer(spec)
+        case .camera(let spec):
+            cameraDrawer(spec)
         case .sensor:
             EmptyView()
         }
@@ -732,22 +777,130 @@ public struct DeviceCardView: View {
     // MARK: - 3. Fan Detail Controls
 
     private func fanDrawer(_ spec: FanSpec) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !spec.availablePresetModes.isEmpty {
-                AdaptiveGlassContainer(spacing: 6) {
-                    HStack(spacing: 6) {
-                        ForEach(spec.availablePresetModes, id: \.self) { mode in
-                            let selected = (spec.presetMode == mode)
-                            Button(mode) {
-                                store.setFanPresetMode(device.id, preset: mode)
+        let hasTelemetry = spec.pm25Density != nil || spec.airQuality != nil
+            || spec.temperature != nil || spec.humidity != nil || spec.filterLifePercent != nil
+        return VStack(alignment: .leading, spacing: 8) {
+            if hasTelemetry {
+                HStack(spacing: 12) {
+                    if spec.pm25Density != nil || spec.airQuality != nil {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(L10n.tr("空气质量 (PM2.5)", "Air Quality (PM2.5)"))
+                                .font(.system(size: DesignTokens.TypeSize.micro, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                if let pm25 = spec.pm25Density {
+                                    Text("\(pm25)")
+                                        .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold, design: .rounded))
+                                        .monospacedDigit()
+                                }
+                                if let aq = SmartDevice.localizeAirQuality(spec.airQuality, pm25: spec.pm25Density) {
+                                    Text(aq)
+                                        .font(.system(size: DesignTokens.TypeSize.control, weight: .semibold))
+                                        .foregroundStyle(airQualityColor(pm25: spec.pm25Density, raw: spec.airQuality))
+                                }
                             }
-                            .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
-                            .disabled(!device.isOnline)
                         }
                     }
+
+                    if spec.temperature != nil || spec.humidity != nil {
+                        if spec.pm25Density != nil || spec.airQuality != nil {
+                            Divider().frame(height: 22)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(L10n.tr("温湿度", "Temp & Hum"))
+                                .font(.system(size: DesignTokens.TypeSize.micro, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Text(fanEnvironmentReadout(spec))
+                                .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                    }
+
+                    if let filterLife = spec.filterLifePercent {
+                        if spec.pm25Density != nil || spec.airQuality != nil || spec.temperature != nil || spec.humidity != nil {
+                            Divider().frame(height: 22)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(L10n.tr("滤芯余量", "Filter Life"))
+                                .font(.system(size: DesignTokens.TypeSize.micro, weight: .medium))
+                                .foregroundStyle(.secondary)
+                            Text("\(filterLife)%")
+                                .font(.system(size: DesignTokens.TypeSize.body, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                    }
+
+                    Spacer(minLength: 0)
                 }
             }
+
+            if let pct = spec.percentage {
+                let speedVal = Double(max(1, min(100, pct)))
+                LiquidGlassSlider(
+                    value: Binding(
+                        get: { speedVal },
+                        set: { store.setFanPercentage(device.id, percent: Int($0.rounded())) }
+                    ),
+                    in: 1...100,
+                    step: 1,
+                    iconName: "wind",
+                    iconColor: statusColor,
+                    trackFill: LinearGradient(
+                        colors: [
+                            DesignTokens.Purifier.speedTrackTop.opacity(0.62),
+                            DesignTokens.Purifier.speedTrackBottom.opacity(0.92)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    ),
+                    formattedValue: "\(Int(speedVal))%"
+                )
+                .disabled(!device.isOnline)
+            }
+
+            if !spec.availablePresetModes.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    AdaptiveGlassContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(spec.availablePresetModes, id: \.self) { mode in
+                                let selected = (spec.presetMode == mode)
+                                Button(SmartDevice.localizeFanPreset(mode)) {
+                                    store.setFanPresetMode(device.id, preset: mode)
+                                }
+                                .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
+                                .disabled(!device.isOnline)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+                .padding(-6)
+            }
         }
+    }
+
+    private func fanEnvironmentReadout(_ spec: FanSpec) -> String {
+        if let t = spec.temperature, let h = spec.humidity {
+            return "\(L10n.temperature(t, fractionDigits: 1)) · \(Int(h.rounded()))%"
+        }
+        if let t = spec.temperature {
+            return L10n.temperature(t, fractionDigits: 1)
+        }
+        if let h = spec.humidity {
+            return "\(Int(h.rounded()))%"
+        }
+        return "—"
+    }
+
+    private func airQualityColor(pm25: Int?, raw: String?) -> Color {
+        let lower = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lower == "excellent" || lower == "good" || (pm25 != nil && pm25! <= 75) {
+            return DesignTokens.Purifier.good
+        }
+        if lower == "moderate" || (pm25 != nil && pm25! <= 115) {
+            return DesignTokens.Purifier.moderate
+        }
+        return DesignTokens.Purifier.poor
     }
 
     // MARK: - 4. Smart Plug (Coffee Machine) Controls
@@ -1115,6 +1268,76 @@ public struct DeviceCardView: View {
                 .padding(6)
             }
             .padding(-6)
+        }
+    }
+
+    // MARK: - 9. Smart Camera Controls & Live View Popout (#97)
+
+    private func cameraDrawer(_ spec: CameraSpec) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                AdaptiveGlassContainer(spacing: 6) {
+                    HStack(spacing: 6) {
+                        Button {
+                            if !spec.isOn {
+                                _ = store.togglePrimary(device)
+                            }
+                            store.openCameraLiveView(device.id)
+                        } label: {
+                            Label(L10n.tr("放大实时画面", "Open Live View"), systemImage: "pip.enter")
+                        }
+                        .buttonStyle(PillActionButtonStyle(isSelected: true, tintColor: accent))
+                        .disabled(!device.isOnline)
+
+                        Button {
+                            _ = store.togglePrimary(device)
+                            if device.isOnline { SoundFeedback.playSuccess() }
+                        } label: {
+                            Label(
+                                spec.isOn ? L10n.tr("镜头休眠", "Sleep") : L10n.tr("唤醒镜头", "Wake"),
+                                systemImage: spec.isOn ? "moon.zzz.fill" : "video.fill"
+                            )
+                        }
+                        .buttonStyle(PillActionButtonStyle(isSelected: !spec.isOn, tintColor: accent))
+                        .disabled(!device.isOnline)
+
+                        if spec.motionDetectionEntityId != nil {
+                            let motionOn = spec.isMotionDetectionOn ?? false
+                            Button {
+                                store.setCameraMotionDetection(device.id, enabled: !motionOn)
+                            } label: {
+                                Label(
+                                    motionOn ? L10n.tr("移动侦测：开", "Motion: On") : L10n.tr("移动侦测：关", "Motion: Off"),
+                                    systemImage: "figure.walk.motion"
+                                )
+                            }
+                            .buttonStyle(PillActionButtonStyle(isSelected: motionOn, tintColor: accent))
+                            .disabled(!device.isOnline)
+                        }
+                    }
+                }
+                .padding(6)
+            }
+            .padding(-6)
+
+            if !spec.availableNightShots.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    AdaptiveGlassContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(spec.availableNightShots, id: \.self) { mode in
+                                let selected = (spec.nightShot == mode)
+                                Button(SmartDevice.localizeNightShot(mode)) {
+                                    store.setCameraNightShot(device.id, mode: mode)
+                                }
+                                .buttonStyle(PillActionButtonStyle(isSelected: selected, tintColor: accent))
+                                .disabled(!device.isOnline)
+                            }
+                        }
+                    }
+                    .padding(6)
+                }
+                .padding(-6)
+            }
         }
     }
 }

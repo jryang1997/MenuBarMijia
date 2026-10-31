@@ -46,7 +46,9 @@ public enum LocalIntentParser {
         "中档": "medium", "中速": "medium", "风速调中": "medium",
         "低档": "low", "低速": "low", "小风": "low", "微风": "low",
         "风速调低": "low", "风速调小": "low", "风速最小": "low",
-        "自动风": "auto", "风速自动": "auto"
+        "自动风": "auto", "风速自动": "auto",
+        "睡眠模式": "sleep", "睡眠档": "sleep", "静音模式": "sleep", "静音档": "sleep",
+        "最爱模式": "favorite", "最爱档": "favorite", "最爱": "favorite"
     ]
 
     /// Longer "stop" phrases are consumed first, so "关闭摇头" never reads as 关闭 + 摇头.
@@ -67,9 +69,11 @@ public enum LocalIntentParser {
         "空调": .climate,
         "暖气": .heater, "电暖器": .heater, "电暖气": .heater, "取暖器": .heater, "暖风机": .heater,
         "风扇": .fan, "电风扇": .fan, "电扇": .fan,
+        "空气净化器": .airPurifier, "净化器": .airPurifier, "空净": .airPurifier,
         "插座": .plug,
         "扫地机": .vacuum, "扫地机器人": .vacuum,
-        "电视": .tv, "电视机": .tv
+        "电视": .tv, "电视机": .tv,
+        "摄像头": .camera, "摄像机": .camera, "监控": .camera
     ]
 
     /// Generic room words users say, mapped to room names they may correspond to in HA.
@@ -289,7 +293,7 @@ public enum LocalIntentParser {
             switch op {
             case .brightness, .brightnessStep, .colorTemperature, .lightEffect: return [.light]
             case .hvacMode, .targetTemperature, .temperatureStep: return [.climate, .heater]
-            case .fanSpeed: return [.fan, .climate]
+            case .fanSpeed: return [.fan, .airPurifier, .climate]
             case .oscillation: return [.fan]
             case .power, .activateScene: continue
             }
@@ -418,14 +422,16 @@ public enum LocalIntentParser {
         ("bedside lamp", .light), ("desk lamp", .light), ("table lamp", .light),
         ("screen bar", .light), ("light strip", .light),
         ("robot vacuum", .vacuum), ("smart plug", .plug), ("space heater", .heater),
-        ("standing fan", .fan),
+        ("standing fan", .fan), ("air purifiers", .airPurifier), ("air purifier", .airPurifier),
+        ("purifiers", .airPurifier), ("purifier", .airPurifier),
         ("lights", .light), ("light", .light), ("lamps", .light), ("lamp", .light),
         ("climate", .climate), ("ac", .climate),
         ("heater", .heater),
         ("fans", .fan), ("fan", .fan),
         ("plugs", .plug), ("plug", .plug), ("socket", .plug), ("outlet", .plug),
         ("vacuum", .vacuum),
-        ("television", .tv), ("tv", .tv)
+        ("television", .tv), ("tv", .tv),
+        ("cameras", .camera), ("camera", .camera)
     ]
 
     private static let englishFillers: [String] = [
@@ -495,7 +501,8 @@ public enum LocalIntentParser {
             ("fan speed high", "high"), ("high fan speed", "high"), ("high speed", "high"), ("max speed", "high"),
             ("fan speed medium", "medium"), ("medium fan speed", "medium"), ("medium speed", "medium"),
             ("fan speed low", "low"), ("low fan speed", "low"), ("low speed", "low"), ("min speed", "low"),
-            ("fan speed auto", "auto"), ("auto fan speed", "auto"), ("auto speed", "auto")
+            ("fan speed auto", "auto"), ("auto fan speed", "auto"), ("auto speed", "auto"),
+            ("sleep mode", "sleep"), ("favorite mode", "favorite")
         ]
         for (p, val) in fanPhrases where consumeEnglishPhrase(p, from: &rest) {
             ops.append(.fanSpeed(val))

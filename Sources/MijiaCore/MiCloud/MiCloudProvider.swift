@@ -415,4 +415,106 @@ public actor MiCloudProvider: HomeProvider {
             return []
         }
     }
+
+    // MARK: Camera Live Stream Resolution
+
+    public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
+        guard case .camera(let cameraSpec) = device.kind else {
+            throw MiotCommandError.unsupported("camera")
+        }
+        if let api,
+           let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id }),
+           let spec = specsByModel[record.model] {
+            let did = record.miotDid
+            let streamService: MiotService? = {
+                if let streamId = cameraSpec.streamEntityId,
+                   let (_, siid) = MiotAddress.parse(streamId),
+                   let svc = spec.service(iid: siid),
+                   svc.action(named: "start-hls-stream") != nil {
+                    return svc
+                }
+                return spec.services(named: "camera-stream-for-google-home").first { $0.action(named: "start-hls-stream") != nil }
+            }()
+            if let svc = streamService,
+               let act = svc.action(named: "start-hls-stream") {
+                if let result = try? await api.callAction(MiotActionCall(did: did, siid: svc.iid, aiid: act.iid, inputs: [])),
+                   let url = Self.extractStreamURL(from: result) {
+                    return .hls(url)
+                }
+                if let result = try? await api.callAction(MiotActionCall(did: did, siid: svc.iid, aiid: act.iid, inputs: [.number(1)])),
+                   let url = Self.extractStreamURL(from: result) {
+                    return .hls(url)
+                }
+            }
+        }
+
+        if let localURL = await Self.probeLocalGo2RTC(for: device) {
+            return .hls(localURL)
+        }
+
+        throw HomeProviderError.serviceCallFailed(
+            501,
+            L10n.tr(
+                "米家云直连摄像头采用私有 P2P 加密流；可在下方填写本地 go2rtc / HLS 流地址，或接入 Home Assistant 观看实时画面",
+                "Xiaomi Cloud cameras use private P2P streaming; enter a local go2rtc / HLS URL below or connect via Home Assistant"
+            )
+        )
+    }
+
+    public static func extractStreamURL(from value: JSONValue) -> URL? {
+        switch value {
+        case .string(let s):
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://"),
+               let url = URL(string: trimmed) {
+                return url
+            }
+            return nil
+        case .array(let items):
+            for item in items {
+                if let found = extractStreamURL(from: item) { return found }
+            }
+            return nil
+        case .object(let dict):
+            if let out = dict["out"], let found = extractStreamURL(from: out) { return found }
+            if let addr = dict["stream_address"], let found = extractStreamURL(from: addr) { return found }
+            if let val = dict["value"], let found = extractStreamURL(from: val) { return found }
+            for v in dict.values {
+                if let found = extractStreamURL(from: v) { return found }
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private static func probeLocalGo2RTC(for device: SmartDevice) async -> URL? {
+        guard let streamsURL = URL(string: "http://127.0.0.1:1984/api/streams") else { return nil }
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.connectionProxyDictionary = [:]
+        cfg.timeoutIntervalForRequest = 1.2
+        cfg.timeoutIntervalForResource = 1.5
+        cfg.waitsForConnectivity = false
+        let session = URLSession(configuration: cfg)
+        defer { session.invalidateAndCancel() }
+
+        guard let (data, response) = try? await session.data(from: streamsURL),
+              let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !json.isEmpty else {
+            return nil
+        }
+        let candidates = [device.id.lowercased(), device.name.lowercased(), device.model.lowercased()]
+        let matchedKey = json.keys.first { key in
+            let lower = key.lowercased()
+            return candidates.contains { !$0.isEmpty && (lower == $0 || lower.contains($0) || $0.contains(lower)) }
+        } ?? (json.keys.count == 1 ? json.keys.first : nil)
+        guard let src = matchedKey,
+              var comps = URLComponents(string: "http://127.0.0.1:1984/api/stream.m3u8") else {
+            return nil
+        }
+        comps.queryItems = [URLQueryItem(name: "src", value: src)]
+        return comps.url
+    }
 }

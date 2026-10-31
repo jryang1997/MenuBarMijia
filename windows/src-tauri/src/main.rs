@@ -19,6 +19,13 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 static LAST_FOCUS_LOSS_MS: AtomicU64 = AtomicU64::new(0);
 static PIN_POPOVER: AtomicBool = AtomicBool::new(false);
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Keeps spawned helper processes (go2rtc, ffmpeg) from flashing a console window.
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 struct TrayAndHotkeyState {
     active_shortcut: Option<Shortcut>,
     shortcut_label: Option<String>,
@@ -1063,6 +1070,324 @@ fn set_panel_height(app: AppHandle, height: f64) {
     let _ = window.set_position(PhysicalPosition::new(old_pos.x, y));
 }
 
+#[tauri::command]
+async fn start_xiaomi_camera_bridge(
+    did: String,
+    model: String,
+    local_ip: String,
+    client_public: String,
+    client_private: String,
+    device_public: String,
+    sign: String,
+    vendor: String,
+    uid: Option<String>,
+) -> Result<String, String> {
+    let _bridge_order = CAMERA_BRIDGE_LOCK.lock().await;
+    let cam_ip: std::net::Ipv4Addr = local_ip
+        .trim()
+        .parse()
+        .map_err(|_| format!("无效的局域网摄像机 IP：{local_ip}"))?;
+    if !cam_ip.is_private() && !cam_ip.is_loopback() {
+        return Err("仅允许局域网私有 IP 地址直连摄像机".to_string());
+    }
+
+    ensure_go2rtc_running().await?;
+
+    let clean_did: String = did
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let raw_name = format!("cam_raw_{clean_did}");
+    let h264_name = format!("cam_h264_{clean_did}");
+    let mjpeg_name = format!("cam_mjpeg_{clean_did}");
+
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(6))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // A camera keeps exactly one P2P session, and the relay thread dies with its old port.
+    // Dropping the previous bridge first is what makes the second open work.
+    stop_bridge(&http, &clean_did, &[&raw_name, &h264_name, &mjpeg_name]).await;
+
+    let relay_port = camera_relay_port(&clean_did, cam_ip)?;
+
+    let mut query = format!(
+        "client_public={}&client_private={}&device_public={}&sign={}&vendor={}&transport=udp&subtype=sd&audio=0&model={}",
+        urlencoding_simple(&client_public),
+        urlencoding_simple(&client_private),
+        urlencoding_simple(&device_public),
+        urlencoding_simple(&sign),
+        urlencoding_simple(&vendor),
+        urlencoding_simple(&model)
+    );
+    if let Some(u) = uid.as_deref().filter(|s| !s.is_empty()) {
+        query.push_str(&format!("&uid={}", urlencoding_simple(u)));
+    }
+    let xiaomi_url = format!("xiaomi://127.0.0.1:{relay_port}?{query}");
+
+    put_stream(&http, &raw_name, &xiaomi_url)
+        .await
+        .map_err(|e| format!("注册摄像机原始流失败：{e}"))?;
+    // Two transcode targets: WebRTC plays H.264 with real-time pacing (it drops late frames
+    // instead of buffering), while MJPEG is the fallback that paints on the first frame.
+    put_stream(&http, &h264_name, &format!("ffmpeg:{raw_name}#video=h264"))
+        .await
+        .map_err(|e| format!("注册摄像机 H.264 转码流失败：{e}"))?;
+    put_stream(&http, &mjpeg_name, &format!("ffmpeg:{raw_name}#video=mjpeg"))
+        .await
+        .map_err(|e| format!("注册摄像机 MJPEG 转码流失败：{e}"))?;
+
+    Ok(format!("{h264_name}|{mjpeg_name}"))
+}
+
+#[tauri::command]
+async fn bridge_hls_camera_stream(did: String, hls_url: String) -> Result<String, String> {
+    let _bridge_order = CAMERA_BRIDGE_LOCK.lock().await;
+    let parsed = reqwest::Url::parse(hls_url.trim())
+        .map_err(|_| "无效的 HLS 流地址".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("HLS 流地址必须使用 http 或 https 协议".to_string());
+    }
+    ensure_go2rtc_running().await?;
+    let clean_did: String = did
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let mjpeg_name = format!("cam_mjpeg_{clean_did}");
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(6))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = http
+        .delete(format!(
+            "http://127.0.0.1:1984/api/streams?src={}",
+            urlencoding_simple(&mjpeg_name)
+        ))
+        .send()
+        .await;
+    put_stream(&http, &mjpeg_name, &format!("ffmpeg:{}#video=mjpeg", parsed.as_str()))
+        .await
+        .map_err(|e| format!("注册 HLS 转码流失败：{e}"))?;
+    Ok(mjpeg_name)
+}
+
+#[tauri::command]
+async fn stop_xiaomi_camera_bridge(did: String) -> Result<(), String> {
+    let _bridge_order = CAMERA_BRIDGE_LOCK.lock().await;
+    let clean_did: String = did
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let raw_name = format!("cam_raw_{clean_did}");
+    let h264_name = format!("cam_h264_{clean_did}");
+    let mjpeg_name = format!("cam_mjpeg_{clean_did}");
+    stop_bridge(&http, &clean_did, &[&raw_name, &h264_name, &mjpeg_name]).await;
+    Ok(())
+}
+
+async fn put_stream(http: &reqwest::Client, name: &str, src: &str) -> Result<(), String> {
+    let url = format!(
+        "http://127.0.0.1:1984/api/streams?name={}&src={}",
+        urlencoding_simple(name),
+        urlencoding_simple(src)
+    );
+    let resp = http.put(&url).send().await.map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("HTTP {}", resp.status()))
+    }
+}
+
+async fn stop_bridge(http: &reqwest::Client, clean_did: &str, names: &[&str]) {
+    for name in names {
+        let url = format!(
+            "http://127.0.0.1:1984/api/streams?src={}",
+            urlencoding_simple(name)
+        );
+        let _ = http.delete(&url).send().await;
+    }
+    if let Ok(mut relays) = CAMERA_RELAYS.lock() {
+        if let Some(relay) = relays.remove(clean_did) {
+            relay.stop.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+struct CameraRelay {
+    port: u16,
+    stop: std::sync::Arc<AtomicBool>,
+}
+
+static CAMERA_RELAYS: LazyLock<std::sync::Mutex<HashMap<String, CameraRelay>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Serializes bridge start/stop end to end: two overlapping starts for the same
+/// camera otherwise interleave their stop_bridge/register sequences and the
+/// newer bridge ends up deleted by the stale one (#97).
+static CAMERA_BRIDGE_LOCK: LazyLock<tauri::async_runtime::Mutex<()>> =
+    LazyLock::new(|| tauri::async_runtime::Mutex::new(()));
+
+/// Reuses a live relay so reopening the panel does not renegotiate P2P from scratch.
+fn camera_relay_port(clean_did: &str, cam_ip: std::net::Ipv4Addr) -> Result<u16, String> {
+    let mut relays = CAMERA_RELAYS.lock().map_err(|_| "中继表不可用".to_string())?;
+    if let Some(existing) = relays.get(clean_did) {
+        if !existing.stop.load(Ordering::SeqCst) {
+            return Ok(existing.port);
+        }
+    }
+    relays.remove(clean_did);
+    let (port, stop) = spawn_cs2_udp_relay(cam_ip)?;
+    relays.insert(clean_did.to_string(), CameraRelay { port, stop });
+    Ok(port)
+}
+
+fn urlencoding_simple(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+async fn ensure_go2rtc_running() -> Result<(), String> {
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .map_err(|_| "无法读取 LOCALAPPDATA 目录".to_string())?;
+    let bin_dir = local_app_data.join("MenuBarMijia").join("bin");
+    let exe_path = bin_dir.join("go2rtc.exe");
+    if !exe_path.exists() {
+        return Err("未找到本地流媒体桥接组件 (%LOCALAPPDATA%\\MenuBarMijia\\bin\\go2rtc.exe)".to_string());
+    }
+
+    // go2rtc spawns ffmpeg for probes and transcodes; the windowless shim keeps those
+    // helper processes off screen and swallows its 5 GPU-probe launches.
+    let ffmpeg_bin = bin_dir.join("ffmpeg-silent.exe").to_string_lossy().replace('\\', "/");
+    let desired = format!(
+        "api:\n  listen: 127.0.0.1:1984\n  origin: \"*\"\nrtsp:\n  listen: 127.0.0.1:8554\nlog:\n  level: info\n  ffmpeg: error\nffmpeg:\n  bin: {ffmpeg_bin}\n"
+    );
+    let cfg_path = bin_dir.join("go2rtc.yaml");
+    let config_changed = std::fs::read_to_string(&cfg_path).unwrap_or_default() != desired;
+    if config_changed {
+        std::fs::write(&cfg_path, &desired).map_err(|e| format!("写入 go2rtc 配置失败：{e}"))?;
+    }
+
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_millis(800))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let running = matches!(
+        http.get("http://127.0.0.1:1984/api").send().await,
+        Ok(resp) if resp.status().is_success()
+    );
+
+    if running && !config_changed {
+        return Ok(());
+    }
+    if running {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/IM", "go2rtc.exe"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        std::thread::sleep(Duration::from_millis(350));
+    }
+
+    std::process::Command::new(&exe_path)
+        .arg("-c")
+        .arg(&cfg_path)
+        .current_dir(&bin_dir)
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("启动 go2rtc 失败：{e}"))?;
+
+    for _ in 0..25 {
+        std::thread::sleep(Duration::from_millis(120));
+        if let Ok(resp) = http.get("http://127.0.0.1:1984/api").send().await {
+            if resp.status().is_success() {
+                return Ok(());
+            }
+        }
+    }
+    Err("本地流媒体服务 (127.0.0.1:1984) 启动超时".to_string())
+}
+
+fn spawn_cs2_udp_relay(
+    cam_ip: std::net::Ipv4Addr,
+) -> Result<(u16, std::sync::Arc<AtomicBool>), String> {
+    use std::net::{SocketAddrV4, UdpSocket};
+    use std::sync::Arc;
+
+    // Discover the local IPv4 interface that routes to cam_ip
+    let probe = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    probe
+        .connect(SocketAddrV4::new(cam_ip, 32108))
+        .map_err(|e| e.to_string())?;
+    let local_ip = match probe.local_addr().map_err(|e| e.to_string())?.ip() {
+        std::net::IpAddr::V4(v4) => v4,
+        _ => std::net::Ipv4Addr::UNSPECIFIED,
+    };
+    drop(probe);
+
+    let octets = cam_ip.octets();
+    let broadcast_ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], 255);
+
+    let local_relay = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let relay_port = local_relay.local_addr().map_err(|e| e.to_string())?.port();
+    local_relay
+        .set_read_timeout(Some(Duration::from_millis(25)))
+        .map_err(|e| e.to_string())?;
+
+    let lan_sock = UdpSocket::bind(SocketAddrV4::new(local_ip, 0)).map_err(|e| e.to_string())?;
+    lan_sock.set_broadcast(true).map_err(|e| e.to_string())?;
+    lan_sock
+        .set_read_timeout(Some(Duration::from_millis(25)))
+        .map_err(|e| e.to_string())?;
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_for_thread = Arc::clone(&stop);
+    std::thread::spawn(move || {
+        let mut go2rtc_addr: Option<std::net::SocketAddr> = None;
+        let mut cam_dynamic_port: u16 = 32108;
+        let mut buf = [0u8; 2048];
+
+        while !stop_for_thread.load(Ordering::SeqCst) {
+            if let Ok((n, src)) = local_relay.recv_from(&mut buf) {
+                go2rtc_addr = Some(src);
+                if n >= 2 && buf[0] == 0xf1 && buf[1] == 0x30 {
+                    let _ = lan_sock.send_to(&buf[..n], SocketAddrV4::new(broadcast_ip, 32108));
+                    let _ = lan_sock.send_to(&buf[..n], SocketAddrV4::new(cam_ip, 32108));
+                } else {
+                    let _ = lan_sock.send_to(&buf[..n], SocketAddrV4::new(cam_ip, cam_dynamic_port));
+                }
+            }
+
+            while let Ok((n, src)) = lan_sock.recv_from(&mut buf) {
+                if src.ip() == std::net::IpAddr::V4(cam_ip) {
+                    cam_dynamic_port = src.port();
+                    if let Some(client_addr) = go2rtc_addr {
+                        let _ = local_relay.send_to(&buf[..n], client_addr);
+                    }
+                }
+            }
+        }
+    });
+
+    Ok((relay_port, stop))
+}
+
 fn position_popover(window: &WebviewWindow, anchor: Option<PhysicalPosition<f64>>) {
     let win_size = window.outer_size().unwrap_or(PhysicalSize::new(480, 520));
     let win_w = win_size.width as i32;
@@ -1163,7 +1488,10 @@ fn main() {
             set_update_available,
             set_global_shortcut,
             open_release_page,
-            install_update
+            install_update,
+            start_xiaomi_camera_bridge,
+            bridge_hls_camera_stream,
+            stop_xiaomi_camera_bridge
         ])
         .setup(move |app| {
             sweep_stale_update_installers();

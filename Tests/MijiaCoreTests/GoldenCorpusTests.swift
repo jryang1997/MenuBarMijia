@@ -39,8 +39,8 @@ struct GoldenCorpusTests {
         case fan(FanPayload)
         case plug(PlugPayload)
         case vacuum(VacuumPayload)
+        case camera(CameraPayload)
         case sensor(SensorPayload)
-
         private enum CodingKeys: String, CodingKey { case kind }
 
         struct LightPayload: Decodable {
@@ -77,6 +77,11 @@ struct GoldenCorpusTests {
             let presetMode: String?
             let availablePresetModes: [String]
             let isOscillating: Bool?
+            let pm25Density: Int?
+            let airQuality: String?
+            let temperature: Double?
+            let humidity: Double?
+            let filterLifePercent: Int?
         }
 
         struct PlugPayload: Decodable {
@@ -95,6 +100,17 @@ struct GoldenCorpusTests {
             let modeEntityId: String?
             let currentMode: String?
             let availableModes: [String]
+        }
+
+        struct CameraPayload: Decodable {
+            let entityId: String
+            let isOn: Bool
+            let nightShot: String?
+            let availableNightShots: [String]
+            let motionDetectionEntityId: String?
+            let isMotionDetectionOn: Bool?
+            let streamEntityId: String?
+            let snapshotPath: String?
         }
 
         struct SensorPayload: Decodable {
@@ -117,6 +133,8 @@ struct GoldenCorpusTests {
                 self = .plug(try PlugPayload(from: decoder))
             case "vacuum":
                 self = .vacuum(try VacuumPayload(from: decoder))
+            case "camera":
+                self = .camera(try CameraPayload(from: decoder))
             case "sensor":
                 self = .sensor(try SensorPayload(from: decoder))
             default:
@@ -169,7 +187,12 @@ struct GoldenCorpusTests {
                         percentage: p.percentage,
                         presetMode: p.presetMode,
                         availablePresetModes: p.availablePresetModes,
-                        isOscillating: p.isOscillating
+                        isOscillating: p.isOscillating,
+                        pm25Density: p.pm25Density,
+                        airQuality: p.airQuality,
+                        temperature: p.temperature,
+                        humidity: p.humidity,
+                        filterLifePercent: p.filterLifePercent
                     )
                 )
             case .plug(let p):
@@ -192,6 +215,19 @@ struct GoldenCorpusTests {
                         modeEntityId: p.modeEntityId,
                         currentMode: p.currentMode,
                         availableModes: p.availableModes
+                    )
+                )
+            case .camera(let p):
+                return .camera(
+                    CameraSpec(
+                        entityId: p.entityId,
+                        isOn: p.isOn,
+                        nightShot: p.nightShot,
+                        availableNightShots: p.availableNightShots,
+                        motionDetectionEntityId: p.motionDetectionEntityId,
+                        isMotionDetectionOn: p.isMotionDetectionOn,
+                        streamEntityId: p.streamEntityId,
+                        snapshotPath: p.snapshotPath
                     )
                 )
             case .sensor(let p):
@@ -286,6 +322,24 @@ struct GoldenCorpusTests {
         let expectedEnvironmentReadings: [MiotReadingEntry]
         let expectedRequiredProps: [String: [MiotKeyEntry]]
         let commandCases: [MiotCommandCase]
+        let fallbackSpecs: [MiotFallbackEntry]
+    }
+
+    private struct MiotFallbackEntry: Decodable {
+        let did: String
+        let model: String
+        let name: String
+        let spec: MiotDeviceSpec
+        let values: [MiotFallbackValueEntry]
+        let expectedKind: CorpusKind
+    }
+
+    /// Fallback values are scoped to their entry's `did`, so unlike `MiotValueEntry`
+    /// they carry no `did` key of their own.
+    private struct MiotFallbackValueEntry: Decodable {
+        let siid: Int
+        let piid: Int
+        let value: JSONValue
     }
 
     private struct MiotReadingEntry: Decodable {
@@ -348,8 +402,8 @@ struct GoldenCorpusTests {
         let fanMode: String?
         let presetMode: String?
         let oscillating: Bool?
+        let option: String?
         let action: String?
-
         func toDeviceCommand() throws -> DeviceCommand {
             switch kind {
             case "setLightPower":
@@ -366,12 +420,18 @@ struct GoldenCorpusTests {
                 return .setClimateTemperature(entityId: entityId, temperature: temperature ?? 26)
             case "setClimateFanMode":
                 return .setClimateFanMode(entityId: entityId, fanMode: fanMode ?? "")
+            case "setFanPower":
+                return .setFanPower(entityId: entityId, isOn: isOn ?? false)
+            case "setFanPercentage":
+                return .setFanPercentage(entityId: entityId, percent: percent ?? 0)
             case "setFanPresetMode":
                 return .setFanPresetMode(entityId: entityId, presetMode: presetMode ?? "")
             case "setFanOscillating":
                 return .setFanOscillating(entityId: entityId, oscillating: oscillating ?? false)
             case "setSwitch":
                 return .setSwitch(entityId: entityId, isOn: isOn ?? false)
+            case "setSelectOption":
+                return .setSelectOption(entityId: entityId, option: option ?? "")
             case "vacuumAction":
                 let vAction: VacuumAction = switch action {
                 case "start": .start
@@ -558,6 +618,27 @@ struct GoldenCorpusTests {
             #expect(dev.kind == expectedKind.toDeviceKind(), "Mismatch on \(did)")
         }
         #expect(home.environmentReadings == corpus.expectedEnvironmentReadings.map { $0.toEnvironmentReading() })
+
+        // Offline fallback specs are shared synthesis rules: the corpus pins the exact
+        // spec (Windows additionally asserts inferFallbackSpec matches it) and both
+        // platforms assert synthesis from it (#98).
+        for entry in corpus.fallbackSpecs {
+            var entryValues: [MiotPropKey: JSONValue] = [:]
+            for v in entry.values {
+                entryValues[MiotPropKey(did: entry.did, siid: v.siid, piid: v.piid)] = v.value
+            }
+            let entryRecords = [
+                MiDeviceRecord(did: entry.did, name: entry.name, model: entry.model, isOnline: true, splitParentDid: nil, splitSiid: nil)
+            ]
+            let entryHome = MiotSynthesizer.synthesize(
+                devices: entryRecords,
+                rooms: [],
+                specs: [entry.model: entry.spec],
+                values: entryValues
+            )
+            let dev = try #require(entryHome.devices.first(where: { $0.id == entry.did }), "Missing fallback device \(entry.model)")
+            #expect(dev.kind == entry.expectedKind.toDeviceKind(), "Fallback kind mismatch on \(entry.model)")
+        }
 
         for record in records {
             let spec = try #require(corpus.specs[record.model])

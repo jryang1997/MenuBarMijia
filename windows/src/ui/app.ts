@@ -67,6 +67,9 @@ import {
   isDeviceActiveOn,
   joinsAllOff,
   joinsAllOffByDefault,
+  localizeNightShot,
+  localizeAirQuality,
+  localizeFanPreset,
   partitionDueTimers,
 } from "../core/models.js";
 import {
@@ -197,6 +200,8 @@ interface PersistedSettings {
   enableGlobalHotkey: boolean;
   /** Canonical global shortcut string (default `"Alt+M"`, #43). */
   globalHotkey: string;
+  /** Per-camera custom stream URLs (e.g. local go2rtc / HLS), persisted across restarts. */
+  cameraStreamURLs?: Record<string, string>;
 }
 
 interface UndoStep {
@@ -248,6 +253,7 @@ const SF_ICONS = {
   qrcode: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 3h6v6H3V3zm1.5 1.5v3h3v-3h-3zM11 3h6v6h-6V3zm1.5 1.5v3h3v-3h-3zM3 11h6v6H3v-6zm1.5 1.5v3h3v-3h-3zM11 11h2.5v2.5H11V11zm3.5 0H17v2.5h-2.5V11zM11 14.5h2.5V17H11v-2.5zm3.5 0H17V17h-2.5v-2.5z"/></svg>`,
   xmark: `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/></svg>`,
   arrowUpCircle: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zm.53-11.28a.75.75 0 00-1.06 0L6.72 9.47a.75.75 0 101.06 1.06l1.47-1.47v4.19a.75.75 0 001.5 0V9.06l1.47 1.47a.75.75 0 101.06-1.06l-2.75-2.75z"/></svg>`,
+  videoFill: `<svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 5a2 2 0 012-2h7a2 2 0 012 2v1.8l3.1-1.85A.75.75 0 0118.25 5.6v8.8a.75.75 0 01-1.15.65L14 13.2V15a2 2 0 01-2 2H5a2 2 0 01-2-2V5z"/></svg>`,
 };
 
 /** Demo home, materialised per language so the preview text follows the UI (#52). */
@@ -377,6 +383,24 @@ function demoDevices(): SmartDevice[] {
       battery: 94,
     },
   },
+  {
+    id: "camera.living_cam",
+    name: t(t("客厅摄像机")),
+    roomId: "room_living",
+    roomName: t(t("客厅")),
+    model: "chuangmi.camera.81ac1",
+    isOnline: true,
+    kind: {
+      kind: "camera",
+      entityId: "miot:camera.living_cam:2",
+      isOn: true,
+      nightShot: "Auto",
+      availableNightShots: ["Off", "On", "Auto"],
+      motionDetectionEntityId: "miot:camera.living_cam:5",
+      isMotionDetectionOn: true,
+      streamEntityId: "miot:camera.living_cam:20",
+    },
+  },
   ];
 }
 
@@ -444,6 +468,31 @@ interface LoadedSettings {
   /** An old localStorage copy still contains secrets that must move to the credential manager (#28). */
   readonly hasLegacyCredentials: boolean;
 }
+function upgradeCachedDevices(devices: SmartDevice[]): SmartDevice[] {
+  return devices.map((dev) => {
+    const m = dev.model.toLowerCase();
+    if (
+      dev.kind.kind === "plug" &&
+      (m.includes("camera") || m.includes("cateye") || m.includes("doorbell"))
+    ) {
+      return {
+        ...dev,
+        kind: {
+          kind: "camera",
+          entityId: dev.kind.switchEntityId,
+          isOn: dev.kind.isOn,
+          nightShot: "Auto",
+          availableNightShots: ["Off", "On", "Auto"],
+          motionDetectionEntityId: null,
+          isMotionDetectionOn: null,
+          streamEntityId: null,
+        },
+      };
+    }
+    return dev;
+  });
+}
+
 
 function loadSettings(): LoadedSettings {
   try {
@@ -490,7 +539,7 @@ function loadSettings(): LoadedSettings {
           hasCompletedOnboarding: parsed.hasCompletedOnboarding ?? Boolean(miSession),
           isCompactGridMode: parsed.isCompactGridMode ?? true,
           cachedXiaomiDevices: Array.isArray(parsed.cachedXiaomiDevices)
-            ? parsed.cachedXiaomiDevices
+            ? upgradeCachedDevices(parsed.cachedXiaomiDevices)
             : [],
           cachedModelTypes:
             parsed.cachedModelTypes && typeof parsed.cachedModelTypes === "object"
@@ -509,6 +558,14 @@ function loadSettings(): LoadedSettings {
               : "system",
           enableGlobalHotkey: typeof parsed.enableGlobalHotkey === "boolean" ? parsed.enableGlobalHotkey : true,
           globalHotkey: normalizeGlobalShortcut(parsed.globalHotkey),
+          cameraStreamURLs:
+            parsed.cameraStreamURLs && typeof parsed.cameraStreamURLs === "object"
+              ? Object.fromEntries(
+                  Object.entries(parsed.cameraStreamURLs as Record<string, unknown>).filter(
+                    (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0,
+                  ),
+                )
+              : {},
           layout: { ...emptyLayoutPrefs(), ...(parsed.layout ?? {}) },
           selectedHomeId: parsed.selectedHomeId ?? null,
         },
@@ -547,6 +604,7 @@ function loadSettings(): LoadedSettings {
       temperatureUnit: "system",
       enableGlobalHotkey: true,
       globalHotkey: DEFAULT_GLOBAL_SHORTCUT,
+      cameraStreamURLs: {},
     },
     hasLegacyCredentials: false,
   };
@@ -668,6 +726,29 @@ export class MenuMijiaWindowsApp {
   private isPollingQR = false;
   /** Latest GitHub release found by the daily check (#39); shown in settings and the tray menu. */
   private availableUpdate: GitHubRelease | null = null;
+  private activeLiveCameraId: string | null = null;
+  /**
+   * The camera frees a used P2P session on its own schedule (measured: a fresh
+   * session streams fine, but one that carried video needs well over a minute
+   * before it can be re-negotiated). Closing the live modal therefore only
+   * HIDES it and keeps the whole chain hot; full teardown happens when the
+   * panel closes, the device errors, or after this long with nobody watching.
+   */
+  private liveCameraHidden = false;
+  private liveCameraKeepAliveTimer: number | null = null;
+  private static readonly CAMERA_KEEP_ALIVE_MS = 120_000;
+  /** Tests pin this short to watch the teardown without waiting two minutes. */
+  cameraKeepAliveMs = MenuMijiaWindowsApp.CAMERA_KEEP_ALIVE_MS;
+  private liveCameraStreamURL: string | null = null;
+  private liveCameraLoading = false;
+  private liveCameraError: string | null = null;
+  private liveCameraShowingURLInput = false;
+  private cameraStreamURLs: Record<string, string> = { ...(this.settings.cameraStreamURLs ?? {}) };
+  /** The live picture arrives as MJPEG frames in a persistent `<img>`, which never restarts on re-render. */
+  private liveCameraMode: "mjpeg" | null = null;
+  private liveCameraImgEl: HTMLImageElement | null = null;
+  private liveCameraToken = 0;
+  private readonly pendingCameraReleases = new Map<string, Promise<void>>();
   private updateState: UpdateState = { lastCheckedAtMs: null, release: null };
   private isCheckingUpdate = false;
   private isInstallingUpdate = false;
@@ -1005,6 +1086,10 @@ export class MenuMijiaWindowsApp {
       }
 
       if (e.key === "Escape") {
+        if (this.activeLiveCameraId !== null) {
+          this.hideCameraLiveView();
+          return;
+        }
         if (this.activeSheet !== "none") {
           this.activeSheet = "none";
           this.isRecordingHotkey = false;
@@ -1283,7 +1368,9 @@ export class MenuMijiaWindowsApp {
                 ? [kind.availablePresetModes]
                 : kind.kind === "vacuum"
                   ? [kind.availableModes]
-                  : [];
+                  : kind.kind === "camera"
+                    ? [kind.availableNightShots, kind.motionDetectionEntityId]
+                    : [];
         return {
           id: device.id,
           name: device.name,
@@ -1611,6 +1698,12 @@ export class MenuMijiaWindowsApp {
         return k.kind === "climate" && k.fanMode !== null ? [{ kind: "setClimateFanMode", entityId: k.entityId, fanMode: k.fanMode }] : [];
       case "setFanPower":
         return k.kind === "fan" ? [{ kind: "setFanPower", entityId: k.entityId, isOn: k.isOn }] : [];
+      case "setFanPercentage":
+        return k.kind === "fan" && k.percentage !== null ? [
+          { kind: "setFanPercentage", entityId: k.entityId, percent: k.percentage },
+          ...(k.presetMode !== null ? [{ kind: "setFanPresetMode" as const, entityId: k.entityId, presetMode: k.presetMode }] : []),
+          { kind: "setFanPower", entityId: k.entityId, isOn: k.isOn },
+        ] : [];
       case "setFanPresetMode":
         return k.kind === "fan" && k.presetMode !== null ? [
           { kind: "setFanPresetMode", entityId: k.entityId, presetMode: k.presetMode },
@@ -1622,7 +1715,19 @@ export class MenuMijiaWindowsApp {
           { kind: "setFanPower", entityId: k.entityId, isOn: k.isOn },
         ] : [];
       case "setSwitch":
-        return k.kind === "plug" ? [{ kind: "setSwitch", entityId: command.entityId, isOn: command.entityId === k.childLockEntityId ? k.isChildLocked : k.isOn }] : [];
+        if (k.kind === "plug") {
+          return [{ kind: "setSwitch", entityId: command.entityId, isOn: command.entityId === k.childLockEntityId ? k.isChildLocked : k.isOn }];
+        }
+        if (k.kind === "camera") {
+          const prevOn = command.entityId === k.motionDetectionEntityId ? Boolean(k.isMotionDetectionOn) : k.isOn;
+          return [{ kind: "setSwitch", entityId: command.entityId, isOn: prevOn }];
+        }
+        return [];
+      case "setSelectOption":
+        if (k.kind === "camera" && k.nightShot !== null) {
+          return [{ kind: "setSelectOption", entityId: command.entityId, option: k.nightShot }];
+        }
+        return [];
       case "vacuumAction":
       case "activateScene":
         return [];
@@ -1806,6 +1911,14 @@ export class MenuMijiaWindowsApp {
             k.isOn = command.isOn;
           }
           break;
+        case "setFanPercentage":
+          if (k.kind === "fan" && k.entityId === command.entityId) {
+            k.isOn = command.percent > 0;
+            k.percentage = command.percent;
+            const fav = k.availablePresetModes.find((m) => m.toLowerCase() === "favorite");
+            if (fav) k.presetMode = fav;
+          }
+          break;
         case "setFanPresetMode":
           if (k.kind === "fan" && k.entityId === command.entityId) {
             k.isOn = true;
@@ -1821,6 +1934,25 @@ export class MenuMijiaWindowsApp {
         case "setSwitch":
           if (k.kind === "plug" && k.switchEntityId === command.entityId) {
             k.isOn = command.isOn;
+          } else if (k.kind === "camera") {
+            if (k.entityId === command.entityId) {
+              k.isOn = command.isOn;
+              if (this.activeLiveCameraId === dev.id && !this.liveCameraHidden) {
+                if (command.isOn) {
+                  this.reconnectCameraLiveView();
+                } else {
+                  this.stopLiveTransport();
+                  this.liveCameraLoading = false;
+                }
+              }
+            } else if (k.motionDetectionEntityId === command.entityId) {
+              k.isMotionDetectionOn = command.isOn;
+            }
+          }
+          break;
+        case "setSelectOption":
+          if (k.kind === "camera" && k.entityId === command.entityId) {
+            k.nightShot = command.option;
           }
           break;
         case "vacuumAction":
@@ -1848,6 +1980,7 @@ export class MenuMijiaWindowsApp {
     const dev = this.devices.find((d) => {
       const k = d.kind;
       if (k.kind === "plug") return k.switchEntityId === command.entityId || k.childLockEntityId === command.entityId;
+      if (k.kind === "camera") return k.entityId === command.entityId || k.motionDetectionEntityId === command.entityId;
       if (k.kind === "sensor") return false;
       return k.entityId === command.entityId;
     });
@@ -2390,6 +2523,7 @@ export class MenuMijiaWindowsApp {
 
         ${this.activeSheet === "onboarding" ? this.renderOnboardingModal() : ""}
         ${this.activeSheet === "settings" ? this.renderSettingsModal() : ""}
+        ${this.activeLiveCameraId !== null ? this.renderCameraLiveModal() : ""}
         ${this.renderHomeMenu()}
         ${this.renderContextMenu()}
         ${this.renderPrompt()}
@@ -2495,6 +2629,8 @@ export class MenuMijiaWindowsApp {
         return "palette-green";
       case "vacuum":
         return "palette-indigo";
+      case "camera":
+        return "palette-blue";
       case "sensor":
         return "palette-teal";
     }
@@ -2512,6 +2648,8 @@ export class MenuMijiaWindowsApp {
         return SF_ICONS.powerplugFill;
       case "vacuum":
         return SF_ICONS.sparkles;
+      case "camera":
+        return SF_ICONS.videoFill;
       case "sensor":
         return SF_ICONS.sensorFill;
     }
@@ -2535,7 +2673,7 @@ export class MenuMijiaWindowsApp {
     const kind = dev.kind.kind;
     const palette = this.devicePaletteClass(dev);
     const svg = this.deviceSvgIcon(dev);
-    const hasDrawer = kind === "light" || kind === "climate" || kind === "fan";
+    const hasDrawer = kind === "light" || kind === "climate" || kind === "fan" || kind === "camera";
     const subtitle =
       this.selectedRoom === "全部"
         ? `${dev.roomName} · ${deviceStatusSummary(dev)}`
@@ -2564,7 +2702,7 @@ export class MenuMijiaWindowsApp {
           <button
             class="cc-tile-body"
             data-body-device="${this.escapeHtml(dev.id)}"
-            title="${hasDrawer ? t("点击展开精细调节") : t("点击切换开关")}"
+            title="${kind === "camera" ? t("点击放大打开摄像机实时画面") : hasDrawer ? t("点击展开精细调节") : t("点击切换开关")}"
             aria-label="${this.escapeHtml(dev.name)}，${this.escapeHtml(shownSubtitle)}"
             aria-pressed="${isOn}"
           >
@@ -2864,28 +3002,616 @@ export class MenuMijiaWindowsApp {
         k.availablePresetModes.length > 0
           ? k.availablePresetModes
           : ["Level 1", "Level 2", "Level 3", "Level 4"];
+      const telemetryParts: string[] = [];
+      if (k.pm25Density !== undefined && k.pm25Density !== null) {
+        const aq = localizeAirQuality(k.airQuality, k.pm25Density);
+        telemetryParts.push(`${t("空气质量")} PM2.5 ${k.pm25Density}${aq ? ` (${aq})` : ""}`);
+      } else if (k.airQuality) {
+        const aq = localizeAirQuality(k.airQuality, null);
+        if (aq) telemetryParts.push(`${t("空气质量")} ${aq}`);
+      }
+      if (k.temperature !== undefined && k.temperature !== null && k.humidity !== undefined && k.humidity !== null) {
+        telemetryParts.push(`${t("温湿度")} ${formatTemperature(k.temperature, undefined, 1)} · ${Math.round(k.humidity)}%`);
+      } else if (k.temperature !== undefined && k.temperature !== null) {
+        telemetryParts.push(formatTemperature(k.temperature, undefined, 1));
+      } else if (k.humidity !== undefined && k.humidity !== null) {
+        telemetryParts.push(`${Math.round(k.humidity)}%`);
+      }
+      if (k.filterLifePercent !== undefined && k.filterLifePercent !== null) {
+        telemetryParts.push(`${t("滤芯余量")} ${k.filterLifePercent}%`);
+      }
       return `
         <div class="cc-tile-drawer">
+          ${
+            telemetryParts.length > 0
+              ? `<div class="cc-slider-label"><span>${this.escapeHtml(telemetryParts.join(" · "))}</span></div>`
+              : ""
+          }
+          ${
+            k.percentage !== null
+              ? `<div class="cc-slider-group">
+                  <div class="cc-slider-label">
+                    <span>${t("风速")}</span>
+                    <strong>${k.percentage}%</strong>
+                  </div>
+                  <input class="cc-range is-blue" type="range" min="1" max="100" value="${Math.max(1, k.percentage)}" data-fanpercent="${this.escapeHtml(dev.id)}" aria-label="${t("风速")}" aria-valuemin="1" aria-valuemax="100" aria-valuenow="${Math.max(1, k.percentage)}" />
+                </div>`
+              : ""
+          }
           <div class="cc-segmented-pills">
             ${modes
               .map(
                 (preset) => `
               <button class="cc-seg-pill ${k.presetMode === preset ? "is-active" : ""}" data-fanpreset="${this.escapeHtml(dev.id)}:${this.escapeHtml(preset)}" aria-pressed="${k.presetMode === preset}">
-                ${this.escapeHtml(IntentReply.fanSpeedLabel(preset))}
+                ${this.escapeHtml(localizeFanPreset(IntentReply.fanSpeedLabel(preset)))}
               </button>
             `,
               )
               .join("")}
-            <button class="cc-seg-pill ${k.isOscillating ? "is-active" : ""}" data-fanosc="${this.escapeHtml(dev.id)}" aria-pressed="${k.isOscillating}">
-              摇头 ${k.isOscillating ? t("开") : t("关")}
-            </button>
+            ${
+              k.isOscillating !== null
+                ? `<button class="cc-seg-pill ${k.isOscillating ? "is-active" : ""}" data-fanosc="${this.escapeHtml(dev.id)}" aria-pressed="${k.isOscillating}">
+                    摇头 ${k.isOscillating ? t("开") : t("关")}
+                  </button>`
+                : ""
+            }
           </div>
+        </div>
+      `;
+    }
+    if (k.kind === "camera") {
+      const id = this.escapeHtml(dev.id);
+      const motionOn = Boolean(k.isMotionDetectionOn);
+      return `
+        <div class="cc-tile-drawer">
+          <div class="cc-segmented-pills">
+            <button class="cc-seg-pill is-active" data-camera-live="${id}">
+              ${t("放大实时画面")}
+            </button>
+            <button class="cc-seg-pill ${!k.isOn ? "is-active" : ""}" data-toggle-device="${id}" aria-pressed="${!k.isOn}">
+              ${k.isOn ? t("镜头休眠") : t("唤醒镜头")}
+            </button>
+            ${
+              k.motionDetectionEntityId
+                ? `<button class="cc-seg-pill ${motionOn ? "is-active" : ""}" data-cameramotion="${id}" aria-pressed="${motionOn}">
+                    ${motionOn ? t("移动侦测：开") : t("移动侦测：关")}
+                  </button>`
+                : ""
+            }
+          </div>
+          ${
+            k.availableNightShots.length > 0
+              ? `<div class="cc-segmented-pills">
+                  ${k.availableNightShots
+                    .map(
+                      (mode) => `<button class="cc-seg-pill ${k.nightShot === mode ? "is-active" : ""}" data-cameranight="${id}:${this.escapeHtml(mode)}" aria-pressed="${k.nightShot === mode}">
+                        ${this.escapeHtml(localizeNightShot(mode))}
+                      </button>`
+                    )
+                    .join("")}
+                </div>`
+              : ""
+          }
         </div>
       `;
     }
     return "";
   }
 
+
+  private openCameraLiveView(deviceId: string): void {
+    const dev = this.devices.find((d) => d.id === deviceId);
+    if (!dev || dev.kind.kind !== "camera") return;
+    // Hot resume: the modal was only hidden, so the bridge, relay and P2P
+    // session are still alive — just reveal it again.
+    if (this.activeLiveCameraId === deviceId && this.liveCameraHidden && this.liveCameraImgEl) {
+      this.liveCameraHidden = false;
+      this.clearCameraKeepAlive();
+      invokeTauriVoid("set_pin_popover", { pin: true });
+      this.render();
+      return;
+    }
+    if (this.activeLiveCameraId !== null && this.activeLiveCameraId !== deviceId) {
+      this.closeCameraLiveView();
+    }
+    this.activeLiveCameraId = dev.id;
+    this.liveCameraHidden = false;
+    this.clearCameraKeepAlive();
+    this.liveCameraError = null;
+    this.liveCameraShowingURLInput = false;
+    this.liveCameraStreamURL = this.cameraStreamURLs[dev.id]
+      ? this.normalizeWindowsCameraStreamUrl(this.cameraStreamURLs[dev.id]!)
+      : null;
+    this.liveCameraLoading = false;
+    invokeTauriVoid("set_pin_popover", { pin: true });
+    if (dev.kind.isOn) {
+      if (this.liveCameraStreamURL && this.needsHlsTranscodeBridge(this.liveCameraStreamURL)) {
+        void this.bridgeHlsStreamToMjpeg(dev.id, this.liveCameraStreamURL);
+      } else if (!this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
+        void this.resolveCloudCameraStream(dev);
+      }
+    }
+    this.render();
+  }
+
+  /** Hides the modal but keeps the stream hot, so reopening is instant (#97). */
+  private hideCameraLiveView(): void {
+    if (this.activeLiveCameraId === null) return;
+    this.liveCameraHidden = true;
+    invokeTauriVoid("set_pin_popover", { pin: false });
+    this.clearCameraKeepAlive();
+    this.liveCameraKeepAliveTimer = window.setTimeout(() => {
+      this.liveCameraKeepAliveTimer = null;
+      // Nobody came back within the keep-alive window: release the camera's
+      // single P2P session so the phone app (or the next open) can use it.
+      if (this.liveCameraHidden) this.closeCameraLiveView();
+    }, this.cameraKeepAliveMs);
+    this.render();
+  }
+
+  private clearCameraKeepAlive(): void {
+    if (this.liveCameraKeepAliveTimer !== null) {
+      window.clearTimeout(this.liveCameraKeepAliveTimer);
+      this.liveCameraKeepAliveTimer = null;
+    }
+  }
+
+  private closeCameraLiveView(): void {
+    const closingId = this.activeLiveCameraId;
+    const closingDev = closingId ? this.devices.find((d) => d.id === closingId) : undefined;
+    this.clearCameraKeepAlive();
+    this.liveCameraHidden = false;
+    this.stopLiveTransport();
+    this.activeLiveCameraId = null;
+    this.liveCameraStreamURL = null;
+    this.liveCameraLoading = false;
+    this.liveCameraError = null;
+    this.liveCameraShowingURLInput = false;
+    if (this.settings.connectionMode === "xiaomiCloud" && closingId) {
+      if (closingDev) void this.releaseCameraP2PSession(closingDev, this.liveCameraToken);
+      // Release the P2P session so the next open negotiates a fresh one instead of a dead relay.
+      invokeTauriVoid("stop_xiaomi_camera_bridge", { did: closingId });
+    }
+    invokeTauriVoid("set_pin_popover", { pin: false });
+    this.render();
+  }
+
+  /**
+   * Tells the camera to drop its single P2P session. Serialized with the next
+   * negotiation for the same camera so a delayed stop-stream never kills a
+   * freshly reopened stream (#97).
+   */
+  private releaseCameraP2PSession(dev: SmartDevice, releaseToken = this.liveCameraToken): Promise<void> {
+    if (!this.settings.miSession) return Promise.resolve();
+    const run = (async () => {
+      try {
+        const spec = await this.specResolver.resolve({
+          did: dev.id,
+          name: dev.name,
+          model: dev.model,
+          isOnline: dev.isOnline,
+          specType: null,
+        });
+        if (this.liveCameraToken !== releaseToken || this.activeLiveCameraId === dev.id) return;
+        const p2pSvc = spec.services.find((s) => s.actions.some((a) => a.type.includes("stop-stream")));
+        const stopAct = p2pSvc?.actions.find((a) => a.type.includes("stop-stream"));
+        if (!p2pSvc || !stopAct) return;
+        const client = new MiCloudClient(this.settings.miSession!, this.transport);
+        await client
+          .callAction({ did: dev.id, siid: p2pSvc.iid, aiid: stopAct.iid, inputs: [] })
+          .catch(() => {});
+      } catch {
+        // Best effort only; the bridge teardown below already freed local resources.
+      }
+    })();
+    const tracked = run.finally(() => {
+      if (this.pendingCameraReleases.get(dev.id) === tracked) {
+        this.pendingCameraReleases.delete(dev.id);
+      }
+    });
+    this.pendingCameraReleases.set(dev.id, tracked);
+    return tracked;
+  }
+
+  /** Drops the MJPEG image and any pending negotiation. */
+  private stopLiveTransport(): void {
+    this.liveCameraToken += 1;
+    this.liveCameraImgEl?.remove();
+    this.liveCameraImgEl = null;
+    this.liveCameraMode = null;
+  }
+
+  /** Puts the live element back after `render()` rebuilds the panel markup. */
+  private attachLiveMedia(): void {
+    const stage = this.root.querySelector<HTMLElement>(".cc-camera-stage");
+    if (!stage) return;
+    const el = this.liveCameraImgEl;
+    if (!el) return;
+    if (el.parentElement !== stage) {
+      stage.replaceChildren(el);
+    }
+  }
+
+  private startMjpegTransport(name: string): void {
+    const img = document.createElement("img");
+    img.id = "cc-camera-live-img";
+    img.alt = "";
+    img.style.cssText = "max-width:100%;border-radius:10px;";
+    let retried = false;
+    img.addEventListener("error", () => {
+      if (retried) return;
+      retried = true;
+      window.setTimeout(() => this.reconnectCameraLiveView(), 1200);
+    });
+    img.src = `http://127.0.0.1:1984/api/stream.mjpeg?src=${encodeURIComponent(name)}`;
+    this.liveCameraImgEl = img;
+    this.liveCameraMode = "mjpeg";
+  }
+
+  /**
+   * WebView2/Chromium has no built-in HLS (.m3u8) demuxer. Local go2rtc playlists
+   * map directly onto go2rtc's native MJPEG endpoint (`/api/stream.mjpeg`), while
+   * remote `.m3u8` playlists are transcoded to MJPEG through `bridge_hls_camera_stream`.
+   */
+  private normalizeWindowsCameraStreamUrl(rawUrl: string): string {
+    return rawUrl
+      .trim()
+      .replace(
+        /^(https?:\/\/(?:127\.0\.0\.1|localhost):1984\/api\/)stream\.m3u8(\?|$)/i,
+        "$1stream.mjpeg$2",
+      );
+  }
+
+  private needsHlsTranscodeBridge(url: string): boolean {
+    if (!/\.m3u8(\?|$|#)/i.test(url)) return false;
+    const probe = document.createElement("video");
+    const canPlayNative =
+      typeof probe.canPlayType === "function" &&
+      Boolean(
+        probe.canPlayType("application/vnd.apple.mpegurl") ||
+          probe.canPlayType("application/x-mpegURL"),
+      );
+    return !canPlayNative && Boolean(window.__TAURI_INTERNALS__?.invoke);
+  }
+
+  private async bridgeHlsStreamToMjpeg(did: string, hlsUrl: string): Promise<boolean> {
+    if (!window.__TAURI_INTERNALS__?.invoke) return false;
+    const token = this.liveCameraToken;
+    this.liveCameraLoading = true;
+    this.render();
+    try {
+      const mjpegName = await window.__TAURI_INTERNALS__.invoke<string>("bridge_hls_camera_stream", {
+        did,
+        hlsUrl,
+      });
+      if (this.liveCameraToken !== token || this.activeLiveCameraId !== did) return false;
+      if (mjpegName) {
+        this.liveCameraStreamURL = mjpegName;
+        this.liveCameraError = null;
+        this.liveCameraLoading = false;
+        this.startMjpegTransport(mjpegName);
+        this.render();
+        this.attachLiveMedia();
+        return true;
+      }
+    } catch (err) {
+      if (this.liveCameraToken === token && this.activeLiveCameraId === did) {
+        this.liveCameraError = err instanceof Error ? err.message : String(err);
+        this.liveCameraLoading = false;
+        this.render();
+      }
+    }
+    return false;
+  }
+
+  private reconnectCameraLiveView(): void {
+    const dev = this.devices.find((d) => d.id === this.activeLiveCameraId);
+    if (!dev || dev.kind.kind !== "camera") return;
+    this.stopLiveTransport();
+    this.liveCameraStreamURL = this.cameraStreamURLs[dev.id]
+      ? this.normalizeWindowsCameraStreamUrl(this.cameraStreamURLs[dev.id]!)
+      : null;
+    this.liveCameraError = null;
+    this.liveCameraLoading = false;
+    if (this.liveCameraStreamURL && this.needsHlsTranscodeBridge(this.liveCameraStreamURL)) {
+      void this.bridgeHlsStreamToMjpeg(dev.id, this.liveCameraStreamURL);
+    } else if (!this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
+      void this.resolveCloudCameraStream(dev);
+    }
+    this.render();
+  }
+
+  private async resolveCloudCameraStream(dev: SmartDevice): Promise<void> {
+    if (dev.kind.kind !== "camera" || !this.settings.miSession) return;
+    this.liveCameraLoading = true;
+    this.render();
+    // Closing/hiding bumps liveCameraToken via stopLiveTransport or full teardown;
+    // a negotiation that outlives its modal must not start a bridge afterwards.
+    const token = this.liveCameraToken;
+    const stale = () => this.liveCameraToken !== token || this.activeLiveCameraId !== dev.id;
+    try {
+      const pendingRelease = this.pendingCameraReleases.get(dev.id);
+      if (pendingRelease) {
+        await pendingRelease;
+        if (stale()) return;
+      }
+      const spec = await this.specResolver.resolve({
+        did: dev.id,
+        name: dev.name,
+        model: dev.model,
+        isOnline: dev.isOnline,
+        specType: null,
+      });
+      if (stale()) return;
+      const client = new MiCloudClient(this.settings.miSession, this.transport);
+
+      // 1. Try cloud HLS action if supported by the model
+      const streamSvc =
+        spec.services.find((s) =>
+          s.actions.some((a) => a.type.includes("start-hls-stream"))
+        ) ?? null;
+      const act = streamSvc?.actions.find(
+        (a) => a.type.includes("start-hls-stream")
+      );
+      if (streamSvc && act) {
+        // macOS parity (MiCloudProvider.resolveCameraStream): the documented action carries
+        // typed inputs; try the bare call, then the codec-index variant, and treat every
+        // failure as "no cloud HLS" so the P2P bridge below still runs (#97).
+        for (const inputs of [[], [1]]) {
+          if (stale()) return;
+          try {
+            const res = await client.callAction({
+              did: dev.id,
+              siid: streamSvc.iid,
+              aiid: act.iid,
+              inputs,
+            });
+            if (stale()) return;
+            const rawJson = JSON.stringify(res ?? {});
+            const urlMatch = /https?:\/\/[^\s"'\\]+/i.exec(rawJson);
+            if (urlMatch?.[0]) {
+              const playable = this.normalizeWindowsCameraStreamUrl(urlMatch[0]);
+              if (this.needsHlsTranscodeBridge(playable)) {
+                if (await this.bridgeHlsStreamToMjpeg(dev.id, playable)) {
+                  return;
+                }
+                // Bridging failed: fall through to P2P below instead of assigning an unplayable .m3u8.
+                break;
+              }
+              if (!/\.m3u8(\?|$|#)/i.test(playable) || !window.__TAURI_INTERNALS__?.invoke) {
+                this.liveCameraStreamURL = playable;
+                this.liveCameraError = null;
+                this.liveCameraLoading = false;
+                this.render();
+                return;
+              }
+            }
+          } catch {
+            // Cloud HLS rejected (bad inputs / 403 / offline): fall back to P2P.
+          }
+        }
+      }
+
+      // 2. Release any previous P2P session, then wake a fresh one (siid=9 p2p-stream service)
+      const p2pSvc = spec.services.find((s) =>
+        s.actions.some((a) => a.type.includes("start-p2p-stream"))
+      );
+      const stopAct = p2pSvc?.actions.find((a) => a.type.includes("stop-stream"));
+      const p2pAct = p2pSvc?.actions.find((a) => a.type.includes("start-p2p-stream"));
+      if (p2pSvc && stopAct) {
+        const released = await client
+          .callAction({ did: dev.id, siid: p2pSvc.iid, aiid: stopAct.iid, inputs: [] })
+          .then(() => true)
+          .catch(() => false);
+        if (stale()) return;
+        // The camera needs a moment to actually free its single P2P session; requesting a
+        // new one immediately yields a session that stalls after the first frame (measured
+        // 0-14 fps vs 326 fps once the release settles).
+        if (released) {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
+      }
+      if (stale()) return;
+      if (p2pSvc && p2pAct) {
+        await client
+          .callAction({ did: dev.id, siid: p2pSvc.iid, aiid: p2pAct.iid, inputs: [] })
+          .catch(() => {});
+      }
+      if (stale()) return;
+
+      // 3. Negotiate MISS CS2/TUTK P2P keys & start native Tauri bridge
+      if (window.__TAURI_INTERNALS__?.invoke) {
+        const listRes = (await client.request("home/device_list", {
+          getVirtualModel: true,
+          getHuamiDevices: 1,
+          get_split_device: false,
+          support_smart_home: true,
+        })) as Record<string, unknown> | null;
+        if (stale()) return;
+        const rawList = Array.isArray(listRes?.["list"]) ? (listRes["list"] as Array<Record<string, unknown>>) : [];
+        const rawDev = rawList.find((item) => String(item["did"] ?? "") === dev.id);
+        const localIp = typeof rawDev?.["localip"] === "string" ? rawDev["localip"] : "";
+        if (localIp) {
+          const kp = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair;
+          const spki = new Uint8Array(await crypto.subtle.exportKey("spki", kp.publicKey));
+          const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", kp.privateKey));
+          const clientPublic = Array.from(spki.slice(-32)).map((b) => b.toString(16).padStart(2, "0")).join("");
+          const clientPrivate = Array.from(pkcs8.slice(-32)).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+          const vendorRes = (await client.request("v2/device/miss_get_vendor", {
+            did: dev.id,
+            app_pubkey: clientPublic,
+            support_vendors: "TUTK_CS2_MTP",
+          })) as Record<string, unknown> | null;
+          if (stale()) return;
+          const vendorObj = (vendorRes?.["vendor"] as Record<string, unknown> | undefined) ?? {};
+          const vendorId = Number(vendorObj["vendor"] ?? 4);
+          const vendorName = vendorId === 1 ? "tutk" : vendorId === 4 ? "cs2" : String(vendorId);
+          const vendorParams = (vendorObj["vendor_params"] as Record<string, unknown> | undefined) ?? {};
+          const p2pUid = typeof vendorParams["p2p_id"] === "string" ? vendorParams["p2p_id"] : null;
+          const devicePublic = typeof vendorRes?.["public_key"] === "string" ? vendorRes["public_key"] : "";
+          const sign = typeof vendorRes?.["sign"] === "string" ? vendorRes["sign"] : "";
+
+          if (devicePublic && sign) {
+            if (stale()) return;
+            const bridge = await window.__TAURI_INTERNALS__.invoke<string>("start_xiaomi_camera_bridge", {
+              did: dev.id,
+              model: dev.model,
+              localIp,
+              clientPublic,
+              clientPrivate,
+              devicePublic,
+              sign,
+              vendor: vendorName,
+              uid: p2pUid,
+            });
+            if (stale()) {
+              // The close path already tore down once; this late start re-created a
+              // relay and stream registrations that nothing else will reclaim. Undo
+              // them — unless the same camera was re-opened, in which case the new
+              // negotiation's own stop_bridge replaces them and must not be killed.
+              if (this.activeLiveCameraId !== dev.id) {
+                invokeTauriVoid("stop_xiaomi_camera_bridge", { did: dev.id });
+                void this.releaseCameraP2PSession(dev);
+              }
+              return;
+            }
+            const [h264Name, mjpegName] = (bridge ?? "").split("|");
+            if (mjpegName) {
+              this.liveCameraStreamURL = mjpegName;
+              this.liveCameraError = null;
+              this.liveCameraLoading = false;
+              this.startMjpegTransport(mjpegName);
+              this.render();
+              this.attachLiveMedia();
+              return;
+            }
+            if (h264Name) {
+              this.liveCameraStreamURL = h264Name;
+              this.liveCameraError = t("实时画面连接失败，请点右上角重新连接");
+              this.liveCameraLoading = false;
+              this.render();
+              return;
+            }
+          }
+        }
+      }
+
+      this.liveCameraError = t("米家云直连摄像头采用私有 P2P 加密流；可在下方填写本地 go2rtc / HLS 流地址观看实时画面");
+    } catch (err) {
+      if (!stale()) {
+        this.liveCameraError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    if (stale()) return;
+    this.liveCameraLoading = false;
+    this.render();
+  }
+
+  private renderCameraLiveModal(): string {
+    const dev = this.devices.find((d) => d.id === this.activeLiveCameraId);
+    if (!dev || dev.kind.kind !== "camera") return "";
+    const k = dev.kind;
+    const id = this.escapeHtml(dev.id);
+    const customURL = this.cameraStreamURLs[dev.id] ?? "";
+    const isNight = k.nightShot?.toLowerCase() === "on";
+    const motionOn = Boolean(k.isMotionDetectionOn);
+
+    let viewportHtml = "";
+    if (!k.isOn) {
+      viewportHtml = `
+        <div class="cc-camera-stage is-sleeping">
+          <strong>${t("摄像机处于物理休眠状态")}</strong>
+          <p>${t("镜头已遮蔽，点击下方唤醒后即可查看实时画面")}</p>
+          <button class="cc-btn-primary" data-toggle-device="${id}">${t("唤醒镜头并观看")}</button>
+        </div>
+      `;
+    } else if (this.liveCameraMode) {
+      // The media element is created once and re-attached here, so polling renders never
+      // restart the stream.
+      viewportHtml = `<div class="cc-camera-stage" id="cc-camera-stage"></div>`;
+    } else if (this.liveCameraLoading) {
+      viewportHtml = `
+        <div class="cc-camera-stage" style="padding:28px 16px;text-align:center;">
+          <strong>${t("正在握手并连接摄像机实时画面…")}</strong>
+        </div>
+      `;
+    } else if (this.liveCameraStreamURL && /^https?:/i.test(this.liveCameraStreamURL)) {
+      const safeURL = this.escapeHtml(this.liveCameraStreamURL);
+      const isImg = /\.(jpg|jpeg|png)|snapshot|camera_proxy|frame\.jpeg|mjpeg/i.test(this.liveCameraStreamURL);
+      viewportHtml = isImg
+        ? `<div class="cc-camera-stage"><img id="cc-camera-live-img" src="${safeURL}" alt="${this.escapeHtml(dev.name)}" style="max-width:100%;border-radius:10px;" /></div>`
+        : `<div class="cc-camera-stage"><video id="cc-camera-video" src="${safeURL}" controls autoplay muted playsinline preload="auto" style="width:100%;border-radius:10px;background:#090d16;"></video></div>`;
+    } else if (this.settings.connectionMode === "demo") {
+      viewportHtml = `
+        <div class="cc-camera-stage is-demo" style="padding:18px;border-radius:12px;background:${isNight ? "linear-gradient(135deg,#072219,#03110c)" : "linear-gradient(135deg,#10233d,#091224)"};color:#fff;text-align:center;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;opacity:0.85;margin-bottom:16px;">
+            <span>● ${isNight ? "LIVE · IR NIGHT 2K" : "LIVE · 2K HDR · 25fps"}</span>
+            <span>${this.escapeHtml(dev.roomName)}</span>
+          </div>
+          <div style="padding:20px 8px;">
+            <div style="width:36px;height:36px;margin:0 auto 10px;color:${isNight ? "#4ade80" : "#38bdf8"};">${SF_ICONS.videoFill}</div>
+            <strong style="display:block;font-size:14px;margin-bottom:4px;">${this.escapeHtml(dev.name)} · ${t("实时看护小窗预览")}</strong>
+            <small style="opacity:0.76;">${motionOn ? t("AI 移动与看护侦测中 · 画面正常") : t("实时画面流已就绪 · 窗口已置顶")}</small>
+          </div>
+        </div>
+      `;
+    } else {
+      viewportHtml = `
+        <div class="cc-camera-stage is-error" style="padding:16px;text-align:center;">
+          <p style="margin-bottom:10px;">${this.escapeHtml(this.liveCameraError ?? t("可配置本地 go2rtc / HLS 流地址观看实时画面"))}</p>
+          <button class="cc-btn-secondary" id="btn-toggle-camera-url">${t("填写 go2rtc / HLS 流地址")}</button>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="cc-sheet-backdrop" ${this.liveCameraHidden ? 'style="display:none"' : ""}>
+        <div class="cc-sheet cc-camera-live-sheet" role="dialog" aria-modal="true" aria-label="${this.escapeHtml(dev.name)} ${t("实时画面")}">
+          <div class="cc-sheet-header">
+            <strong>${this.escapeHtml(dev.name)} · ${t("实时画面小窗")}</strong>
+            <div style="display:flex;gap:6px;">
+              <button class="cc-circle-btn is-small" id="btn-reload-camera-live" title="${t("重新连接")}" aria-label="${t("重新连接")}">${SF_ICONS.arrowClockwise}</button>
+              <button class="cc-circle-btn is-small" id="btn-toggle-camera-url" title="${t("配置流地址")}">🔗</button>
+              <button class="cc-circle-btn is-small" id="btn-close-camera-live" title="${t("关闭画面")}" aria-label="${t("关闭画面")}">
+                ${SF_ICONS.xmark}
+              </button>
+            </div>
+          </div>
+          ${
+            this.liveCameraShowingURLInput
+              ? `<div class="cc-field" style="margin-bottom:10px;">
+                  <input id="camera-stream-url-input" class="cc-input" type="text" value="${this.escapeHtml(customURL)}" placeholder="http://127.0.0.1:1984/api/stream.m3u8?src=camera" />
+                  <div style="display:flex;gap:6px;margin-top:6px;">
+                    <button class="cc-btn-primary" id="btn-save-camera-url">${t("连接流地址")}</button>
+                  </div>
+                </div>`
+              : ""
+          }
+          ${viewportHtml}
+          <div class="cc-segmented-pills" style="margin-top:12px;">
+            <button class="cc-seg-pill ${!k.isOn ? "is-active" : ""}" data-toggle-device="${id}" aria-pressed="${!k.isOn}">
+              ${k.isOn ? t("镜头休眠") : t("唤醒镜头")}
+            </button>
+            ${
+              k.motionDetectionEntityId
+                ? `<button class="cc-seg-pill ${motionOn ? "is-active" : ""}" data-cameramotion="${id}" aria-pressed="${motionOn}">
+                    ${motionOn ? t("移动侦测：开") : t("移动侦测：关")}
+                  </button>`
+                : ""
+            }
+            ${k.availableNightShots
+              .map(
+                (mode) => `<button class="cc-seg-pill ${k.nightShot === mode ? "is-active" : ""}" data-cameranight="${id}:${this.escapeHtml(mode)}" aria-pressed="${k.nightShot === mode}">
+                  ${this.escapeHtml(localizeNightShot(mode))}
+                </button>`
+              )
+              .join("")}
+          </div>
+        </div>
+      </div>
+    `;
+  }
   private renderOnboardingModal(): string {
     return `
       <div class="cc-sheet-backdrop">
@@ -3654,7 +4380,12 @@ export class MenuMijiaWindowsApp {
         const dev = this.devices.find((d) => d.id === id);
         if (!dev) return;
         const k = dev.kind.kind;
-        if (k === "light" || k === "climate" || k === "fan") {
+        if (k === "camera") {
+          if (dev.isOnline && !dev.kind.isOn) {
+            toggleDeviceById(id);
+          }
+          this.openCameraLiveView(id);
+        } else if (k === "light" || k === "climate" || k === "fan") {
           this.expandedDeviceId = this.expandedDeviceId === id ? null : id;
           this.render();
         } else {
@@ -3763,6 +4494,21 @@ export class MenuMijiaWindowsApp {
       });
     });
 
+    this.root.querySelectorAll<HTMLInputElement>("[data-fanpercent]").forEach((slider) => {
+      slider.addEventListener("change", () => {
+        const id = slider.dataset.fanpercent;
+        if (!id) return;
+        const dev = this.devices.find((d) => d.id === id);
+        if (!dev || dev.kind.kind !== "fan") return;
+        const percent = Math.max(1, Math.min(100, Math.round(Number(slider.value))));
+        void this.executeSingleCommand(
+          dev,
+          { kind: "setFanPercentage", entityId: dev.kind.entityId, percent },
+          t("已将{name}风速设为 {speed}", { name: dev.name, speed: `${percent}%` }),
+        );
+      });
+    });
+
     this.root.querySelectorAll<HTMLElement>("[data-fanosc]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.dataset.fanosc;
@@ -3776,6 +4522,92 @@ export class MenuMijiaWindowsApp {
           `已${nextOsc ? t("开启") : t("关闭")}${dev.name}摇头`,
         );
       });
+    });
+
+    this.root.querySelectorAll<HTMLElement>("[data-camera-live]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.cameraLive;
+        if (id) this.openCameraLiveView(id);
+      });
+    });
+
+    this.root.querySelectorAll<HTMLElement>("[data-cameramotion]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.dataset.cameramotion;
+        if (!id) return;
+        const dev = this.devices.find((d) => d.id === id);
+        if (!dev || dev.kind.kind !== "camera" || !dev.kind.motionDetectionEntityId) return;
+        const nextMotion = !dev.kind.isMotionDetectionOn;
+        void this.executeSingleCommand(
+          dev,
+          { kind: "setSwitch", entityId: dev.kind.motionDetectionEntityId, isOn: nextMotion },
+          t("已{action}{name}移动侦测", { action: nextMotion ? t("开启") : t("关闭"), name: dev.name }),
+        );
+      });
+    });
+
+    this.root.querySelectorAll<HTMLElement>("[data-cameranight]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const raw = btn.dataset.cameranight;
+        if (!raw) return;
+        const [id, mode] = raw.split(":");
+        if (!id || !mode) return;
+        const dev = this.devices.find((d) => d.id === id);
+        if (!dev || dev.kind.kind !== "camera") return;
+        void this.executeSingleCommand(
+          dev,
+          { kind: "setSelectOption", entityId: dev.kind.entityId, option: mode },
+          t("已将{name}设为{mode}", { name: dev.name, mode: localizeNightShot(mode) }),
+        );
+      });
+    });
+
+    this.root.querySelector("#btn-close-camera-live")?.addEventListener("click", () => {
+      this.hideCameraLiveView();
+    });
+
+    this.root.querySelector("#btn-reload-camera-live")?.addEventListener("click", () => {
+      this.reconnectCameraLiveView();
+    });
+
+    this.attachLiveMedia();
+
+    this.root.querySelectorAll<HTMLElement>("#btn-toggle-camera-url").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this.liveCameraShowingURLInput = !this.liveCameraShowingURLInput;
+        this.render();
+      });
+    });
+
+    this.root.querySelector("#btn-save-camera-url")?.addEventListener("click", () => {
+      const id = this.activeLiveCameraId;
+      if (!id) return;
+      const input = this.root.querySelector<HTMLInputElement>("#camera-stream-url-input");
+      const val = input?.value.trim() ?? "";
+      this.stopLiveTransport();
+      if (val) {
+        const playable = this.normalizeWindowsCameraStreamUrl(val);
+        this.cameraStreamURLs[id] = val;
+        this.liveCameraStreamURL = playable;
+        this.liveCameraError = null;
+        this.liveCameraLoading = false;
+        const dev = this.devices.find((d) => d.id === id);
+        if (dev && dev.kind.kind === "camera" && dev.kind.isOn && this.needsHlsTranscodeBridge(playable)) {
+          void this.bridgeHlsStreamToMjpeg(id, playable);
+        }
+      } else {
+        delete this.cameraStreamURLs[id];
+        this.liveCameraStreamURL = null;
+        const dev = this.devices.find((d) => d.id === id);
+        if (dev && dev.kind.kind === "camera" && dev.kind.isOn && this.settings.connectionMode === "xiaomiCloud") {
+          void this.resolveCloudCameraStream(dev);
+        }
+      }
+      this.settings.cameraStreamURLs = { ...this.cameraStreamURLs };
+      this.saveSettings();
+      this.liveCameraShowingURLInput = false;
+      this.render();
     });
 
     this.root.querySelector("#btn-cloud-allow")?.addEventListener("click", () => {

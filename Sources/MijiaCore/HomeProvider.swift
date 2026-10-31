@@ -58,12 +58,17 @@ public protocol HomeProvider: Sendable {
     func setPollingContext(_ context: PollingContext) async
     /// Fetches historical temperature and humidity readings for `deviceId` over `window`.
     func fetchSensorHistory(deviceId: String, window: SensorHistoryWindow, now: Date) async -> [SensorHistorySample]
+    /// Resolves a playable live video or snapshot stream for a camera device.
+    func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource
 }
 
 extension HomeProvider {
     /// Push-based providers (Home Assistant) have nothing to slow down.
     public func setPollingContext(_ context: PollingContext) async {}
     public func fetchSensorHistory(deviceId: String, window: SensorHistoryWindow, now: Date) async -> [SensorHistorySample] { [] }
+    public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
+        throw HomeProviderError.serviceCallFailed(501, L10n.tr("当前数据源暂未返回该摄像头的实时画面流", "Current backend did not return a live stream for this camera"))
+    }
 }
 
 // MARK: - Live Home Assistant WebSocket + REST Provider
@@ -77,6 +82,8 @@ public actor HAWebSocketProvider: HomeProvider {
     private var continuation: AsyncStream<HomeProviderEvent>.Continuation?
     private var loopTask: Task<Void, Never>?
     private var activeWebSocket: URLSessionWebSocketTask?
+    private var nextStreamRequestId: Int = 500_000
+    private var pendingStreamRequests: [Int: CheckedContinuation<String?, Never>] = [:]
 
     private var snapshot = HAHomeSnapshot()
     /// Told about another Home Assistant address found after repeated disconnects. The provider never
@@ -119,8 +126,17 @@ public actor HAWebSocketProvider: HomeProvider {
         loopTask = nil
         activeWebSocket?.cancel(with: .goingAway, reason: nil)
         activeWebSocket = nil
+        failPendingStreamRequests()
         continuation?.finish()
         continuation = nil
+    }
+
+    private func failPendingStreamRequests() {
+        let waiters = pendingStreamRequests.values
+        pendingStreamRequests.removeAll()
+        for waiter in waiters {
+            waiter.resume(returning: nil)
+        }
     }
 
     public nonisolated func events() -> AsyncStream<HomeProviderEvent> {
@@ -252,11 +268,18 @@ public actor HAWebSocketProvider: HomeProvider {
         defer {
             pingTask.cancel()
             ws.cancel(with: .goingAway, reason: nil)
+            failPendingStreamRequests()
         }
 
         // 5. Receive loop
         while !Task.isCancelled {
             let msg = try await receiveJSON(ws: ws)
+            if msg["type"]?.stringValue == "result",
+               let id = msg["id"]?.intValue,
+               let waiter = pendingStreamRequests.removeValue(forKey: id) {
+                waiter.resume(returning: msg["result"]?["url"]?.stringValue)
+                continue
+            }
             if let home = try snapshot.receive(msg) {
                 continuation?.yield(.snapshotUpdated(home))
             }
@@ -285,6 +308,69 @@ public actor HAWebSocketProvider: HomeProvider {
             let bodyText = String(data: data, encoding: .utf8) ?? ""
             throw HomeProviderError.serviceCallFailed(http.statusCode, bodyText)
         }
+    }
+
+    public func resolveCameraStream(for device: SmartDevice) async throws -> CameraStreamSource {
+        guard case .camera(let spec) = device.kind else {
+            throw HomeProviderError.serviceCallFailed(400, L10n.tr("非摄像头设备", "Not a camera device"))
+        }
+        if let streamEntityId = spec.streamEntityId,
+           let ws = activeWebSocket {
+            nextStreamRequestId += 1
+            let reqId = nextStreamRequestId
+            let timeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(3500))
+                await self?.completeStreamRequest(id: reqId, urlPath: nil)
+            }
+            let urlPath: String? = await withCheckedContinuation { cont in
+                pendingStreamRequests[reqId] = cont
+                Task { [weak self] in
+                    do {
+                        try await self?.sendJSON(ws: ws, [
+                            "id": reqId,
+                            "type": "camera/stream",
+                            "entity_id": streamEntityId,
+                            "format": "hls"
+                        ])
+                    } catch {
+                        await self?.completeStreamRequest(id: reqId, urlPath: nil)
+                    }
+                }
+            }
+            timeoutTask.cancel()
+            if let urlPath, !urlPath.isEmpty,
+               let hlsURL = Self.resolveStreamURL(pathOrURL: urlPath, baseURLString: baseURLString) {
+                return .hls(hlsURL)
+            }
+        }
+        if let snapshotPath = spec.snapshotPath, !snapshotPath.isEmpty,
+           let snapURL = Self.resolveStreamURL(pathOrURL: snapshotPath, baseURLString: baseURLString) {
+            return .snapshot(snapURL)
+        }
+        throw HomeProviderError.serviceCallFailed(
+            404,
+            L10n.tr(
+                "该摄像头在 Home Assistant 中未暴露视频流（可通过 go2rtc 或在下方填写流地址接入）",
+                "This camera has no live stream in Home Assistant (connect via go2rtc or enter a stream URL below)"
+            )
+        )
+    }
+
+    private func completeStreamRequest(id: Int, urlPath: String?) {
+        if let waiter = pendingStreamRequests.removeValue(forKey: id) {
+            waiter.resume(returning: urlPath)
+        }
+    }
+
+    public static func resolveStreamURL(pathOrURL: String, baseURLString: String) -> URL? {
+        let trimmed = pathOrURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if trimmed.lowercased().hasPrefix("http://") || trimmed.lowercased().hasPrefix("https://") {
+            return URL(string: trimmed)
+        }
+        let base = normalizeBaseURL(baseURLString)
+        let slash = trimmed.hasPrefix("/") ? "" : "/"
+        return URL(string: "\(base)\(slash)\(trimmed)")
     }
 
     public static func mapCommandToService(_ command: DeviceCommand) -> (domain: String, service: String, payload: [String: Any]) {
@@ -347,6 +433,12 @@ public actor HAWebSocketProvider: HomeProvider {
         case .setFanPower(let eid, let isOn):
             return ("fan", isOn ? "turn_on" : "turn_off", ["entity_id": eid])
 
+        case .setFanPercentage(let eid, let percent):
+            return ("fan", "set_percentage", [
+                "entity_id": eid,
+                "percentage": max(0, min(100, percent))
+            ])
+
         case .setFanPresetMode(let eid, let preset):
             return ("fan", "set_preset_mode", [
                 "entity_id": eid,
@@ -360,11 +452,20 @@ public actor HAWebSocketProvider: HomeProvider {
             ])
 
         case .setSwitch(let eid, let isOn):
-            return ("switch", isOn ? "turn_on" : "turn_off", ["entity_id": eid])
+            let primaryEid = eid.split(separator: "|").first.map(String.init) ?? eid
+            if primaryEid.hasSuffix("#motion") {
+                let camEid = String(primaryEid.dropLast("#motion".count))
+                return ("camera", isOn ? "enable_motion_detection" : "disable_motion_detection", ["entity_id": camEid])
+            }
+            if primaryEid.hasPrefix("camera.") {
+                return ("camera", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
+            }
+            return ("switch", isOn ? "turn_on" : "turn_off", ["entity_id": primaryEid])
 
         case .setSelectOption(let eid, let option):
+            let selectEid = eid.split(separator: "|").last.map(String.init) ?? eid
             return ("select", "select_option", [
-                "entity_id": eid,
+                "entity_id": selectEid,
                 "option": option
             ])
 

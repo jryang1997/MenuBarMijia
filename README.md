@@ -73,7 +73,7 @@ No wake words needed. Hold the menu bar icon or global shortcut to speak, and se
 
 ### 2. Room All-Off with Safety Protection & Undo
 
-Heading out or turning in? Hold "All Off" for 0.6 seconds to switch off participating devices in the current view. Plugs and robot vacuums are left alone by default, and you can change that in settings. If you switch something off by mistake, tap Undo.
+Heading out or turning in? Hold "All Off" for 0.6 seconds to switch off participating devices in the current view. Plugs, robot vacuums, and cameras are left alone by default, and you can change that in settings. If you switch something off by mistake, tap Undo.
 
 <p align="center">
   <img src="docs/assets/readme-v2/undo-all-off.gif" alt="macOS demo: hold All Off, leave the plug on, and undo" width="900">
@@ -116,6 +116,8 @@ The macOS version is built natively in Swift 6, while the Windows 11 client is a
 | **URL Scheme Control** | ✅ Supported | — Not yet | `menumijia://toggle` calls require confirmation by default; direct control can be enabled in settings |
 | **Sensor Trend Line Charts** | ✅ 24h / 7d trends | ⚠️ Real-time value only | macOS charts temperature or humidity over selectable periods; Windows shows current readings |
 | **Smart Plug Energy Logs** | ✅ Supported | — No history yet | macOS counts changes in cumulative hardware readings; missing data is not estimated |
+| **Mi Air Purifiers** | ✅ Supported | ✅ Supported | Both platforms synthesize `air-purifier` specs: PM2.5, air quality, temp/humidity, filter life, and a 1–100% fan slider driving the favorite level |
+| **Camera Live View** | ✅ Supported | ✅ Supported | Click a card for a pinned live window: macOS uses HLS / HA snapshots; Windows ships a private P2P bridge (substream MJPEG) |
 | **Visual Look** | ✅ One system look + 4 heights | ✅ Control Center design | macOS keeps system materials only: devices that are on sit on a bright platter, everything else is glass. |
 | **Code Signing & Integrity** | ⚠️ Self-signed + Ed25519 updates | ⚠️ Unsigned package | macOS requires manual Gatekeeper approval; Windows shows SmartScreen prompt |
 
