@@ -1212,7 +1212,14 @@ export class MenuMijiaWindowsApp {
   }
 
   private get computedEnvironmentReadings(): EnvironmentReading[] {
-    if (this.environmentReadings.length > 0) return this.environmentReadings;
+    if (this.environmentReadings.length > 0) {
+      const priorityById = new Map(
+        this.devices.map((d) => [d.id, environmentReadingPriority(d.kind)]),
+      );
+      return [...this.environmentReadings].sort(
+        (a, b) => (priorityById.get(a.id) ?? 0) - (priorityById.get(b.id) ?? 0),
+      );
+    }
     const out: Array<{ reading: EnvironmentReading; priority: number; index: number }> = [];
     for (let i = 0; i < this.devices.length; i++) {
       const d = this.devices[i]!;
@@ -1287,8 +1294,14 @@ export class MenuMijiaWindowsApp {
       // Cloud list order is not a layout preference. Keep known devices in their
       // displayed order, use fresh values, drop removed ids and append new ones.
       this.devices = applyOrder(this.devices.map((device) => device.id), home.devices);
+      const readingPriorityById = new Map(
+        home.devices.map((device) => [device.id, environmentReadingPriority(device.kind)]),
+      );
       this.environmentReadings = applyOrder(
-        this.devices.map((device) => device.id), home.environmentReadings,
+        this.environmentReadings.map((reading) => reading.id),
+        home.environmentReadings,
+      ).sort(
+        (a, b) => (readingPriorityById.get(a.id) ?? 0) - (readingPriorityById.get(b.id) ?? 0),
       );
       presentationChanged =
         presentationChanged || this.cloudPresentationFingerprint() !== previousPresentation;

@@ -592,10 +592,17 @@ actor StubMiCloudAPI: MiCloudAPI {
 actor StubXiaomiCameraBridge: XiaomiCameraBridging {
     private(set) var startCalls: [(did: String, model: String, localIP: String, vendor: String, uid: String?)] = []
     private(set) var stopCalls: [String] = []
+    var startDelay: Duration?
+    var onStartEntered: (@Sendable () -> Void)?
     var stubEndpoints = XiaomiCameraStreamEndpoints(
         mp4: URL(string: "http://127.0.0.1:1984/api/stream.mp4?src=cam_raw_1105610385&mp4")!,
         mjpeg: URL(string: "http://127.0.0.1:1984/api/stream.mjpeg?src=cam_mjpeg_1105610385")!
     )
+
+    func configureStartHook(delay: Duration, onEntered: @escaping @Sendable () -> Void) {
+        self.startDelay = delay
+        self.onStartEntered = onEntered
+    }
 
     func startBridge(
         did: String,
@@ -609,6 +616,10 @@ actor StubXiaomiCameraBridge: XiaomiCameraBridging {
         uid: String?
     ) async throws -> XiaomiCameraStreamEndpoints {
         startCalls.append((did: did, model: model, localIP: localIP, vendor: vendor, uid: uid))
+        onStartEntered?()
+        if let startDelay {
+            try? await Task.sleep(for: startDelay)
+        }
         return stubEndpoints
     }
 
@@ -852,6 +863,70 @@ struct MiCloudProviderTests {
         let actionsAfterStop = await api.callActionCalls
         #expect(actionsAfterStop.count == 3)
         #expect(actionsAfterStop.last == MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []))
+        await provider.shutdown()
+    }
+
+    @Test("Cancelling resolveCameraStream while startBridge is negotiating tears down the bridge and releases the P2P session")
+    func p2pCameraStreamCancellationCleansUpBridge() async throws {
+        let cameraSpecJSON = #"{"type":"urn:miot-spec-v2:device:camera:0000A01C:chuangmi-061a01:3","services":[{"iid":2,"type":"urn:miot-spec-v2:service:camera-control:0000782F:chuangmi-061a01:1","properties":[{"iid":1,"type":"urn:miot-spec-v2:property:on:00000006:chuangmi-061a01:1","format":"bool","access":["read","write","notify"]}]},{"iid":9,"type":"urn:miot-spec-v2:service:p2p-stream:00007881:chuangmi-061a01:1","actions":[{"iid":1,"type":"urn:miot-spec-v2:action:start-p2p-stream:00002839:chuangmi-061a01:1"},{"iid":2,"type":"urn:miot-spec-v2:action:stop-stream:00002822:chuangmi-061a01:1"}]}]}"#
+        let camSpec = MiotFixtures.decode(cameraSpecJSON)
+        struct CameraSpecSource: MiotSpecSource {
+            let spec: MiotDeviceSpec
+            func spec(model: String, specType: String?) async throws -> MiotDeviceSpec? {
+                model == "chuangmi.camera.061a01" ? spec : nil
+            }
+        }
+
+        let camRecord = MiDeviceRecord(
+            did: "1105610385",
+            name: "小米智能摄像机3",
+            model: "chuangmi.camera.061a01",
+            isOnline: true,
+            localIp: "192.168.50.145"
+        )
+        let api = StubMiCloudAPI(
+            devices: [camRecord],
+            rooms: [MiRoom(id: "r1", name: "儿童房", dids: ["1105610385"])],
+            values: [MiotPropKey(did: "1105610385", siid: 2, piid: 1): .bool(true)]
+        )
+        let bridge = StubXiaomiCameraBridge()
+        let (enteredStream, enteredContinuation) = AsyncStream<Void>.makeStream()
+        await bridge.configureStartHook(delay: .milliseconds(40)) {
+            enteredContinuation.yield(())
+        }
+        let provider = MiCloudProvider(
+            sessionLoader: { fakeSession },
+            apiFactory: { _ in api },
+            specSource: CameraSpecSource(spec: camSpec),
+            cameraBridge: bridge,
+            pollInterval: .seconds(60),
+            cameraSessionReleaseDelay: .milliseconds(5)
+        )
+        let (log, task) = consume(provider)
+        defer { task.cancel() }
+
+        #expect(await log.wait { await !$0.snapshots.isEmpty })
+        let cameraDevice = try #require(await log.snapshots.first?.devices.first)
+
+        let resolveTask = Task {
+            try await provider.resolveCameraStream(for: cameraDevice)
+        }
+        var iterator = enteredStream.makeAsyncIterator()
+        _ = await iterator.next()
+        resolveTask.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await resolveTask.value
+        }
+
+        #expect(await bridge.startCalls.count == 1)
+        #expect(await bridge.stopCalls == ["1105610385"])
+        let actions = await api.callActionCalls
+        #expect(actions == [
+            MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []),
+            MiotActionCall(did: "1105610385", siid: 9, aiid: 1, inputs: []),
+            MiotActionCall(did: "1105610385", siid: 9, aiid: 2, inputs: []),
+        ])
         await provider.shutdown()
     }
 }

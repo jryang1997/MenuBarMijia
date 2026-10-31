@@ -429,14 +429,18 @@ public actor MiCloudProvider: HomeProvider {
         guard case .camera(let cameraSpec) = device.kind else {
             throw MiotCommandError.unsupported("camera")
         }
+        try Task.checkCancellation()
         if let api,
            let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id }),
            let spec = specsByModel[record.model] {
             let did = record.miotDid
             if let pending = pendingCameraReleases[did] {
                 await pending.value
-                pendingCameraReleases.removeValue(forKey: did)
+                if pendingCameraReleases[did] == pending {
+                    pendingCameraReleases.removeValue(forKey: did)
+                }
             }
+            try Task.checkCancellation()
             let streamService: MiotService? = {
                 if let streamId = cameraSpec.streamEntityId,
                    let (_, siid) = MiotAddress.parse(streamId),
@@ -450,11 +454,25 @@ public actor MiCloudProvider: HomeProvider {
                let act = svc.action(named: "start-hls-stream") {
                 if let result = try? await api.callAction(MiotActionCall(did: did, siid: svc.iid, aiid: act.iid, inputs: [])),
                    let url = Self.extractStreamURL(from: result) {
+                    try Task.checkCancellation()
                     return .hls(url)
                 }
+                try Task.checkCancellation()
                 if let result = try? await api.callAction(MiotActionCall(did: did, siid: svc.iid, aiid: act.iid, inputs: [.number(1)])),
                    let url = Self.extractStreamURL(from: result) {
+                    try Task.checkCancellation()
                     return .hls(url)
+                }
+            }
+            try Task.checkCancellation()
+
+            var startedP2PSession = false
+            let abortIfCancelled = { () async throws in
+                if Task.isCancelled {
+                    if startedP2PSession {
+                        await self.stopCameraStream(for: device)
+                    }
+                    throw CancellationError()
                 }
             }
 
@@ -465,10 +483,14 @@ public actor MiCloudProvider: HomeProvider {
                         try? await Task.sleep(for: cameraSessionReleaseDelay)
                     }
                 }
+                try Task.checkCancellation()
                 if let startAct = p2pService.action(named: "start-p2p-stream") {
-                    _ = try? await api.callAction(MiotActionCall(did: did, siid: p2pService.iid, aiid: startAct.iid, inputs: []))
+                    if (try? await api.callAction(MiotActionCall(did: did, siid: p2pService.iid, aiid: startAct.iid, inputs: []))) != nil {
+                        startedP2PSession = true
+                    }
                 }
             }
+            try await abortIfCancelled()
 
             let resolvedIP: String = await {
                 let cached = record.localIp?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -476,14 +498,17 @@ public actor MiCloudProvider: HomeProvider {
                 let fetched = try? await api.cameraLocalIP(did: did)
                 return fetched?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             }()
+            try await abortIfCancelled()
 
             if !resolvedIP.isEmpty {
                 let kp = XiaomiCameraBridge.makeX25519KeyPair()
                 if let vendor = try? await api.cameraP2PVendor(did: did, appPublicKey: kp.publicKeyHex),
                    !vendor.devicePublicKey.isEmpty,
                    !vendor.sign.isEmpty {
+                    try await abortIfCancelled()
+                    let endpoints: XiaomiCameraStreamEndpoints?
                     do {
-                        let endpoints = try await cameraBridge.startBridge(
+                        endpoints = try await cameraBridge.startBridge(
                             did: did,
                             model: record.model,
                             localIP: resolvedIP,
@@ -494,15 +519,29 @@ public actor MiCloudProvider: HomeProvider {
                             vendor: vendor.vendorName,
                             uid: vendor.p2pId
                         )
-                        return .liveMP4(endpoints.mp4, mjpegFallback: endpoints.mjpeg)
                     } catch {
+                        if Task.isCancelled || error is CancellationError {
+                            await stopCameraStream(for: device)
+                            throw CancellationError()
+                        }
                         logger.error("Xiaomi camera P2P bridge failed for \(did, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                        endpoints = nil
+                    }
+                    if let endpoints {
+                        if Task.isCancelled {
+                            await stopCameraStream(for: device)
+                            throw CancellationError()
+                        }
+                        return .liveMP4(endpoints.mp4, mjpegFallback: endpoints.mjpeg)
                     }
                 }
             }
+            try await abortIfCancelled()
         }
 
+        try Task.checkCancellation()
         if let localURL = await Self.probeLocalGo2RTC(for: device) {
+            try Task.checkCancellation()
             return .hls(localURL)
         }
 
@@ -518,26 +557,31 @@ public actor MiCloudProvider: HomeProvider {
     public func stopCameraStream(for device: SmartDevice) async {
         let record = devices.first(where: { $0.did == device.id }) ?? devices.first(where: { $0.miotDid == device.id })
         let did = record?.miotDid ?? device.id
-        if let api,
-           let record,
-           let spec = specsByModel[record.model],
-           let p2pService = spec.services.first(where: { $0.action(named: "stop-stream") != nil }),
-           let stopAct = p2pService.action(named: "stop-stream") {
-            let siid = p2pService.iid
-            let aiid = stopAct.iid
-            let releaseDelay = cameraSessionReleaseDelay
-            let releaseTask = Task<Void, Never> {
-                _ = try? await api.callAction(MiotActionCall(did: did, siid: siid, aiid: aiid, inputs: []))
+        let bridge = cameraBridge
+        let apiClient = api
+        let releaseDelay = cameraSessionReleaseDelay
+        let stopCall: MiotActionCall? = {
+            guard let record,
+                  let spec = specsByModel[record.model],
+                  let p2pService = spec.services.first(where: { $0.action(named: "stop-stream") != nil }),
+                  let stopAct = p2pService.action(named: "stop-stream") else {
+                return nil
+            }
+            return MiotActionCall(did: did, siid: p2pService.iid, aiid: stopAct.iid, inputs: [])
+        }()
+        let previousRelease = pendingCameraReleases[did]
+        let releaseTask = Task<Void, Never> {
+            await previousRelease?.value
+            await bridge.stopBridge(did: did)
+            if let apiClient, let stopCall {
+                _ = try? await apiClient.callAction(stopCall)
                 try? await Task.sleep(for: releaseDelay)
             }
-            pendingCameraReleases[did] = releaseTask
-            await cameraBridge.stopBridge(did: did)
-            await releaseTask.value
-            if pendingCameraReleases[did] == releaseTask {
-                pendingCameraReleases.removeValue(forKey: did)
-            }
-        } else {
-            await cameraBridge.stopBridge(did: did)
+        }
+        pendingCameraReleases[did] = releaseTask
+        await releaseTask.value
+        if pendingCameraReleases[did] == releaseTask {
+            pendingCameraReleases.removeValue(forKey: did)
         }
     }
 

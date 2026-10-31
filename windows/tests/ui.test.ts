@@ -1360,4 +1360,124 @@ describe("Air purifier support (#98)", () => {
     assert.equal(state.get("2.4"), 0);
     assert.match(tile("airp-rma3"), /自动 · 50%/);
   });
+
+  it("preserves sensor > purifier > climate priority in environment readings even when an air purifier precedes a sensor in device layout (#103)", async () => {
+    const rma3Spec = {
+      type: "urn:miot-spec-v2:device:air-purifier:0000A007:zhimi-rma3:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:air-purifier:00007811:zhimi-rma3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:on:00000006:zhimi-rma3:1", format: "bool", access: ["read", "write"] },
+          ],
+          actions: [],
+        },
+        {
+          iid: 3,
+          type: "urn:miot-spec-v2:service:environment:0000780A:zhimi-rma3:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:relative-humidity:0000000C:zhimi-rma3:1", format: "uint8", access: ["read"] },
+            { iid: 7, type: "urn:miot-spec-v2:property:temperature:00000020:zhimi-rma3:1", format: "float", access: ["read"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+    const sensorSpec = {
+      type: "urn:miot-spec-v2:device:temperature-humidity-sensor:0000A00A:miaomiaoce-t2:1",
+      services: [
+        {
+          iid: 2,
+          type: "urn:miot-spec-v2:service:temperature-humidity-sensor:00007814:miaomiaoce-t2:1",
+          properties: [
+            { iid: 1, type: "urn:miot-spec-v2:property:temperature:00000020:miaomiaoce-t2:1", format: "float", access: ["read"] },
+            { iid: 2, type: "urn:miot-spec-v2:property:relative-humidity:0000000C:miaomiaoce-t2:1", format: "uint8", access: ["read"] },
+          ],
+          actions: [],
+        },
+      ],
+    };
+
+    const security = "AQIDBAUGBwgJCgsMDQ4PEA==";
+    const invoke = async (name: string, args: Record<string, unknown> = {}): Promise<unknown> => {
+      if (name !== "native_http") return undefined;
+      const url = String(args["url"] ?? "");
+      if (url.includes("/instance?")) {
+        const body = url.includes("temperature-humidity-sensor") ? sensorSpec : rma3Spec;
+        return { status: 200, headers: {}, body: JSON.stringify(body) };
+      }
+      if (url.includes("/instances?")) {
+        return {
+          status: 200,
+          headers: {},
+          body: JSON.stringify({
+            instances: [
+              { model: "zhimi.airp.rma3", type: rma3Spec.type },
+              { model: "miaomiaoce.sensor_ht.t2", type: sensorSpec.type },
+            ],
+          }),
+        };
+      }
+      let result: unknown = {};
+      if (url.includes("device_list")) {
+        result = {
+          list: [
+            { did: "airp-rma3", name: "书房空净", model: "zhimi.airp.rma3", isOnline: true, spec_type: rma3Spec.type },
+            { did: "sensor-t2", name: "客厅温湿度计", model: "miaomiaoce.sensor_ht.t2", isOnline: true, spec_type: sensorSpec.type },
+          ],
+          has_more: false,
+        };
+      } else if (url.includes("homeroom/")) {
+        result = {
+          homelist: [
+            {
+              id: "1",
+              name: "家",
+              dids: [],
+              roomlist: [
+                { id: "10", name: "书房", dids: ["airp-rma3"] },
+                { id: "20", name: "客厅", dids: ["sensor-t2"] },
+              ],
+            },
+          ],
+        };
+      } else if (url.includes("miotspec/prop/")) {
+        const fields = new URLSearchParams(String(args["body"] ?? ""));
+        const nonce = fields.get("_nonce") ?? "";
+        const encrypted = fields.get("data") ?? "";
+        const payload = JSON.parse(
+          MiCloudCrypto.decryptResponse(encrypted, MiCloudCrypto.signedNonce(security, nonce))
+        ) as { params?: Array<{ did: string; siid: number; piid: number }> };
+        result = (payload.params ?? []).map((p) => {
+          if (p.did === "airp-rma3") {
+            const val = p.siid === 2 ? true : p.piid === 7 ? 26.5 : 48;
+            return { did: p.did, siid: p.siid, piid: p.piid, code: 0, value: val };
+          }
+          const val = p.piid === 1 ? 22.0 : 55;
+          return { did: p.did, siid: p.siid, piid: p.piid, code: 0, value: val };
+        });
+      }
+      return { status: 200, headers: {}, body: JSON.stringify({ code: 0, result }) };
+    };
+    Object.defineProperty(window, "__TAURI_INTERNALS__", { value: { invoke }, configurable: true });
+    localStorage.setItem(
+      "menumijia.windows.settings.v2",
+      JSON.stringify({
+        connectionMode: "xiaomiCloud",
+        hasCompletedOnboarding: true,
+        miSession: { userId: "10001", cUserId: "", ssecurity: security, serviceToken: "tok", passToken: "", region: "cn" },
+        cachedModelTypes: {
+          "zhimi.airp.rma3": rma3Spec.type,
+          "miaomiaoce.sensor_ht.t2": sensorSpec.type,
+        },
+        layout: { order: ["airp-rma3", "sensor-t2"] },
+      }),
+    );
+
+    new MenuMijiaWindowsApp(element("#app"));
+    await waitFor(() => document.querySelectorAll(".cc-env-chip").length === 2);
+    const chipLabels = Array.from(document.querySelectorAll(".cc-env-label"), (node) => node.textContent);
+    assert.deepEqual(chipLabels, ["客厅", "书房空净"]);
+  });
 });
