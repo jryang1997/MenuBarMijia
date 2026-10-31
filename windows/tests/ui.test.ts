@@ -1124,7 +1124,7 @@ describe("Smart camera support and live view (#97)", () => {
     assert.match(tile("camera.living_cam"), /侦测开/);
   });
 
-  it("persists custom camera stream URLs across restarts and wakes sleeping cameras straight into the stream", async () => {
+  it("persists custom camera stream URLs across restarts, rewrites local go2rtc m3u8 to mjpeg, and wakes sleeping cameras straight into the stream", async () => {
     localStorage.setItem("menumijia.windows.settings.v2", JSON.stringify({
       connectionMode: "demo",
       hasCompletedOnboarding: true,
@@ -1133,7 +1133,7 @@ describe("Smart camera support and live view (#97)", () => {
     await click('[data-body-device="camera.living_cam"]');
     await click("#btn-toggle-camera-url");
     const input = element("#camera-stream-url-input") as HTMLInputElement;
-    input.value = "http://127.0.0.1:1984/api/stream.mjpeg?src=living_custom";
+    input.value = "http://127.0.0.1:1984/api/stream.m3u8?src=living_custom";
     await click("#btn-save-camera-url");
     assert.equal(
       (element("#cc-camera-live-img") as HTMLImageElement).getAttribute("src"),

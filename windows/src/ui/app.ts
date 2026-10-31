@@ -3051,11 +3051,17 @@ export class MenuMijiaWindowsApp {
     this.clearCameraKeepAlive();
     this.liveCameraError = null;
     this.liveCameraShowingURLInput = false;
-    this.liveCameraStreamURL = this.cameraStreamURLs[dev.id] ?? null;
+    this.liveCameraStreamURL = this.cameraStreamURLs[dev.id]
+      ? this.normalizeWindowsCameraStreamUrl(this.cameraStreamURLs[dev.id]!)
+      : null;
     this.liveCameraLoading = false;
     invokeTauriVoid("set_pin_popover", { pin: true });
-    if (dev.kind.isOn && !this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
-      void this.resolveCloudCameraStream(dev);
+    if (dev.kind.isOn) {
+      if (this.liveCameraStreamURL && this.needsHlsTranscodeBridge(this.liveCameraStreamURL)) {
+        void this.bridgeHlsStreamToMjpeg(dev.id, this.liveCameraStreamURL);
+      } else if (!this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
+        void this.resolveCloudCameraStream(dev);
+      }
     }
     this.render();
   }
@@ -3174,14 +3180,74 @@ export class MenuMijiaWindowsApp {
     this.liveCameraMode = "mjpeg";
   }
 
+  /**
+   * WebView2/Chromium has no built-in HLS (.m3u8) demuxer. Local go2rtc playlists
+   * map directly onto go2rtc's native MJPEG endpoint (`/api/stream.mjpeg`), while
+   * remote `.m3u8` playlists are transcoded to MJPEG through `bridge_hls_camera_stream`.
+   */
+  private normalizeWindowsCameraStreamUrl(rawUrl: string): string {
+    return rawUrl
+      .trim()
+      .replace(
+        /^(https?:\/\/(?:127\.0\.0\.1|localhost):1984\/api\/)stream\.m3u8(\?|$)/i,
+        "$1stream.mjpeg$2",
+      );
+  }
+
+  private needsHlsTranscodeBridge(url: string): boolean {
+    if (!/\.m3u8(\?|$|#)/i.test(url)) return false;
+    const probe = document.createElement("video");
+    const canPlayNative =
+      typeof probe.canPlayType === "function" &&
+      Boolean(
+        probe.canPlayType("application/vnd.apple.mpegurl") ||
+          probe.canPlayType("application/x-mpegURL"),
+      );
+    return !canPlayNative && Boolean(window.__TAURI_INTERNALS__?.invoke);
+  }
+
+  private async bridgeHlsStreamToMjpeg(did: string, hlsUrl: string): Promise<boolean> {
+    if (!window.__TAURI_INTERNALS__?.invoke) return false;
+    const token = this.liveCameraToken;
+    this.liveCameraLoading = true;
+    this.render();
+    try {
+      const mjpegName = await window.__TAURI_INTERNALS__.invoke<string>("bridge_hls_camera_stream", {
+        did,
+        hlsUrl,
+      });
+      if (this.liveCameraToken !== token || this.activeLiveCameraId !== did) return false;
+      if (mjpegName) {
+        this.liveCameraStreamURL = mjpegName;
+        this.liveCameraError = null;
+        this.liveCameraLoading = false;
+        this.startMjpegTransport(mjpegName);
+        this.render();
+        this.attachLiveMedia();
+        return true;
+      }
+    } catch (err) {
+      if (this.liveCameraToken === token && this.activeLiveCameraId === did) {
+        this.liveCameraError = err instanceof Error ? err.message : String(err);
+        this.liveCameraLoading = false;
+        this.render();
+      }
+    }
+    return false;
+  }
+
   private reconnectCameraLiveView(): void {
     const dev = this.devices.find((d) => d.id === this.activeLiveCameraId);
     if (!dev || dev.kind.kind !== "camera") return;
     this.stopLiveTransport();
-    this.liveCameraStreamURL = this.cameraStreamURLs[dev.id] ?? null;
+    this.liveCameraStreamURL = this.cameraStreamURLs[dev.id]
+      ? this.normalizeWindowsCameraStreamUrl(this.cameraStreamURLs[dev.id]!)
+      : null;
     this.liveCameraError = null;
     this.liveCameraLoading = false;
-    if (!this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
+    if (this.liveCameraStreamURL && this.needsHlsTranscodeBridge(this.liveCameraStreamURL)) {
+      void this.bridgeHlsStreamToMjpeg(dev.id, this.liveCameraStreamURL);
+    } else if (!this.liveCameraStreamURL && this.settings.connectionMode === "xiaomiCloud") {
       void this.resolveCloudCameraStream(dev);
     }
     this.render();
@@ -3214,10 +3280,10 @@ export class MenuMijiaWindowsApp {
       // 1. Try cloud HLS action if supported by the model
       const streamSvc =
         spec.services.find((s) =>
-          s.actions.some((a) => a.type.includes("start-hls-stream") || a.type.includes("start-rtsp-stream"))
+          s.actions.some((a) => a.type.includes("start-hls-stream"))
         ) ?? null;
       const act = streamSvc?.actions.find(
-        (a) => a.type.includes("start-hls-stream") || a.type.includes("start-rtsp-stream")
+        (a) => a.type.includes("start-hls-stream")
       );
       if (streamSvc && act) {
         // macOS parity (MiCloudProvider.resolveCameraStream): the documented action carries
@@ -3236,11 +3302,21 @@ export class MenuMijiaWindowsApp {
             const rawJson = JSON.stringify(res ?? {});
             const urlMatch = /https?:\/\/[^\s"'\\]+/i.exec(rawJson);
             if (urlMatch?.[0]) {
-              this.liveCameraStreamURL = urlMatch[0];
-              this.liveCameraError = null;
-              this.liveCameraLoading = false;
-              this.render();
-              return;
+              const playable = this.normalizeWindowsCameraStreamUrl(urlMatch[0]);
+              if (this.needsHlsTranscodeBridge(playable)) {
+                if (await this.bridgeHlsStreamToMjpeg(dev.id, playable)) {
+                  return;
+                }
+                // Bridging failed: fall through to P2P below instead of assigning an unplayable .m3u8.
+                break;
+              }
+              if (!/\.m3u8(\?|$|#)/i.test(playable) || !window.__TAURI_INTERNALS__?.invoke) {
+                this.liveCameraStreamURL = playable;
+                this.liveCameraError = null;
+                this.liveCameraLoading = false;
+                this.render();
+                return;
+              }
             }
           } catch {
             // Cloud HLS rejected (bad inputs / 403 / offline): fall back to P2P.
@@ -4418,10 +4494,15 @@ export class MenuMijiaWindowsApp {
       const val = input?.value.trim() ?? "";
       this.stopLiveTransport();
       if (val) {
+        const playable = this.normalizeWindowsCameraStreamUrl(val);
         this.cameraStreamURLs[id] = val;
-        this.liveCameraStreamURL = val;
+        this.liveCameraStreamURL = playable;
         this.liveCameraError = null;
         this.liveCameraLoading = false;
+        const dev = this.devices.find((d) => d.id === id);
+        if (dev && dev.kind.kind === "camera" && dev.kind.isOn && this.needsHlsTranscodeBridge(playable)) {
+          void this.bridgeHlsStreamToMjpeg(id, playable);
+        }
       } else {
         delete this.cameraStreamURLs[id];
         this.liveCameraStreamURL = null;

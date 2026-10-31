@@ -429,14 +429,14 @@ public actor MiCloudProvider: HomeProvider {
             let streamService: MiotService? = {
                 if let streamId = cameraSpec.streamEntityId,
                    let (_, siid) = MiotAddress.parse(streamId),
-                   let svc = spec.service(iid: siid) {
+                   let svc = spec.service(iid: siid),
+                   svc.action(named: "start-hls-stream") != nil {
                     return svc
                 }
                 return spec.services(named: "camera-stream-for-google-home").first { $0.action(named: "start-hls-stream") != nil }
-                    ?? spec.services(named: "camera-stream-for-amazon-alexa").first { $0.action(named: "start-rtsp-stream") != nil }
             }()
             if let svc = streamService,
-               let act = svc.action(named: "start-hls-stream") ?? svc.action(named: "start-rtsp-stream") {
+               let act = svc.action(named: "start-hls-stream") {
                 if let result = try? await api.callAction(MiotActionCall(did: did, siid: svc.iid, aiid: act.iid, inputs: [])),
                    let url = Self.extractStreamURL(from: result) {
                     return .hls(url)

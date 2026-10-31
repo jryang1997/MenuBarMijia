@@ -772,6 +772,38 @@ async fn start_xiaomi_camera_bridge(
 }
 
 #[tauri::command]
+async fn bridge_hls_camera_stream(did: String, hls_url: String) -> Result<String, String> {
+    let _bridge_order = CAMERA_BRIDGE_LOCK.lock().await;
+    let parsed = reqwest::Url::parse(hls_url.trim())
+        .map_err(|_| "无效的 HLS 流地址".to_string())?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("HLS 流地址必须使用 http 或 https 协议".to_string());
+    }
+    ensure_go2rtc_running().await?;
+    let clean_did: String = did
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    let mjpeg_name = format!("cam_mjpeg_{clean_did}");
+    let http = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(6))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = http
+        .delete(format!(
+            "http://127.0.0.1:1984/api/streams?src={}",
+            urlencoding_simple(&mjpeg_name)
+        ))
+        .send()
+        .await;
+    put_stream(&http, &mjpeg_name, &format!("ffmpeg:{}#video=mjpeg", parsed.as_str()))
+        .await
+        .map_err(|e| format!("注册 HLS 转码流失败：{e}"))?;
+    Ok(mjpeg_name)
+}
+
+#[tauri::command]
 async fn stop_xiaomi_camera_bridge(did: String) -> Result<(), String> {
     let _bridge_order = CAMERA_BRIDGE_LOCK.lock().await;
     let clean_did: String = did
@@ -1086,6 +1118,7 @@ fn main() {
             set_global_shortcut,
             open_release_page,
             start_xiaomi_camera_bridge,
+            bridge_hls_camera_stream,
             stop_xiaomi_camera_bridge
         ])
         .setup(move |app| {

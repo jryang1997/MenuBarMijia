@@ -328,8 +328,6 @@ public enum MiotSynthesizer {
         let motion = motionService.flatMap { r.ref("motion-detection", in: $0) }
         let streamService = r.spec.services(named: "camera-stream-for-google-home")
             .first { $0.action(named: "start-hls-stream") != nil }
-            ?? r.spec.services(named: "camera-stream-for-amazon-alexa")
-                .first { $0.action(named: "start-rtsp-stream") != nil }
 
         return .camera(CameraSpec(
             entityId: MiotAddress.make(did: r.did, siid: s.iid),

@@ -1711,17 +1711,11 @@ export const MiotSynthesizer = {
       const nightShot = readProp(primaryService, "night-shot");
       const motionSvc = spec.services.find((s) => miotShortName(s.type) === "motion-detection");
       const motion = motionSvc ? readProp(motionSvc, "motion-detection") : null;
-      const streamSvc =
-        spec.services.find(
-          (s) =>
-            miotShortName(s.type) === "camera-stream-for-google-home" &&
-            s.actions.some((a) => miotShortName(a.type) === "start-hls-stream")
-        ) ??
-        spec.services.find(
-          (s) =>
-            miotShortName(s.type) === "camera-stream-for-amazon-alexa" &&
-            s.actions.some((a) => miotShortName(a.type) === "start-rtsp-stream")
-        );
+      const streamSvc = spec.services.find(
+        (s) =>
+          miotShortName(s.type) === "camera-stream-for-google-home" &&
+          s.actions.some((a) => miotShortName(a.type) === "start-hls-stream")
+      );
       const nightVal = typeof nightShot?.val === "number" ? Math.trunc(nightShot.val) : null;
       const currentNightShot =
         nightVal !== null
